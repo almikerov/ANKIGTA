@@ -14,6 +14,7 @@ from ankigta_companion.contract import (
 )
 from ankigta_companion.collection_identity import (
     CollectionCopyDecision,
+    CollectionIdentityCommand,
     CollectionIdentityObservation,
     CollectionIdentityState,
 )
@@ -28,8 +29,9 @@ def post_raw_health(
     server: HealthServer,
     body: bytes,
     path: str = "/v1/health",
+    timeout: float = 2,
 ) -> tuple[int, dict[str, object]]:
-    connection = HTTPConnection(server.host, server.port, timeout=2)
+    connection = HTTPConnection(server.host, server.port, timeout=timeout)
     connection.request(
         "POST",
         path,
@@ -229,10 +231,12 @@ def test_bind_operation_selects_the_open_collection_by_uuid() -> None:
         fsrs_enabled=True,
         collection=CollectionObservation(state=CollectionState.OPEN),
     )
-    calls: list[tuple[str, str, CollectionCopyDecision | None]] = []
+    calls: list[
+        tuple[CollectionIdentityCommand, str, CollectionCopyDecision | None]
+    ] = []
 
     def execute_identity_command(
-        command: str,
+        command: CollectionIdentityCommand,
         collection_uuid: str,
         decision: CollectionCopyDecision | None,
     ) -> CollectionIdentityObservation:
@@ -260,7 +264,7 @@ def test_bind_operation_selects_the_open_collection_by_uuid() -> None:
             path="/v1/collection/bind",
         )
 
-    assert calls == [("bind", collection_uuid, None)]
+    assert calls == [(CollectionIdentityCommand.BIND, collection_uuid, None)]
     assert status == 200
     assert response["ok"] is True
     assert response["payload"] == {

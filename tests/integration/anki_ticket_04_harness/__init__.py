@@ -19,9 +19,11 @@ from ankigta_companion.collection_identity import (
 EVIDENCE_DIR = Path(os.environ["ANKIGTA_TICKET04_EVIDENCE"])
 PHASE = os.environ["ANKIGTA_TICKET04_PHASE"]
 RENAMED_PROFILE = "ANKIGTA_T04_B_RENAMED"
+PACKAGE_PATH = Path(os.environ["ANKIGTA_TICKET04_PACKAGE"])
 
 stage = "initial"
 rename_before: dict[str, Any] | None = None
+import_before: dict[str, Any] | None = None
 
 
 def write_evidence(name: str, payload: object) -> None:
@@ -32,8 +34,16 @@ def write_evidence(name: str, payload: object) -> None:
     )
 
 
-def finish_process() -> None:
-    QTimer.singleShot(200, mw.app.quit)
+def finish_process(*, force_after_collection_export: bool = False) -> None:
+    if force_after_collection_export:
+        QTimer.singleShot(200, lambda: os._exit(0))
+        return
+
+    def stop_addon_and_quit() -> None:
+        addon().stop()
+        mw.app.quit()
+
+    QTimer.singleShot(200, stop_addon_and_quit)
 
 
 def addon() -> Any:
@@ -45,6 +55,8 @@ def addon() -> Any:
 
 
 def collection_snapshot() -> dict[str, Any]:
+    import ankigta_companion
+
     identity = mw.col.get_config(COLLECTION_UUID_CONFIG_KEY)
     response = addon().server
     from .http import health_request
@@ -56,6 +68,11 @@ def collection_snapshot() -> dict[str, Any]:
         "collectionUuidInConfig": identity,
         "cardIds": sorted(int(card_id) for card_id in mw.col.find_cards("")),
         "health": health,
+        "collectionSettingsAction": (
+            ankigta_companion.collection_settings_action.text()
+            if ankigta_companion.collection_settings_action is not None
+            else None
+        ),
         "ankigtaSessionAbsent": "ANKIGTA Session"
         not in {
             item.name
@@ -90,6 +107,61 @@ def restart_a() -> None:
     finish_process()
 
 
+def export_collection_package() -> None:
+    before = collection_snapshot()
+    mw.col.export_collection_package(
+        str(PACKAGE_PATH),
+        include_media=False,
+        legacy=False,
+    )
+    write_evidence(
+        "export-package.json",
+        {
+            "before": before,
+            "packagePath": str(PACKAGE_PATH),
+            "packageExists": PACKAGE_PATH.exists(),
+            "packageBytes": PACKAGE_PATH.stat().st_size,
+        },
+    )
+    finish_process(force_after_collection_export=True)
+
+
+def import_collection_package() -> None:
+    global import_before, stage
+    if stage == "initial":
+        import_before = collection_snapshot()
+        stage = "importing"
+        gui_hooks.collection_will_temporarily_close(mw.col)
+        mw.col.close()
+        profile_folder = Path(mw.pm.profileFolder())
+        mw.col = None
+        mw.backend.import_collection_package(
+            col_path=mw.pm.collectionPath(),
+            backup_path=str(PACKAGE_PATH),
+            media_folder=str(profile_folder / "collection.media"),
+            media_db=str(profile_folder / "collection.media.db2"),
+        )
+        if not mw.loadCollection():
+            raise RuntimeError("Anki could not reopen imported collection package")
+        gui_hooks.collection_did_temporarily_close(mw.col)
+        stage = "reopening"
+        QTimer.singleShot(0, lambda: guarded(run_phase))
+        return
+    if stage != "reopening":
+        return
+    write_evidence(
+        "import-collision.json",
+        {
+            "beforeImport": import_before,
+            "afterImport": collection_snapshot(),
+            "packagePath": str(PACKAGE_PATH),
+            "usedAnkiImportOperation": True,
+        },
+    )
+    stage = "finished"
+    finish_process()
+
+
 def collision_b_then_rename() -> None:
     global rename_before, stage
     if stage == "initial":
@@ -110,9 +182,13 @@ def collision_b_then_rename() -> None:
 
     after_rename_pending = collection_snapshot()
     collection = after_rename_pending["health"]["body"]["payload"]["collection"]
-    decision = addon().decide_current_collection_copy(
-        collection["collectionUuid"],
-        CollectionCopyDecision.PREVIOUS_COLLECTION,
+    decision = (
+        addon().decide_current_collection_copy(
+            collection["collectionUuid"],
+            CollectionCopyDecision.PREVIOUS_COLLECTION,
+        )
+        if collection["identityState"] == "copy_decision_required"
+        else None
     )
     after_decision = collection_snapshot()
     write_evidence(
@@ -123,7 +199,9 @@ def collision_b_then_rename() -> None:
             "decisionResult": {
                 "collectionUuid": decision.collection_uuid,
                 "identityState": decision.state.value,
-            },
+            }
+            if decision is not None
+            else None,
             "afterDecision": after_decision,
         },
     )
@@ -228,6 +306,10 @@ def run_phase() -> None:
         initialize_bound_collection("initialize-a.json")
     elif PHASE == "restart-a":
         restart_a()
+    elif PHASE == "export-package":
+        export_collection_package()
+    elif PHASE == "import-collision":
+        import_collection_package()
     elif PHASE == "collision-b-rename":
         collision_b_then_rename()
     elif PHASE == "present-copy":

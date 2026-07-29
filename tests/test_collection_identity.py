@@ -148,6 +148,53 @@ def test_absent_original_requires_an_explicit_copy_decision_defaulting_to_new(
     assert decided.state is CollectionIdentityState.BOUND
 
 
+def test_profile_rename_keeps_the_same_registered_instance(
+    tmp_path: Path,
+) -> None:
+    collection_uuid = UUID("48514929-dc2b-4741-a0e4-cd0bc5cf8a71")
+    service = CollectionIdentityService(
+        tmp_path / "collection-registry.json",
+        uuid_factory=lambda: collection_uuid,
+    )
+    original_locator = tmp_path / "Before Rename" / "collection.anki2"
+    renamed_locator = tmp_path / "After Rename" / "collection.anki2"
+    original_locator.parent.mkdir()
+    original_locator.touch()
+    collection = FakeCollection()
+    original = service.observe_open_collection(collection, original_locator)
+    service.bind_current(original.collection_uuid)
+    original_locator.parent.rename(renamed_locator.parent)
+
+    renamed = service.observe_open_collection(collection, renamed_locator)
+
+    assert renamed.collection_uuid == str(collection_uuid)
+    assert renamed.state is CollectionIdentityState.BOUND
+
+
+def test_reused_registered_path_is_not_mistaken_for_the_original_instance(
+    tmp_path: Path,
+) -> None:
+    collection_uuid = UUID("e0c8a39a-2d8f-44eb-a453-895876285017")
+    service = CollectionIdentityService(
+        tmp_path / "collection-registry.json",
+        uuid_factory=lambda: collection_uuid,
+    )
+    locator = tmp_path / "Profile" / "collection.anki2"
+    locator.parent.mkdir()
+    locator.write_text("original", encoding="utf-8")
+    original_collection = FakeCollection()
+    original = service.observe_open_collection(original_collection, locator)
+    service.bind_current(original.collection_uuid)
+    locator.unlink()
+    locator.write_text("different collection", encoding="utf-8")
+    reused_path_collection = FakeCollection(config=original_collection.config.copy())
+
+    observed = service.observe_open_collection(reused_path_collection, locator)
+
+    assert observed.state is CollectionIdentityState.COPY_DECISION_REQUIRED
+    assert observed.default_copy_decision is CollectionCopyDecision.NEW_COPY
+
+
 def test_new_copy_decision_assigns_a_new_uuid_without_inheriting_binding(
     tmp_path: Path,
 ) -> None:

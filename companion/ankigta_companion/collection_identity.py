@@ -35,6 +35,11 @@ class CollectionIdentityState(StrEnum):
     ERROR = "identity_error"
 
 
+class CollectionIdentityCommand(StrEnum):
+    BIND = "bind"
+    COPY_DECISION = "copy_decision"
+
+
 @dataclass(frozen=True)
 class AnkiCardIdentity:
     collection_uuid: str
@@ -118,13 +123,24 @@ class CollectionIdentityService:
         instances = registry["instances"]
         assert isinstance(instances, dict)
         normalized_locator = self._normalize_locator(locator)
+        file_identity = self._file_identity(locator)
         registered = instances.get(collection_uuid)
         if registered is None:
-            instances[collection_uuid] = {"locator": normalized_locator}
+            instances[collection_uuid] = {
+                "locator": normalized_locator,
+                "fileIdentity": file_identity,
+            }
             self._save_registry(registry)
-        elif self._registered_locator(registered) != normalized_locator:
+        elif self._registered_file_identity(registered) == file_identity:
+            if self._registered_locator(registered) != normalized_locator:
+                instances[collection_uuid] = {
+                    "locator": normalized_locator,
+                    "fileIdentity": file_identity,
+                }
+                self._save_registry(registry)
+        else:
             registered_locator = self._registered_locator(registered)
-            if registered_locator is not None and Path(registered_locator).exists():
+            if self._registered_instance_is_present(registered):
                 replacement_uuid = self._assign_new_uuid(
                     collection,
                     set(instances),
@@ -138,7 +154,10 @@ class CollectionIdentityService:
                         )
                     )
                 collection_uuid = replacement_uuid
-                instances[collection_uuid] = {"locator": normalized_locator}
+                instances[collection_uuid] = {
+                    "locator": normalized_locator,
+                    "fileIdentity": file_identity,
+                }
                 self._save_registry(registry)
             else:
                 return self._remember(
@@ -212,7 +231,10 @@ class CollectionIdentityService:
             normalized_locator = self._normalize_locator(locator)
             if decision is CollectionCopyDecision.PREVIOUS_COLLECTION:
                 assert current.collection_uuid is not None
-                instances[current.collection_uuid] = {"locator": normalized_locator}
+                instances[current.collection_uuid] = {
+                    "locator": normalized_locator,
+                    "fileIdentity": self._file_identity(locator),
+                }
                 collection_uuid = current.collection_uuid
             else:
                 replacement_uuid = self._assign_new_uuid(collection, set(instances))
@@ -225,7 +247,10 @@ class CollectionIdentityService:
                         )
                     )
                 collection_uuid = replacement_uuid
-                instances[collection_uuid] = {"locator": normalized_locator}
+                instances[collection_uuid] = {
+                    "locator": normalized_locator,
+                    "fileIdentity": self._file_identity(locator),
+                }
 
             self._save_registry(registry)
             return self._remember(
@@ -323,6 +348,38 @@ class CollectionIdentityService:
             return None
         locator = registered.get("locator")
         return locator if isinstance(locator, str) else None
+
+    @staticmethod
+    def _file_identity(locator: Path) -> dict[str, int]:
+        stat = locator.stat()
+        return {
+            "device": stat.st_dev,
+            "inode": stat.st_ino,
+        }
+
+    @staticmethod
+    def _registered_file_identity(registered: object) -> dict[str, int] | None:
+        if not isinstance(registered, dict):
+            return None
+        identity = registered.get("fileIdentity")
+        if not isinstance(identity, dict):
+            return None
+        device = identity.get("device")
+        inode = identity.get("inode")
+        if not isinstance(device, int) or not isinstance(inode, int):
+            return None
+        return {"device": device, "inode": inode}
+
+    @classmethod
+    def _registered_instance_is_present(cls, registered: object) -> bool:
+        locator = cls._registered_locator(registered)
+        expected_identity = cls._registered_file_identity(registered)
+        if locator is None or expected_identity is None:
+            return False
+        try:
+            return cls._file_identity(Path(locator)) == expected_identity
+        except OSError:
+            return False
 
     @staticmethod
     def _binding_state(

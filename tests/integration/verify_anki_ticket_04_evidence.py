@@ -24,6 +24,8 @@ def main() -> None:
     evidence = Path(sys.argv[1])
     initial = load(evidence, "initialize-a.json")
     restart = load(evidence, "restart-a.json")
+    exported = load(evidence, "export-package.json")
+    imported = load(evidence, "import-collision.json")
     collision = load(evidence, "collision-b-rename.json")
     present_copy = load(evidence, "present-copy.json")
     restore_source = load(evidence, "initialize-restore-source.json")
@@ -38,10 +40,28 @@ def main() -> None:
     }
     assert collection(initial["before"])["identityState"] == "unbound"
     assert collection(initial["after"])["identityState"] == "bound"
+    assert initial["after"]["collectionSettingsAction"] == (
+        "ANKIGTA: Bound Anki Collection…"
+    )
     assert valid_uuid(collection(restart)["collectionUuid"]) == a_uuid
     assert collection(restart)["identityState"] == "bound"
     assert restart["collectionUuidInConfig"] == a_uuid
     assert initial["after"]["cardIds"] == restart["cardIds"]
+    assert exported["packageExists"] is True
+    assert exported["packageBytes"] > 0
+    assert imported["usedAnkiImportOperation"] is True
+    import_before_uuid = valid_uuid(
+        collection(imported["beforeImport"])["collectionUuid"]
+    )
+    import_after_uuid = valid_uuid(
+        collection(imported["afterImport"])["collectionUuid"]
+    )
+    assert import_before_uuid != a_uuid
+    assert import_after_uuid not in {a_uuid, import_before_uuid}
+    assert collection(imported["afterImport"])["identityState"] == (
+        "wrong_collection"
+    )
+    assert imported["afterImport"]["cardIds"] == initial["after"]["cardIds"]
 
     before_rename = collision["beforeRename"]
     b_uuid = valid_uuid(collection(before_rename)["collectionUuid"])
@@ -50,15 +70,8 @@ def main() -> None:
     assert before_rename["cardIds"] == initial["after"]["cardIds"]
     pending = collision["afterRenamePending"]
     assert valid_uuid(collection(pending)["collectionUuid"]) == b_uuid
-    assert collection(pending)["identityState"] == "copy_decision_required"
-    assert collection(pending)["copyDecision"] == {
-        "options": ["previous_collection", "new_copy"],
-        "default": "new_copy",
-    }
-    assert collision["decisionResult"] == {
-        "collectionUuid": b_uuid,
-        "identityState": "wrong_collection",
-    }
+    assert collection(pending)["identityState"] == "wrong_collection"
+    assert collision["decisionResult"] is None
     assert collection(collision["afterDecision"])["collectionUuid"] == b_uuid
     assert collision["afterDecision"]["profileName"] == "ANKIGTA_T04_B_RENAMED"
 

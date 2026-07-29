@@ -5,6 +5,7 @@ $runtime = Join-Path $repoRoot '.scratch\ticket-04-anki-integration-runtime'
 $evidence = Join-Path $runtime 'evidence'
 $primaryBase = Join-Path $runtime 'primary-base'
 $presentCopyBase = Join-Path $runtime 'present-copy-base'
+$importBase = Join-Path $runtime 'import-base'
 $restoreSourceBase = Join-Path $runtime 'restore-source-base'
 $restorePreviousBase = Join-Path $runtime 'restore-previous-base'
 $restoreNewBase = Join-Path $runtime 'restore-new-base'
@@ -16,6 +17,7 @@ $productionSource = Join-Path $repoRoot 'companion\ankigta_companion'
 $harnessSource = Join-Path $PSScriptRoot 'anki_ticket_04_harness'
 $profileA = 'ANKIGTA_P0003_A'
 $profileB = 'ANKIGTA_P0003_B'
+$packagePath = Join-Path $evidence 'bound-collection.colpkg'
 
 if (Test-Path -LiteralPath $runtime) {
     throw "Integration runtime already exists; refusing to overwrite: $runtime"
@@ -63,6 +65,7 @@ function Start-Ticket04Anki(
     Install-Addons $base
     $env:ANKIGTA_TICKET04_EVIDENCE = $evidence
     $env:ANKIGTA_TICKET04_PHASE = $phase
+    $env:ANKIGTA_TICKET04_PACKAGE = $packagePath
     $process = Start-Process `
         -FilePath $ankiExe `
         -ArgumentList @('-b', $base, '-l', 'en', '-p', $profile) `
@@ -81,6 +84,13 @@ function Start-Ticket04Anki(
 Copy-Seed $primaryBase
 Start-Ticket04Anki $primaryBase 'initialize-a' $profileA
 Start-Ticket04Anki $primaryBase 'restart-a' $profileA
+Start-Ticket04Anki $primaryBase 'export-package' $profileA
+if (-not (Test-Path -LiteralPath $packagePath)) {
+    throw "Anki collection package export missing: $packagePath"
+}
+
+Copy-Item -LiteralPath $primaryBase -Destination $importBase -Recurse
+Start-Ticket04Anki $importBase 'import-collision' $profileB
 
 $sourceCollection = Join-Path $primaryBase "$profileA\collection.anki2"
 $targetCollection = Join-Path $primaryBase "$profileB\collection.anki2"

@@ -8,6 +8,7 @@ from typing import Protocol
 
 from .collection_identity import (
     CollectionCopyDecision,
+    CollectionIdentityCommand,
     CollectionIdentityObservation,
     CollectionIdentityService,
     CollectionIdentityState,
@@ -63,6 +64,8 @@ class MainWindow(Protocol):
 class GuiHooks(Protocol):
     profile_did_open: list[Callable[[], None]]
     profile_will_close: list[Callable[[], None]]
+    collection_will_temporarily_close: list[Callable[[Collection], None]]
+    collection_did_temporarily_close: list[Callable[[Collection], None]]
 
 
 class ObservationStore:
@@ -122,6 +125,12 @@ class CompanionAddon:
             return
         self._hooks.profile_did_open.append(self._on_profile_did_open)
         self._hooks.profile_will_close.append(self._on_profile_will_close)
+        self._hooks.collection_will_temporarily_close.append(
+            self._on_collection_will_temporarily_close
+        )
+        self._hooks.collection_did_temporarily_close.append(
+            self._on_collection_did_temporarily_close
+        )
         if self._main_window.col is not None:
             self._on_profile_did_open()
         self.server.start()
@@ -133,6 +142,12 @@ class CompanionAddon:
         self.server.stop()
         self._hooks.profile_did_open.remove(self._on_profile_did_open)
         self._hooks.profile_will_close.remove(self._on_profile_will_close)
+        self._hooks.collection_will_temporarily_close.remove(
+            self._on_collection_will_temporarily_close
+        )
+        self._hooks.collection_did_temporarily_close.remove(
+            self._on_collection_did_temporarily_close
+        )
         self._started = False
 
     def _on_profile_did_open(self) -> None:
@@ -158,21 +173,7 @@ class CompanionAddon:
                 collection=CollectionObservation(
                     state=CollectionState.OPEN,
                     profile_name=self._main_window.pm.name,
-                    collection_uuid=(
-                        identity.collection_uuid if identity is not None else None
-                    ),
-                    identity_state=identity.state if identity is not None else None,
-                    copy_decision_options=(
-                        identity.copy_decision_options if identity is not None else ()
-                    ),
-                    default_copy_decision=(
-                        identity.default_copy_decision
-                        if identity is not None
-                        else None
-                    ),
-                    identity_error_category=(
-                        identity.error_category if identity is not None else None
-                    ),
+                    identity=identity,
                 ),
             )
         )
@@ -196,6 +197,30 @@ class CompanionAddon:
             0,
             lambda: self._mark_absent_after_close(closing_generation),
         )
+
+    def _on_collection_will_temporarily_close(
+        self,
+        _collection: Collection,
+    ) -> None:
+        self._collection_generation += 1
+        if self._identity_service is not None:
+            self._identity_service.clear_current()
+        current = self._observations.get()
+        self._observations.set(
+            replace(
+                current,
+                collection=CollectionObservation(
+                    state=CollectionState.CLOSING,
+                    profile_name=current.collection.profile_name,
+                ),
+            )
+        )
+
+    def _on_collection_did_temporarily_close(
+        self,
+        _collection: Collection,
+    ) -> None:
+        self._on_profile_did_open()
 
     def _mark_absent_after_close(self, closing_generation: int) -> None:
         if not self._started or closing_generation != self._collection_generation:
@@ -250,27 +275,31 @@ class CompanionAddon:
                 current,
                 collection=replace(
                     current.collection,
-                    collection_uuid=identity.collection_uuid,
-                    identity_state=identity.state,
-                    copy_decision_options=identity.copy_decision_options,
-                    default_copy_decision=identity.default_copy_decision,
-                    identity_error_category=identity.error_category,
+                    identity=identity,
                 ),
             )
         )
 
     def _execute_identity_command(
         self,
-        command: str,
+        command: CollectionIdentityCommand,
         collection_uuid: str,
         decision: CollectionCopyDecision | None,
     ) -> CollectionIdentityObservation:
         completed = Event()
         result: list[CollectionIdentityObservation] = []
+        command_lock = Lock()
+        command_started = False
+        command_cancelled = False
 
         def execute() -> None:
+            nonlocal command_started
+            with command_lock:
+                if command_cancelled:
+                    return
+                command_started = True
             try:
-                if command == "bind":
+                if command is CollectionIdentityCommand.BIND:
                     identity = self.bind_current_collection(collection_uuid)
                 elif decision is not None:
                     identity = self.decide_current_collection_copy(
@@ -291,9 +320,16 @@ class CompanionAddon:
 
         self._run_on_main(execute)
         if not completed.wait(timeout=5):
-            return CollectionIdentityObservation(
-                state=CollectionIdentityState.ERROR,
-                collection_uuid=collection_uuid,
-                error_category="collection_identity_timeout",
-            )
+            with command_lock:
+                if not command_started:
+                    command_cancelled = True
+                    return CollectionIdentityObservation(
+                        state=CollectionIdentityState.ERROR,
+                        collection_uuid=collection_uuid,
+                        error_category="collection_identity_timeout",
+                    )
+            completed.wait()
         return result[0]
+
+    def current_collection_identity(self) -> CollectionIdentityObservation | None:
+        return self._observations.get().collection.identity

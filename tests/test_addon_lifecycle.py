@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -8,7 +9,7 @@ import pytest
 
 from ankigta_companion.collection_identity import CollectionIdentityService
 from ankigta_companion.lifecycle import CompanionAddon
-from test_health_contract import post_health
+from test_health_contract import post_health, post_raw_health
 
 
 @dataclass
@@ -74,6 +75,12 @@ class FakeMainWindow:
 class FakeHooks:
     profile_did_open: list[Callable[[], None]] = field(default_factory=list)
     profile_will_close: list[Callable[[], None]] = field(default_factory=list)
+    collection_will_temporarily_close: list[
+        Callable[[FakeCollection], None]
+    ] = field(default_factory=list)
+    collection_did_temporarily_close: list[
+        Callable[[FakeCollection], None]
+    ] = field(default_factory=list)
 
 
 def request_health(addon: CompanionAddon, request_id: str) -> tuple[int, dict[str, object]]:
@@ -126,6 +133,8 @@ def test_addon_observes_profile_lifecycle_and_releases_listener() -> None:
     addon.stop()
     assert hooks.profile_did_open == []
     assert hooks.profile_will_close == []
+    assert hooks.collection_will_temporarily_close == []
+    assert hooks.collection_did_temporarily_close == []
     with pytest.raises(OSError):
         request_health(addon, "after-unload")
 
@@ -185,4 +194,54 @@ def test_bound_collection_selection_pauses_a_different_open_collection(
         "paused": True,
         "pausedReason": "wrong_collection",
     }
+    addon.stop()
+
+
+def test_timed_out_bind_is_cancelled_before_a_late_main_thread_callback(
+    tmp_path: Path,
+) -> None:
+    locator = tmp_path / "Profile" / "collection.anki2"
+    locator.parent.mkdir()
+    locator.touch()
+    main_window = FakeMainWindow(
+        col=FakeCollection(fsrs=True),
+        pm=FakeProfileManager(collection_path=str(locator)),
+    )
+    queued_main_actions: list[Callable[[], None]] = []
+    addon = CompanionAddon(
+        main_window=main_window,
+        hooks=FakeHooks(),
+        anki_version="26.05",
+        defer=lambda _delay_ms, action: action(),
+        identity_service=CollectionIdentityService(
+            tmp_path / "collection-registry.json"
+        ),
+        run_on_main=queued_main_actions.append,
+    )
+    addon.start()
+    _, initial = request_health(addon, "before-timeout")
+    collection_uuid = initial["payload"]["collection"]["collectionUuid"]
+
+    status, response = post_raw_health(
+        addon.server,
+        json.dumps(
+            {
+                "protocol": "ankigta-control",
+                "protocolVersion": 1,
+                "requestId": "timed-out-bind",
+                "collectionUuid": collection_uuid,
+            }
+        ).encode("utf-8"),
+        path="/v1/collection/bind",
+        timeout=7,
+    )
+    queued_main_actions.pop()()
+    _, after_late_callback = request_health(addon, "after-late-callback")
+
+    assert status == 409
+    assert response["error"]["category"] == "collection_identity_timeout"
+    assert (
+        after_late_callback["payload"]["collection"]["identityState"]
+        == "unbound"
+    )
     addon.stop()

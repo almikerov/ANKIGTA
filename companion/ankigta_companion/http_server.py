@@ -19,6 +19,7 @@ from .contract import (
 )
 from .collection_identity import (
     CollectionCopyDecision,
+    CollectionIdentityCommand,
     CollectionIdentityObservation,
 )
 
@@ -33,7 +34,7 @@ COPY_DECISION_PATH = "/v1/collection/copy-decision"
 
 ServerRequest = socket | tuple[bytes, socket]
 IdentityCommand = Callable[
-    [str, str, CollectionCopyDecision | None],
+    [CollectionIdentityCommand, str, CollectionCopyDecision | None],
     CollectionIdentityObservation,
 ]
 
@@ -192,9 +193,9 @@ class HealthServer:
                     self._write_json(400, error_response(error))
                     return
                 command = (
-                    "bind"
+                    CollectionIdentityCommand.BIND
                     if self.path == BIND_COLLECTION_PATH
-                    else "copy_decision"
+                    else CollectionIdentityCommand.COPY_DECISION
                 )
                 identity = identity_command(command, collection_uuid, decision)
                 response = identity_response(request_id, identity)

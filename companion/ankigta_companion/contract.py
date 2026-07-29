@@ -26,11 +26,7 @@ class CollectionState(StrEnum):
 class CollectionObservation:
     state: CollectionState
     profile_name: str | None = None
-    collection_uuid: str | None = None
-    identity_state: CollectionIdentityState | None = None
-    copy_decision_options: tuple[CollectionCopyDecision, ...] = ()
-    default_copy_decision: CollectionCopyDecision | None = None
-    identity_error_category: str | None = None
+    identity: CollectionIdentityObservation | None = None
 
 
 @dataclass(frozen=True)
@@ -179,30 +175,28 @@ def health_response(
         "state": observation.collection.state.value,
         "profileName": observation.collection.profile_name,
     }
-    identity_state = observation.collection.identity_state
-    if identity_state is not None:
+    identity = observation.collection.identity
+    if identity is not None:
         collection.update(
             {
-                "collectionUuid": observation.collection.collection_uuid,
-                "identityState": identity_state.value,
+                "collectionUuid": identity.collection_uuid,
+                "identityState": identity.state.value,
             }
         )
-        if observation.collection.copy_decision_options:
+        if identity.copy_decision_options:
             collection["copyDecision"] = {
                 "options": [
                     option.value
-                    for option in observation.collection.copy_decision_options
+                    for option in identity.copy_decision_options
                 ],
                 "default": (
-                    observation.collection.default_copy_decision.value
-                    if observation.collection.default_copy_decision is not None
+                    identity.default_copy_decision.value
+                    if identity.default_copy_decision is not None
                     else None
                 ),
             }
-        if observation.collection.identity_error_category is not None:
-            collection["identityErrorCategory"] = (
-                observation.collection.identity_error_category
-            )
+        if identity.error_category is not None:
+            collection["identityErrorCategory"] = identity.error_category
     compatibility: dict[str, object] = {
         "status": "supported" if supported else "unsupported",
         "previewReadOnlyCompatible": True,
@@ -236,13 +230,13 @@ def health_response(
         "ratingEnabled": False,
     }
     if (
-        identity_state is not None
-        and identity_state is not CollectionIdentityState.BOUND
+        identity is not None
+        and identity.state is not CollectionIdentityState.BOUND
     ):
         study.update(
             {
                 "paused": True,
-                "pausedReason": identity_state.value,
+                "pausedReason": identity.state.value,
             }
         )
 
