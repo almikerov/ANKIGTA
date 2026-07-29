@@ -1,0 +1,3 @@
+# Use the stock MTA Map Editor with best-effort verification
+
+ANKIGTA работает с обычным MTA Map Editor и не поставляет собственный fork. Постоянный `ankigtaMapId` хранится как EDF custom child, а entity ID — как element data/EDF property. После штатного Save ANKIGTA автоматически обнаруживает изменение `.map`, перечитывает файл и активирует только однозначно подтверждённые ID; при неудаче связь остаётся Pending Map Save и получает действие `Проверить ещё раз`. Мы принимаем отсутствие атомарности всей stock save transaction, публичного save-complete callback и защиты от внешнего изменения файла: пользователь при необходимости повторяет сохранение либо восстанавливает карту штатными средствами Editor.
