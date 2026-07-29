@@ -2,9 +2,16 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
-from threading import Lock
+from pathlib import Path
+from threading import Event, Lock
 from typing import Protocol
 
+from .collection_identity import (
+    CollectionCopyDecision,
+    CollectionIdentityObservation,
+    CollectionIdentityService,
+    CollectionIdentityState,
+)
 from .contract import (
     CollectionObservation,
     CollectionState,
@@ -31,9 +38,21 @@ class Collection(Protocol):
 
     def v3_scheduler(self) -> bool: ...
 
+    def get_config(self, key: str, default: object | None = None) -> object: ...
+
+    def set_config(
+        self,
+        key: str,
+        value: object,
+        *,
+        undoable: bool = False,
+    ) -> object: ...
+
 
 class ProfileManager(Protocol):
     name: str
+
+    def collectionPath(self) -> str: ...
 
 
 class MainWindow(Protocol):
@@ -69,11 +88,15 @@ class CompanionAddon:
         anki_version: str,
         defer: Callable[[int, Callable[[], None]], None],
         port: int = 0,
+        identity_service: CollectionIdentityService | None = None,
+        run_on_main: Callable[[Callable[[], None]], None] | None = None,
     ) -> None:
         self._main_window = main_window
         self._hooks = hooks
         self._anki_version = anki_version
         self._defer = defer
+        self._identity_service = identity_service
+        self._run_on_main = run_on_main or (lambda action: action())
         self._observations = ObservationStore(
             RuntimeObservation(
                 anki_version=anki_version,
@@ -82,7 +105,15 @@ class CompanionAddon:
                 collection=CollectionObservation(state=CollectionState.ABSENT),
             )
         )
-        self.server = HealthServer(self._observations.get, port=port)
+        self.server = HealthServer(
+            self._observations.get,
+            port=port,
+            identity_command=(
+                self._execute_identity_command
+                if identity_service is not None
+                else None
+            ),
+        )
         self._started = False
         self._collection_generation = 0
 
@@ -111,6 +142,14 @@ class CompanionAddon:
             return
         deck_id = collection.decks.get_current_id()
         deck_configuration = collection.decks.get_deck_configs_for_update(deck_id)
+        identity = (
+            self._identity_service.observe_open_collection(
+                collection,
+                Path(self._main_window.pm.collectionPath()),
+            )
+            if self._identity_service is not None
+            else None
+        )
         self._observations.set(
             RuntimeObservation(
                 anki_version=self._anki_version,
@@ -119,6 +158,21 @@ class CompanionAddon:
                 collection=CollectionObservation(
                     state=CollectionState.OPEN,
                     profile_name=self._main_window.pm.name,
+                    collection_uuid=(
+                        identity.collection_uuid if identity is not None else None
+                    ),
+                    identity_state=identity.state if identity is not None else None,
+                    copy_decision_options=(
+                        identity.copy_decision_options if identity is not None else ()
+                    ),
+                    default_copy_decision=(
+                        identity.default_copy_decision
+                        if identity is not None
+                        else None
+                    ),
+                    identity_error_category=(
+                        identity.error_category if identity is not None else None
+                    ),
                 ),
             )
         )
@@ -126,6 +180,8 @@ class CompanionAddon:
     def _on_profile_will_close(self) -> None:
         self._collection_generation += 1
         closing_generation = self._collection_generation
+        if self._identity_service is not None:
+            self._identity_service.clear_current()
         current = self._observations.get()
         self._observations.set(
             replace(
@@ -157,3 +213,87 @@ class CompanionAddon:
                 collection=CollectionObservation(state=CollectionState.ABSENT),
             )
         )
+
+    def bind_current_collection(
+        self,
+        expected_collection_uuid: str | None,
+    ) -> CollectionIdentityObservation:
+        if self._identity_service is None:
+            raise RuntimeError("collection identity service is unavailable")
+        identity = self._identity_service.bind_current(expected_collection_uuid)
+        self._publish_identity(identity)
+        return identity
+
+    def decide_current_collection_copy(
+        self,
+        expected_collection_uuid: str | None,
+        decision: CollectionCopyDecision,
+    ) -> CollectionIdentityObservation:
+        if self._identity_service is None:
+            raise RuntimeError("collection identity service is unavailable")
+        collection = self._main_window.col
+        if collection is None:
+            raise ValueError("no collection is open")
+        identity = self._identity_service.decide_copy(
+            collection,
+            Path(self._main_window.pm.collectionPath()),
+            expected_collection_uuid,
+            decision,
+        )
+        self._publish_identity(identity)
+        return identity
+
+    def _publish_identity(self, identity: CollectionIdentityObservation) -> None:
+        current = self._observations.get()
+        self._observations.set(
+            replace(
+                current,
+                collection=replace(
+                    current.collection,
+                    collection_uuid=identity.collection_uuid,
+                    identity_state=identity.state,
+                    copy_decision_options=identity.copy_decision_options,
+                    default_copy_decision=identity.default_copy_decision,
+                    identity_error_category=identity.error_category,
+                ),
+            )
+        )
+
+    def _execute_identity_command(
+        self,
+        command: str,
+        collection_uuid: str,
+        decision: CollectionCopyDecision | None,
+    ) -> CollectionIdentityObservation:
+        completed = Event()
+        result: list[CollectionIdentityObservation] = []
+
+        def execute() -> None:
+            try:
+                if command == "bind":
+                    identity = self.bind_current_collection(collection_uuid)
+                elif decision is not None:
+                    identity = self.decide_current_collection_copy(
+                        collection_uuid,
+                        decision,
+                    )
+                else:
+                    raise ValueError("copy decision is required")
+            except Exception:
+                identity = CollectionIdentityObservation(
+                    state=CollectionIdentityState.ERROR,
+                    collection_uuid=collection_uuid,
+                    error_category="collection_identity_conflict",
+                )
+                self._publish_identity(identity)
+            result.append(identity)
+            completed.set()
+
+        self._run_on_main(execute)
+        if not completed.wait(timeout=5):
+            return CollectionIdentityObservation(
+                state=CollectionIdentityState.ERROR,
+                collection_uuid=collection_uuid,
+                error_category="collection_identity_timeout",
+            )
+        return result[0]

@@ -12,6 +12,11 @@ from ankigta_companion.contract import (
     CollectionState,
     RuntimeObservation,
 )
+from ankigta_companion.collection_identity import (
+    CollectionCopyDecision,
+    CollectionIdentityObservation,
+    CollectionIdentityState,
+)
 from ankigta_companion.http_server import HealthServer
 
 
@@ -215,6 +220,85 @@ def test_only_the_health_operation_path_is_exposed() -> None:
         },
         "payload": None,
     }
+
+
+def test_bind_operation_selects_the_open_collection_by_uuid() -> None:
+    observation = RuntimeObservation(
+        anki_version="26.05",
+        v3_scheduler=True,
+        fsrs_enabled=True,
+        collection=CollectionObservation(state=CollectionState.OPEN),
+    )
+    calls: list[tuple[str, str, CollectionCopyDecision | None]] = []
+
+    def execute_identity_command(
+        command: str,
+        collection_uuid: str,
+        decision: CollectionCopyDecision | None,
+    ) -> CollectionIdentityObservation:
+        calls.append((command, collection_uuid, decision))
+        return CollectionIdentityObservation(
+            state=CollectionIdentityState.BOUND,
+            collection_uuid=collection_uuid,
+        )
+
+    collection_uuid = "d384e4c5-a509-43a8-b801-e50bff4f90e8"
+    with HealthServer(
+        lambda: observation,
+        identity_command=execute_identity_command,
+    ) as server:
+        status, response = post_raw_health(
+            server,
+            json.dumps(
+                {
+                    "protocol": "ankigta-control",
+                    "protocolVersion": 1,
+                    "requestId": "bind-001",
+                    "collectionUuid": collection_uuid,
+                }
+            ).encode("utf-8"),
+            path="/v1/collection/bind",
+        )
+
+    assert calls == [("bind", collection_uuid, None)]
+    assert status == 200
+    assert response["ok"] is True
+    assert response["payload"] == {
+        "collectionUuid": collection_uuid,
+        "identityState": "bound",
+    }
+
+
+def test_copy_decision_operation_requires_the_expected_collection_uuid() -> None:
+    observation = RuntimeObservation(
+        anki_version="26.05",
+        v3_scheduler=True,
+        fsrs_enabled=True,
+        collection=CollectionObservation(state=CollectionState.OPEN),
+    )
+
+    with HealthServer(
+        lambda: observation,
+        identity_command=lambda *_args: pytest.fail(
+            "invalid command must not reach the identity service"
+        ),
+    ) as server:
+        status, response = post_raw_health(
+            server,
+            json.dumps(
+                {
+                    "protocol": "ankigta-control",
+                    "protocolVersion": 1,
+                    "requestId": "copy-decision-invalid",
+                    "collectionUuid": "Profile A",
+                    "decision": "new_copy",
+                }
+            ).encode("utf-8"),
+            path="/v1/collection/copy-decision",
+        )
+
+    assert status == 400
+    assert response["error"]["category"] == "invalid_collection_uuid"
 
 
 def test_control_request_larger_than_two_mib_is_rejected() -> None:

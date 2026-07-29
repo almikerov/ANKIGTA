@@ -4,27 +4,26 @@
 
 **Blocked by:** 01 — Companion health and Anki version.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 ## Acceptance criteria
 
-- [ ] Collection UUID создаётся атомарно в collection config и переживает restart и profile rename.
-- [ ] Profile name/path и один `cardId` нигде не принимаются за устойчивую Anki Card Identity.
-- [ ] Пользователь явно выбирает одну Bound Anki Collection; другая открытая коллекция даёт paused/wrong-collection state.
-- [ ] Если прежний экземпляр UUID зарегистрирован локально, дубликат автоматически получает новый UUID и не наследует Spatial Link.
-- [ ] Если прежний экземпляр отсутствует, предлагаются `Это прежняя коллекция` и `Это новая копия`, причём новая копия является default.
-- [ ] Ошибка назначения/регистрации UUID оставляет коллекцию unbound и не создаёт частичный перенос.
-- [ ] ANKIGTA не запускает Anki и не переключает профиль.
+- [x] Collection UUID создаётся атомарно в collection config и переживает restart и profile rename.
+- [x] Profile name/path и один `cardId` нигде не принимаются за устойчивую Anki Card Identity.
+- [x] Пользователь явно выбирает одну Bound Anki Collection; другая открытая коллекция даёт paused/wrong-collection state.
+- [x] Если прежний экземпляр UUID зарегистрирован локально, дубликат автоматически получает новый UUID и не наследует Spatial Link.
+- [x] Если прежний экземпляр отсутствует, предлагаются `Это прежняя коллекция` и `Это новая копия`, причём новая копия является default.
+- [x] Ошибка назначения/регистрации UUID оставляет коллекцию unbound и не создаёт частичный перенос.
+- [x] ANKIGTA не запускает Anki и не переключает профиль.
 
 ## Tests
 
-- [ ] Real-Anki тесты двух профилей с одинаковым числовым `cardId`.
-- [ ] Restart/rename/copy/restore/import collision matrix.
-- [ ] Fault-injection атомарного UUID assignment и local registry update.
+- [x] Real-Anki тесты двух профилей с одинаковым числовым `cardId`.
+- [x] Restart/rename/copy/restore/import collision matrix.
+- [x] Fault-injection атомарного UUID assignment и local registry update.
 
 ## Components
 
 - Companion collection identity registry.
 - Collection configuration.
 - Bound collection settings/status UI.
-

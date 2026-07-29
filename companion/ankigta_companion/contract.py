@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from uuid import UUID
+
+from .collection_identity import (
+    CollectionCopyDecision,
+    CollectionIdentityObservation,
+    CollectionIdentityState,
+)
 
 
 PROTOCOL_NAME = "ankigta-control"
@@ -19,6 +26,11 @@ class CollectionState(StrEnum):
 class CollectionObservation:
     state: CollectionState
     profile_name: str | None = None
+    collection_uuid: str | None = None
+    identity_state: CollectionIdentityState | None = None
+    copy_decision_options: tuple[CollectionCopyDecision, ...] = ()
+    default_copy_decision: CollectionCopyDecision | None = None
+    identity_error_category: str | None = None
 
 
 @dataclass(frozen=True)
@@ -82,6 +94,75 @@ def error_response(error: ContractError) -> dict[str, object]:
     }
 
 
+def validate_collection_uuid(request: object, request_id: str) -> str:
+    assert isinstance(request, dict)
+    value = request.get("collectionUuid")
+    if not isinstance(value, str):
+        raise ContractError(
+            "invalid_collection_uuid",
+            "collectionUuid must be a UUID string",
+            request_id,
+        )
+    try:
+        return str(UUID(value))
+    except ValueError as error:
+        raise ContractError(
+            "invalid_collection_uuid",
+            "collectionUuid must be a UUID string",
+            request_id,
+        ) from error
+
+
+def validate_copy_decision(
+    request: object,
+    request_id: str,
+) -> CollectionCopyDecision:
+    assert isinstance(request, dict)
+    value = request.get("decision")
+    if not isinstance(value, str):
+        raise ContractError(
+            "invalid_copy_decision",
+            "decision must be previous_collection or new_copy",
+            request_id,
+        )
+    try:
+        return CollectionCopyDecision(value)
+    except ValueError as error:
+        raise ContractError(
+            "invalid_copy_decision",
+            "decision must be previous_collection or new_copy",
+            request_id,
+        ) from error
+
+
+def identity_response(
+    request_id: str,
+    observation: CollectionIdentityObservation,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "collectionUuid": observation.collection_uuid,
+        "identityState": observation.state.value,
+    }
+    if observation.error_category is not None:
+        payload["identityErrorCategory"] = observation.error_category
+    return {
+        "protocol": PROTOCOL_NAME,
+        "protocolVersion": PROTOCOL_VERSION,
+        "requestId": request_id,
+        "ok": observation.state is not CollectionIdentityState.ERROR,
+        "error": (
+            None
+            if observation.state is not CollectionIdentityState.ERROR
+            else {
+                "category": observation.error_category
+                or "collection_identity_failure",
+                "message": "collection identity could not be persisted",
+            }
+        ),
+        "payload": payload,
+    }
+
+
 def health_response(
     request_id: str,
     observation: RuntimeObservation,
@@ -94,10 +175,34 @@ def health_response(
     if not observation.fsrs_enabled:
         compatibility_reasons.append("fsrs_disabled")
     supported = not compatibility_reasons
-    collection = {
+    collection: dict[str, object] = {
         "state": observation.collection.state.value,
         "profileName": observation.collection.profile_name,
     }
+    identity_state = observation.collection.identity_state
+    if identity_state is not None:
+        collection.update(
+            {
+                "collectionUuid": observation.collection.collection_uuid,
+                "identityState": identity_state.value,
+            }
+        )
+        if observation.collection.copy_decision_options:
+            collection["copyDecision"] = {
+                "options": [
+                    option.value
+                    for option in observation.collection.copy_decision_options
+                ],
+                "default": (
+                    observation.collection.default_copy_decision.value
+                    if observation.collection.default_copy_decision is not None
+                    else None
+                ),
+            }
+        if observation.collection.identity_error_category is not None:
+            collection["identityErrorCategory"] = (
+                observation.collection.identity_error_category
+            )
     compatibility: dict[str, object] = {
         "status": "supported" if supported else "unsupported",
         "previewReadOnlyCompatible": True,
@@ -126,6 +231,21 @@ def health_response(
     else:
         status = 409
 
+    study: dict[str, object] = {
+        "sessionActive": False,
+        "ratingEnabled": False,
+    }
+    if (
+        identity_state is not None
+        and identity_state is not CollectionIdentityState.BOUND
+    ):
+        study.update(
+            {
+                "paused": True,
+                "pausedReason": identity_state.value,
+            }
+        )
+
     return status, {
         "protocol": PROTOCOL_NAME,
         "protocolVersion": PROTOCOL_VERSION,
@@ -140,9 +260,6 @@ def health_response(
             },
             "collection": collection,
             "compatibility": compatibility,
-            "study": {
-                "sessionActive": False,
-                "ratingEnabled": False,
-            },
+            "study": study,
         },
     }

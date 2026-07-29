@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import atexit
+from pathlib import Path
 
+from .collection_identity import CollectionIdentityService
 from .lifecycle import CompanionAddon
 
 
@@ -20,6 +22,12 @@ def _start_inside_anki() -> None:
         hooks=gui_hooks,
         anki_version=appVersion,
         defer=lambda delay_ms, action: QTimer.singleShot(delay_ms, action),
+        run_on_main=mw.taskman.run_on_main,
+        identity_service=CollectionIdentityService(
+            Path(mw.addonManager.addonsFolder(__name__))
+            / "user_files"
+            / "collection-registry.json"
+        ),
     )
     addon.start()
     atexit.register(addon.stop)
