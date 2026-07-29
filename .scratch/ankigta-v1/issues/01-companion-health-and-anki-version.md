@@ -4,25 +4,24 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 ## Acceptance criteria
 
-- [ ] Add-on загружается штатным способом в Anki Desktop 26.05 на Windows и не изменяет коллекцию при запуске.
-- [ ] Health-запрос возвращает versioned protocol envelope, `requestId`, версию Anki, наличие V3/FSRS и сведения о текущей открытой коллекции.
-- [ ] Отсутствующая или закрывающаяся коллекция возвращает отдельное наблюдаемое состояние, а не ложный success.
-- [ ] Неподдерживаемая версия/конфигурация видна как compatibility failure; Preview/read-only возможность не смешивается с разрешением rating/session.
-- [ ] Add-on не запускает Anki, не переключает профиль и не создаёт `ANKIGTA Session`.
+- [x] Add-on загружается штатным способом в Anki Desktop 26.05 на Windows и не изменяет коллекцию при запуске.
+- [x] Health-запрос возвращает versioned protocol envelope, `requestId`, версию Anki, наличие V3/FSRS и сведения о текущей открытой коллекции.
+- [x] Отсутствующая или закрывающаяся коллекция возвращает отдельное наблюдаемое состояние, а не ложный success.
+- [x] Неподдерживаемая версия/конфигурация видна как compatibility failure; Preview/read-only возможность не смешивается с разрешением rating/session.
+- [x] Add-on не запускает Anki, не переключает профиль и не создаёт `ANKIGTA Session`.
 
 ## Tests
 
-- [ ] Интеграционный тест на настоящем Anki Desktop 26.05 с FSRS.
-- [ ] Contract-тест корректного, отсутствующего и повреждённого `requestId`/protocol envelope.
-- [ ] Lifecycle-тест открытия/закрытия коллекции и выгрузки add-on без мутации Anki.
+- [x] Интеграционный тест на настоящем Anki Desktop 26.05 с FSRS.
+- [x] Contract-тест корректного, отсутствующего и повреждённого `requestId`/protocol envelope.
+- [x] Lifecycle-тест открытия/закрытия коллекции и выгрузки add-on без мутации Anki.
 
 ## Components
 
 - Companion add-on lifecycle.
 - Versioned companion control contract.
 - Anki compatibility probe.
-
