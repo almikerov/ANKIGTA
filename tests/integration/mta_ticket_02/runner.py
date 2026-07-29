@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import time
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from threading import Thread
@@ -25,6 +26,28 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PRODUCTION_RESOURCE = REPO_ROOT / "mta" / "ankigta"
 DRIVER_RESOURCE = Path(__file__).resolve().parent / "driver"
 EXPECTED_MTA_BUILD = 24124
+
+
+@dataclass(frozen=True)
+class HealthCase:
+    anki_version: str
+    collection_state: CollectionState
+    profile_name: str | None
+
+
+HEALTH_CASES = {
+    "success": HealthCase("26.05", CollectionState.OPEN, "Ticket 02"),
+    "collection_unavailable": HealthCase(
+        "26.05",
+        CollectionState.ABSENT,
+        None,
+    ),
+    "compatibility_failure": HealthCase(
+        "25.07.3",
+        CollectionState.OPEN,
+        "Ticket 02",
+    ),
+}
 
 ADVERSE_CASES: dict[str, dict[str, object]] = {
     "wrong_content_type": {"content_type": "text/plain"},
@@ -211,6 +234,33 @@ def _server_executable(server_root: Path) -> Path:
     raise RuntimeError(f"MTA Server executable is missing under {server_root}")
 
 
+def _install_late_callback_probe(target_resource: Path) -> None:
+    probe_source = DRIVER_RESOURCE / "late_callback_probe.lua"
+    probe_relative_path = "tests/late_callback_probe.lua"
+    probe_target = target_resource / probe_relative_path
+    probe_target.parent.mkdir(parents=True)
+    shutil.copy2(probe_source, probe_target)
+
+    manifest_path = target_resource / "meta.xml"
+    manifest = ET.parse(manifest_path)
+    root = manifest.getroot()
+    scripts = list(root.findall("script"))
+    companion_script = next(
+        script
+        for script in scripts
+        if script.get("src") == "server/companion.lua"
+    )
+    companion_index = list(root).index(companion_script)
+    root.insert(
+        companion_index + 1,
+        ET.Element(
+            "script",
+            {"src": probe_relative_path, "type": "server"},
+        ),
+    )
+    manifest.write(manifest_path, encoding="utf-8", xml_declaration=False)
+
+
 def _prepare_runtime(mta_server_root: Path, case: dict[str, object]) -> tuple[Path, Path]:
     temp_root = Path(tempfile.mkdtemp(prefix="ankigta-ticket02-"))
     server_root = temp_root / "server"
@@ -220,6 +270,8 @@ def _prepare_runtime(mta_server_root: Path, case: dict[str, object]) -> tuple[Pa
     driver_resource = resources / "ankigta_ticket02_tests"
     shutil.copytree(PRODUCTION_RESOURCE, target_resource)
     shutil.copytree(DRIVER_RESOURCE, driver_resource)
+    if case["name"] == "late_callback":
+        _install_late_callback_probe(target_resource)
     (driver_resource / "case.json").write_text(
         json.dumps(case, ensure_ascii=False),
         encoding="utf-8",
@@ -289,30 +341,15 @@ def _run_mta(
 
 
 def run_health_case(mta_server_root: Path, case_name: str) -> dict[str, Any]:
-    if case_name in {
-        "success",
-        "collection_unavailable",
-        "compatibility_failure",
-    }:
+    health_case = HEALTH_CASES.get(case_name)
+    if health_case is not None:
         observation = RuntimeObservation(
-            anki_version=(
-                "25.07.3"
-                if case_name == "compatibility_failure"
-                else "26.05"
-            ),
+            anki_version=health_case.anki_version,
             v3_scheduler=True,
             fsrs_enabled=True,
             collection=CollectionObservation(
-                state=(
-                    CollectionState.ABSENT
-                    if case_name == "collection_unavailable"
-                    else CollectionState.OPEN
-                ),
-                profile_name=(
-                    None
-                    if case_name == "collection_unavailable"
-                    else "Ticket 02"
-                ),
+                state=health_case.collection_state,
+                profile_name=health_case.profile_name,
             ),
         )
         server_context: HealthServer | AdverseHealthServer = HealthServer(

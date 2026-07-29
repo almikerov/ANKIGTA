@@ -4,7 +4,6 @@ local PROTOCOL_NAME = "ankigta-control"
 local PROTOCOL_VERSION = 1
 local HEALTH_PATH = "/v1/health"
 local REQUEST_TIMEOUT_MS = 4900
-local LATE_CALLBACK_GRACE_MS = 500
 local STUDY_RIGHT = "resource.ankigta.study"
 
 local Gateway = {
@@ -214,15 +213,11 @@ local function timeoutRequest(requestId, generation)
     local handle = request.handle
     settle(request, "disconnected", "timeout", false)
     if handle then
-        setTimer(function(requestHandle)
-            if getRemoteRequestInfo(requestHandle) then
-                abortRemoteRequest(requestHandle)
-            end
-        end, LATE_CALLBACK_GRACE_MS, 1, handle)
+        abortRemoteRequest(handle)
     end
 end
 
-local function healthCallback(body, info, requestId, generation)
+function Gateway.receiveHealthResponse(body, info, requestId, generation)
     local request = Gateway.pending[requestId]
     if not request or request.generation ~= generation or request.settled then
         Gateway.quarantinedCallbacks = Gateway.quarantinedCallbacks + 1
@@ -339,7 +334,7 @@ function Gateway.requestHealth(port, requestId, player)
             connectTimeout = 4000,
             maxRedirects = 0,
         },
-        healthCallback,
+        Gateway.receiveHealthResponse,
         {
             requestId,
             request.generation,
