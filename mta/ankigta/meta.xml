@@ -1,0 +1,17 @@
+<meta>
+    <info
+        author="ANKIGTA"
+        name="ANKIGTA"
+        version="0.1.0"
+        type="script"
+    />
+    <min_mta_version server="1.6.0-9.24124.0" client="1.6.0-9.24124.0" />
+    <script src="server/store.lua" type="server" />
+    <script src="server/main.lua" type="server" />
+    <script src="client/f7.lua" type="client" cache="false" />
+    <map src="maps/ticket05.map" dimension="0" />
+    <export function="requestCompanionHealth" type="server" />
+    <export function="getCompanionConnectionStatus" type="server" />
+    <export function="getF7SnapshotForAccount" type="server" />
+    <export function="getStoreStatus" type="server" />
+</meta>

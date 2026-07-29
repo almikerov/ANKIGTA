@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 ## Acceptance criteria
 
@@ -27,4 +27,3 @@
 - MTA ACL authorization.
 - Minimal F7 server/client UI.
 - Runtime Instance observation.
-

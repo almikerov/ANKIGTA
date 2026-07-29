@@ -1,0 +1,16 @@
+<map>
+    <object
+        id="ankigta-ticket05-runtime"
+        model="1337"
+        posX="10.5"
+        posY="-20.25"
+        posZ="4.75"
+        rotX="0"
+        rotY="0"
+        rotZ="135"
+        interior="3"
+        dimension="17"
+        collisions="true"
+        breakable="true"
+    />
+</map>
