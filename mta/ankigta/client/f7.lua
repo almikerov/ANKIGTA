@@ -2,10 +2,13 @@ local F7_REQUEST_EVENT = "ankigta:requestF7"
 local F7_SNAPSHOT_EVENT = "ankigta:f7Snapshot"
 local F7_DENIED_EVENT = "ankigta:f7Denied"
 local AUTHORIZATION_EVENT = "ankigta:setAuthorized"
+local AUTHORIZATION_REQUEST_EVENT = "ankigta:requestAuthorization"
 
 local authorized = false
 local window = nil
 local grid = nil
+local cursorOwned = false
+local cursorWasShowing = false
 
 local function closeF7()
     if isElement(window) then
@@ -13,7 +16,11 @@ local function closeF7()
     end
     window = nil
     grid = nil
-    showCursor(false)
+    if cursorOwned then
+        showCursor(cursorWasShowing)
+        cursorOwned = false
+        cursorWasShowing = false
+    end
 end
 
 local function runtimeStatus(runtime)
@@ -92,6 +99,8 @@ local function renderSnapshot(snapshot)
         )
     end
 
+    cursorWasShowing = isCursorShowing()
+    cursorOwned = true
     showCursor(true)
 end
 
@@ -129,6 +138,10 @@ addEvent(F7_DENIED_EVENT, true)
 addEventHandler(F7_DENIED_EVENT, resourceRoot, function()
     authorized = false
     closeF7()
+end)
+
+addEventHandler("onClientResourceStart", resourceRoot, function()
+    triggerServerEvent(AUTHORIZATION_REQUEST_EVENT, resourceRoot)
 end)
 
 addEventHandler("onClientResourceStop", resourceRoot, closeF7)

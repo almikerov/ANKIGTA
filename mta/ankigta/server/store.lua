@@ -1,7 +1,6 @@
 ANKIGTA = ANKIGTA or {}
 
 local DATABASE_PATH = "ankigta.sqlite"
-local MIGRATION_BACKUP_PATH = "backups/pre-migration-v1-to-v2.sqlite"
 local CURRENT_SCHEMA_VERSION = 2
 
 local TRACER_MAP = {
@@ -174,67 +173,7 @@ local function createCurrentSchema(connection)
     })
 end
 
-local function verifyDatabase(path, expectedVersion)
-    local verification = connect(path)
-    if not verification then
-        return false, "backup_open_failed"
-    end
-
-    local foreignKeysOk, foreignKeysError = enableForeignKeys(verification)
-    if not foreignKeysOk then
-        destroyElement(verification)
-        return false, foreignKeysError
-    end
-
-    local integrityOk, integrityRows = execute(verification, "PRAGMA integrity_check")
-    local version = readSchemaVersion(verification)
-    destroyElement(verification)
-
-    if not integrityOk or not integrityRows[1] then
-        return false, "backup_integrity_check_failed"
-    end
-
-    local integrity = integrityRows[1].integrity_check
-        or integrityRows[1]["integrity_check"]
-    if tostring(integrity) ~= "ok" then
-        return false, "backup_integrity_check_failed"
-    end
-
-    if version ~= expectedVersion then
-        return false, "backup_schema_version_mismatch"
-    end
-    return true
-end
-
-local function createVerifiedMigrationBackup(sourceVersion)
-    closeConnection()
-    if fileExists(MIGRATION_BACKUP_PATH) then
-        fileDelete(MIGRATION_BACKUP_PATH)
-    end
-
-    if not fileCopy(DATABASE_PATH, MIGRATION_BACKUP_PATH, true) then
-        return false, "backup_copy_failed"
-    end
-
-    return verifyDatabase(MIGRATION_BACKUP_PATH, sourceVersion)
-end
-
 local function migrateVersionOne()
-    local backupOk, backupError = createVerifiedMigrationBackup(1)
-    if not backupOk then
-        return false, backupError
-    end
-
-    Store.connection = connect(DATABASE_PATH)
-    if not Store.connection then
-        return false, "database_reopen_failed"
-    end
-
-    local foreignKeysOk, foreignKeysError = enableForeignKeys(Store.connection)
-    if not foreignKeysOk then
-        return false, foreignKeysError
-    end
-
     return transaction(Store.connection, {
         {
             "ALTER TABLE map_entities ADD COLUMN rotation_x REAL NOT NULL DEFAULT 0",

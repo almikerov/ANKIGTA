@@ -5,6 +5,9 @@ local F7_REQUEST_EVENT = "ankigta:requestF7"
 local F7_SNAPSHOT_EVENT = "ankigta:f7Snapshot"
 local F7_DENIED_EVENT = "ankigta:f7Denied"
 local AUTHORIZATION_EVENT = "ankigta:setAuthorized"
+local AUTHORIZATION_REQUEST_EVENT = "ankigta:requestAuthorization"
+-- Ticket 05 uses this only to observe a disposable map-created element.
+-- Persistent Map Entity identity remains the responsibility of ticket 06.
 local RUNTIME_REFERENCE_ID = "ankigta-ticket05-runtime"
 
 local runtimeInstance = nil
@@ -13,25 +16,6 @@ local function denial(category)
     return {
         category = category,
     }
-end
-
-local function accountAuthorization(account)
-    if not account or isGuestAccount(account) then
-        return false, denial("authentication_required")
-    end
-
-    local accountName = getAccountName(account)
-    if not accountName
-        or not hasObjectPermissionTo(
-            "user." .. accountName,
-            STUDY_RIGHT,
-            false
-        )
-    then
-        return false, denial("forbidden")
-    end
-
-    return true
 end
 
 local function playerAuthorization(player)
@@ -116,43 +100,18 @@ local function buildF7Snapshot()
     }
 end
 
-local function snapshotForAccount(account)
-    local authorized, authorizationError = accountAuthorization(account)
-    if not authorized then
-        return false, authorizationError
-    end
-
-    if not ANKIGTA.Store.status().ready then
-        return false, denial("storage_unavailable")
-    end
-    return buildF7Snapshot()
-end
-
-function getF7SnapshotForAccount(account)
-    return snapshotForAccount(account)
-end
-
 function getStoreStatus()
     return ANKIGTA.Store.status()
 end
 
 local function sendAuthorization(player)
     local authorized = playerAuthorization(player)
-    if authorized then
-        triggerClientEvent(
-            player,
-            AUTHORIZATION_EVENT,
-            resourceRoot,
-            true
-        )
-    else
-        triggerClientEvent(
-            player,
-            AUTHORIZATION_EVENT,
-            resourceRoot,
-            false
-        )
-    end
+    triggerClientEvent(
+        player,
+        AUTHORIZATION_EVENT,
+        resourceRoot,
+        authorized == true
+    )
 end
 
 local function sendF7Snapshot(player)
@@ -193,6 +152,14 @@ addEventHandler(F7_REQUEST_EVENT, resourceRoot, function()
         return
     end
     sendF7Snapshot(client)
+end)
+
+addEvent(AUTHORIZATION_REQUEST_EVENT, true)
+addEventHandler(AUTHORIZATION_REQUEST_EVENT, resourceRoot, function()
+    if not client or source ~= resourceRoot then
+        return
+    end
+    sendAuthorization(client)
 end)
 
 addEventHandler("onPlayerLogin", root, function()

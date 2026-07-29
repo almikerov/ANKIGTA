@@ -14,6 +14,5 @@
     <map src="maps/ticket05.map" dimension="0" />
     <export function="requestCompanionHealth" type="server" />
     <export function="getCompanionConnectionStatus" type="server" />
-    <export function="getF7SnapshotForAccount" type="server" />
     <export function="getStoreStatus" type="server" />
 </meta>
