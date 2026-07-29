@@ -4,6 +4,11 @@ local SETTINGS_REQUEST_EVENT = "ankigta:requestConnectionSettings"
 local SETTINGS_SNAPSHOT_EVENT = "ankigta:connectionSettingsSnapshot"
 local SETTINGS_UPDATE_EVENT = "ankigta:updateConnectionSettings"
 
+ANKIGTA = ANKIGTA or {}
+ANKIGTA.ConnectionWarning = ANKIGTA.ConnectionWarning or {
+    emptyTokenDismissed = false,
+}
+
 local statusWindow = nil
 local settingsWindow = nil
 local cursorOwned = false
@@ -97,7 +102,7 @@ end
 local function openSettingsWindow(snapshot)
     closeSettingsWindow()
     local width = 470
-    local height = 290
+    local height = 330
     local screenWidth, screenHeight = guiGetScreenSize()
     settingsWindow = guiCreateWindow(
         (screenWidth - width) / 2,
@@ -157,9 +162,23 @@ local function openSettingsWindow(snapshot)
         false,
         settingsWindow
     )
+    local dismissWarningButton = false
+    if snapshot.tokenDisabled
+        and not ANKIGTA.ConnectionWarning.emptyTokenDismissed
+    then
+        dismissWarningButton = guiCreateButton(
+            150,
+            180,
+            280,
+            28,
+            "Dismiss empty-token warning",
+            false,
+            settingsWindow
+        )
+    end
     local manualButton = guiCreateButton(
         18,
-        192,
+        220,
         205,
         34,
         "Manual Connection Mode",
@@ -168,7 +187,7 @@ local function openSettingsWindow(snapshot)
     )
     local automaticButton = guiCreateButton(
         235,
-        192,
+        220,
         205,
         34,
         "Automatic Connection Mode",
@@ -177,7 +196,7 @@ local function openSettingsWindow(snapshot)
     )
     local closeButton = guiCreateButton(
         18,
-        236,
+        264,
         422,
         30,
         "Close",
@@ -196,6 +215,7 @@ local function openSettingsWindow(snapshot)
             )
             return
         end
+        ANKIGTA.ConnectionWarning.emptyTokenDismissed = false
         triggerServerEvent(
             SETTINGS_UPDATE_EVENT,
             resourceRoot,
@@ -208,12 +228,24 @@ local function openSettingsWindow(snapshot)
         )
     end, false)
     addEventHandler("onClientGUIClick", automaticButton, function()
+        ANKIGTA.ConnectionWarning.emptyTokenDismissed = false
         triggerServerEvent(
             SETTINGS_UPDATE_EVENT,
             resourceRoot,
             {mode = "automatic"}
         )
     end, false)
+    if isElement(dismissWarningButton) then
+        addEventHandler(
+            "onClientGUIClick",
+            dismissWarningButton,
+            function()
+                ANKIGTA.ConnectionWarning.emptyTokenDismissed = true
+                destroyElement(dismissWarningButton)
+            end,
+            false
+        )
+    end
     addEventHandler(
         "onClientGUIClick",
         closeButton,

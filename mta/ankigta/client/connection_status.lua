@@ -1,5 +1,10 @@
 local STATUS_EVENT = "ankigta:companionStatus"
 
+ANKIGTA = ANKIGTA or {}
+ANKIGTA.ConnectionWarning = ANKIGTA.ConnectionWarning or {
+    emptyTokenDismissed = false,
+}
+
 local MESSAGES = {
     en = {
         connected = "ANKIGTA Companion: connected",
@@ -66,7 +71,12 @@ addEventHandler(STATUS_EVENT, resourceRoot, function(status)
     end
     outputChatBox(statusMessage(status), 196, 224, 255)
     local warningCategory = tostring(status.warningCategory or "")
-    if warningCategory ~= "" then
+    if warningCategory ~= ""
+        and not (
+            warningCategory == "empty_token"
+            and ANKIGTA.ConnectionWarning.emptyTokenDismissed
+        )
+    then
         local warning = messages()[warningCategory]
         if warning then
             outputChatBox(warning, 255, 196, 96)

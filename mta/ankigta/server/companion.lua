@@ -16,7 +16,6 @@ local Gateway = {
     pending = {},
     quarantinedCallbacks = 0,
     autoReconnectTimer = false,
-    legacyManualGatewayUsed = false,
     status = {
         state = "disconnected",
         category = false,
@@ -513,14 +512,10 @@ end)
 
 addEventHandler("onResourceStart", resourceRoot, function()
     setTimer(function()
-        if not Gateway.legacyManualGatewayUsed then
-            Gateway.connectConfigured(false, false)
-        end
+        Gateway.connectConfigured(false, false)
     end, 100, 1)
     Gateway.autoReconnectTimer = setTimer(function()
-        if not Gateway.legacyManualGatewayUsed then
-            Gateway.connectConfigured(false, false)
-        end
+        Gateway.connectConfigured(false, false)
     end, AUTO_RECONNECT_INTERVAL_MS, 0)
 end)
 
@@ -531,9 +526,8 @@ addEventHandler("onPlayerLogin", root, function()
     end, 100, 1)
 end)
 
-function requestCompanionHealth(port, requestId, player)
-    Gateway.legacyManualGatewayUsed = true
-    return Gateway.requestHealth(port, requestId, player)
+function requestCompanionHealth(_port, _requestId, player)
+    return Gateway.connectConfigured(player, true)
 end
 
 function connectCompanion(player)

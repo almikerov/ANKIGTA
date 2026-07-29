@@ -275,3 +275,33 @@ def test_restart_publication_failure_does_not_leave_listener_running(
             _ = restarted.server
     finally:
         occupied.close()
+
+
+def test_failed_first_publication_keeps_setup_unconfigured(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resource_folder = tmp_path / "ankigta"
+    resource_folder.mkdir()
+    (resource_folder / "meta.xml").write_text("<meta />", encoding="utf-8")
+    manager = CompanionConnectionManager(
+        observe=supported_observation,
+        settings_path=tmp_path / "user_files" / "connection-settings.json",
+        generate_token=lambda: "generated-token",
+    )
+    manager.start()
+
+    def fail_publish(_publisher: object, _config: object) -> None:
+        raise OSError("injected first publication failure")
+
+    monkeypatch.setattr(
+        connection_module.ConnectionConfigPublisher,
+        "publish",
+        fail_publish,
+    )
+
+    with pytest.raises(OSError, match="first publication failure"):
+        manager.select_resource_folder(resource_folder)
+
+    assert manager.status()["configured"] is False
+    manager.stop()

@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.error import URLError
 
 from ankigta_companion.connection import CompanionConnectionManager
+from ankigta_companion.connection_settings_ui import connection_summary
 from ankigta_companion.contract import (
     CollectionObservation,
     CollectionState,
@@ -92,6 +93,14 @@ def test_mta_config_reader_validates_current_and_last_known_good() -> None:
         fragment not in source
         for fragment in ('"localhost"', '"::1"', '"0.0.0.0"')
     )
+    gateway = (MTA_RESOURCE / "server" / "companion.lua").read_text(
+        encoding="utf-8"
+    )
+    exported_request = gateway[gateway.index("function requestCompanionHealth") :]
+    exported_request = exported_request[: exported_request.index("\nend") + 4]
+    assert "Gateway.connectConfigured" in exported_request
+    assert "Gateway.requestHealth" not in exported_request
+    assert "legacyManualGatewayUsed" not in gateway
 
 
 def test_mta_connection_ui_masks_replacement_token_and_offers_connect() -> None:
@@ -105,6 +114,8 @@ def test_mta_connection_ui_masks_replacement_token_and_offers_connect() -> None:
     assert "guiEditSetMasked" in source
     assert "keepToken" in source
     assert "Disable token explicitly" in source
+    assert "Dismiss empty-token warning" in source
+    assert "emptyTokenDismissed" in source
     assert "ankigta:connectCompanion" in source
     assert "ankigta:updateConnectionSettings" in source
     assert all(
@@ -156,7 +167,40 @@ def test_repository_local_transport_wrong_empty_token_port_change_and_reconnect(
     manager.stop()
 
 
-def test_secret_scan_excludes_tokens_from_ui_logs_and_config_diagnostics() -> None:
+def test_secret_scan_excludes_tokens_from_ui_logs_and_config_diagnostics(
+    tmp_path: Path,
+    capsys: object,
+) -> None:
+    secret = "ticket03-generated-disposable-token"
+    resource_folder = tmp_path / "ankigta"
+    resource_folder.mkdir()
+    (resource_folder / "meta.xml").write_text("<meta />", encoding="utf-8")
+    manager = CompanionConnectionManager(
+        observe=supported_observation,
+        settings_path=tmp_path / "user_files" / "connection-settings.json",
+        generate_token=lambda: secret,
+    )
+    manager.start()
+    manager.select_resource_folder(resource_folder)
+    status = manager.status()
+    summary = connection_summary(status)
+    wrong_token_status = health_status(
+        manager.server.port,
+        "ticket03-wrong-disposable-token",
+    )
+    captured = capsys.readouterr()  # type: ignore[attr-defined]
+    manager.stop()
+
+    diagnostics = json.dumps(
+        {
+            "status": status,
+            "summary": summary,
+            "wrongTokenStatus": wrong_token_status,
+            "stdout": captured.out,
+            "stderr": captured.err,
+        },
+        ensure_ascii=False,
+    )
     ui_sources = "\n".join(
         path.read_text(encoding="utf-8")
         for path in (
@@ -165,8 +209,23 @@ def test_secret_scan_excludes_tokens_from_ui_logs_and_config_diagnostics() -> No
         )
     )
 
-    for secret in (
-        "ticket03-generated-disposable-token",
-        "ticket03-wrong-disposable-token",
-    ):
+    gateway_source = (
+        MTA_RESOURCE / "server" / "companion.lua"
+    ).read_text(encoding="utf-8")
+    sanitized_block = gateway_source[
+        gateway_source.index("local function sanitizedConfig") :
+        gateway_source.index("local function syntheticConfigFailure")
+    ]
+    config_source = (
+        MTA_RESOURCE / "server" / "connection_config.lua"
+    ).read_text(encoding="utf-8")
+    sanitized_status_block = config_source[
+        config_source.index("function ConnectionConfig.getSanitizedStatus") :
+        config_source.index("ANKIGTA.ConnectionConfig = ConnectionConfig")
+    ]
+
+    for secret in (secret, "ticket03-wrong-disposable-token"):
+        assert secret not in diagnostics
         assert secret not in ui_sources
+    assert "token = " not in sanitized_block
+    assert "token = " not in sanitized_status_block

@@ -114,9 +114,13 @@ class CompanionConnectionManager:
     def select_resource_folder(self, resource_folder: Path) -> None:
         settings = self._required_settings()
         publisher = ConnectionConfigPublisher(resource_folder)
-        settings.resource_folder = resource_folder.resolve()
-        self._publish(publisher, settings)
-        self._persist(settings)
+        proposed = replace(
+            settings,
+            resource_folder=resource_folder.resolve(),
+        )
+        self._publish(publisher, proposed)
+        self._persist(proposed)
+        self._settings = proposed
 
     def set_manual_connection(self, port: int, token: str | None) -> None:
         if port < 1 or port > 65535:
