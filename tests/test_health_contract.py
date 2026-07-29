@@ -90,6 +90,74 @@ def test_supported_open_collection_is_observable_without_enabling_study() -> Non
     }
 
 
+def test_protected_listener_checks_token_before_health_dispatch() -> None:
+    observation = RuntimeObservation(
+        anki_version="26.05",
+        v3_scheduler=True,
+        fsrs_enabled=True,
+        collection=CollectionObservation(state=CollectionState.OPEN),
+    )
+    observe_calls = 0
+
+    def observe() -> RuntimeObservation:
+        nonlocal observe_calls
+        observe_calls += 1
+        return observation
+
+    with HealthServer(observe, token="correct-secret") as server:
+        connection = HTTPConnection(server.host, server.port, timeout=2)
+        body = json.dumps(
+            {
+                "protocol": "ankigta-control",
+                "protocolVersion": 1,
+                "requestId": "protected-health",
+            }
+        )
+        connection.request(
+            "POST",
+            "/v1/health",
+            body=body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": "Bearer wrong-secret",
+            },
+        )
+        response = connection.getresponse()
+        payload = json.loads(response.read())
+        connection.close()
+
+    assert response.status == 401
+    assert payload["requestId"] == "protected-health"
+    assert payload["error"] == {
+        "category": "authorization_failure",
+        "message": "connection token was rejected",
+    }
+    assert "correct-secret" not in json.dumps(payload)
+    assert observe_calls == 0
+
+
+def test_explicit_empty_token_allows_health_in_unprotected_mode() -> None:
+    observation = RuntimeObservation(
+        anki_version="26.05",
+        v3_scheduler=True,
+        fsrs_enabled=True,
+        collection=CollectionObservation(state=CollectionState.OPEN),
+    )
+
+    with HealthServer(lambda: observation, token="") as server:
+        status, response = post_health(
+            server,
+            {
+                "protocol": "ankigta-control",
+                "protocolVersion": 1,
+                "requestId": "unprotected-health",
+            },
+        )
+
+    assert status == 200
+    assert response["ok"] is True
+
+
 @pytest.mark.parametrize(
     ("request_body", "category"),
     [

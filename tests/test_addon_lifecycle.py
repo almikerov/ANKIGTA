@@ -194,3 +194,34 @@ def test_bound_collection_selection_pauses_a_different_open_collection(
         "pausedReason": "wrong_collection",
     }
     addon.stop()
+
+
+def test_addon_connection_setup_uses_generated_token_without_starting_study(
+    tmp_path: Path,
+) -> None:
+    resource_folder = tmp_path / "ankigta"
+    resource_folder.mkdir()
+    (resource_folder / "meta.xml").write_text("<meta />", encoding="utf-8")
+    main_window = FakeMainWindow(col=FakeCollection(fsrs=True))
+    addon = CompanionAddon(
+        main_window=main_window,
+        hooks=FakeHooks(),
+        anki_version="26.05",
+        defer=lambda _delay_ms, _action: None,
+        connection_settings_path=(
+            tmp_path / "user_files" / "connection-settings.json"
+        ),
+        generate_connection_token=lambda: "addon-generated-token",
+    )
+
+    addon.start()
+    addon.select_mta_resource_folder(resource_folder)
+
+    published = (resource_folder / "connection.json").read_text(encoding="utf-8")
+    assert '"token": "addon-generated-token"' in published
+    assert addon.connection_status()["mode"] == "automatic"
+    status, response = request_health(addon, "protected-without-token")
+    assert status == 401
+    assert response["error"]["category"] == "authorization_failure"
+    assert response["payload"] is None
+    addon.stop()

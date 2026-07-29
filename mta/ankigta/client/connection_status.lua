@@ -9,6 +9,12 @@ local MESSAGES = {
         transport_error = "ANKIGTA Companion: transport error",
         collection_unavailable = "ANKIGTA Companion: collection unavailable",
         compatibility_failure = "ANKIGTA Companion: incompatible Anki configuration",
+        authorization_failure = "ANKIGTA Companion: connection token rejected",
+        connection_config_invalid = "ANKIGTA Companion: connection configuration is invalid",
+        manual_connection_config_invalid = "ANKIGTA Companion: manual connection settings are invalid",
+        effective_config_mismatch = "ANKIGTA Companion: effective settings do not match",
+        connection_config_rollback = "ANKIGTA Companion: using last-known-good settings",
+        empty_token = "ANKIGTA Companion: token protection is disabled",
         disconnected = "ANKIGTA Companion: disconnected",
     },
     ru = {
@@ -19,6 +25,12 @@ local MESSAGES = {
         transport_error = "ANKIGTA Companion: ошибка транспорта",
         collection_unavailable = "ANKIGTA Companion: коллекция недоступна",
         compatibility_failure = "ANKIGTA Companion: конфигурация Anki несовместима",
+        authorization_failure = "ANKIGTA Companion: токен подключения отклонён",
+        connection_config_invalid = "ANKIGTA Companion: конфигурация подключения повреждена",
+        manual_connection_config_invalid = "ANKIGTA Companion: ручные настройки подключения повреждены",
+        effective_config_mismatch = "ANKIGTA Companion: effective-настройки не совпадают",
+        connection_config_rollback = "ANKIGTA Companion: используется предыдущая рабочая конфигурация",
+        empty_token = "ANKIGTA Companion: защита токеном отключена",
         disconnected = "ANKIGTA Companion: отключено",
     },
 }
@@ -53,4 +65,11 @@ addEventHandler(STATUS_EVENT, resourceRoot, function(status)
         return
     end
     outputChatBox(statusMessage(status), 196, 224, 255)
+    local warningCategory = tostring(status.warningCategory or "")
+    if warningCategory ~= "" then
+        local warning = messages()[warningCategory]
+        if warning then
+            outputChatBox(warning, 255, 196, 96)
+        end
+    end
 end)

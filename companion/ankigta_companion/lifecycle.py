@@ -11,6 +11,7 @@ from .collection_identity import (
     CollectionIdentityObservation,
     CollectionIdentityService,
 )
+from .connection import CompanionConnectionManager
 from .contract import (
     CollectionObservation,
     CollectionState,
@@ -90,6 +91,8 @@ class CompanionAddon:
         defer: Callable[[int, Callable[[], None]], None],
         port: int = 0,
         identity_service: CollectionIdentityService | None = None,
+        connection_settings_path: Path | None = None,
+        generate_connection_token: Callable[[], str] | None = None,
     ) -> None:
         self._main_window = main_window
         self._hooks = hooks
@@ -104,9 +107,22 @@ class CompanionAddon:
                 collection=CollectionObservation(state=CollectionState.ABSENT),
             )
         )
-        self.server = HealthServer(
-            self._observations.get,
-            port=port,
+        self._connection_manager = (
+            CompanionConnectionManager(
+                observe=self._observations.get,
+                settings_path=connection_settings_path,
+                generate_token=generate_connection_token,
+            )
+            if connection_settings_path is not None
+            else None
+        )
+        self._legacy_server = (
+            None
+            if self._connection_manager is not None
+            else HealthServer(
+                self._observations.get,
+                port=port,
+            )
         )
         self._started = False
         self._collection_generation = 0
@@ -124,13 +140,19 @@ class CompanionAddon:
         )
         if self._main_window.col is not None:
             self._on_profile_did_open()
-        self.server.start()
+        if self._connection_manager is not None:
+            self._connection_manager.start()
+        else:
+            self.server.start()
         self._started = True
 
     def stop(self) -> None:
         if not self._started:
             return
-        self.server.stop()
+        if self._connection_manager is not None:
+            self._connection_manager.stop()
+        else:
+            self.server.stop()
         self._hooks.profile_did_open.remove(self._on_profile_did_open)
         self._hooks.profile_will_close.remove(self._on_profile_will_close)
         self._hooks.collection_will_temporarily_close.remove(
@@ -264,3 +286,33 @@ class CompanionAddon:
 
     def current_collection_identity(self) -> CollectionIdentityObservation | None:
         return self._observations.get().collection.identity
+
+    @property
+    def server(self) -> HealthServer:
+        if self._connection_manager is not None:
+            return self._connection_manager.server
+        if self._legacy_server is None:
+            raise RuntimeError("companion server is unavailable")
+        return self._legacy_server
+
+    def select_mta_resource_folder(self, resource_folder: Path) -> None:
+        self._required_connection_manager().select_resource_folder(
+            resource_folder
+        )
+
+    def set_manual_connection(self, port: int, token: str | None) -> None:
+        self._required_connection_manager().set_manual_connection(port, token)
+
+    def use_automatic_connection(self) -> None:
+        self._required_connection_manager().use_automatic_connection()
+
+    def dismiss_unprotected_warning(self) -> None:
+        self._required_connection_manager().dismiss_unprotected_warning()
+
+    def connection_status(self) -> dict[str, object]:
+        return self._required_connection_manager().status()
+
+    def _required_connection_manager(self) -> CompanionConnectionManager:
+        if self._connection_manager is None:
+            raise RuntimeError("connection settings are unavailable")
+        return self._connection_manager

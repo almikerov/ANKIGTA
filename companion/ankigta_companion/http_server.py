@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from hmac import compare_digest
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -82,8 +83,10 @@ class HealthServer:
         self,
         observe: Callable[[], RuntimeObservation],
         port: int = 0,
+        token: str | None = None,
     ) -> None:
         self._observe = observe
+        self._token = token or None
         self._server = BoundedHTTPServer(
             (self.host, port),
             self._handler_type(),
@@ -100,6 +103,7 @@ class HealthServer:
 
     def _handler_type(self) -> type[BaseHTTPRequestHandler]:
         observe = self._observe
+        token = self._token
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self) -> None:
@@ -144,6 +148,20 @@ class HealthServer:
                 except ContractError as error:
                     self._write_json(400, error_response(error))
                     return
+                if token is not None:
+                    expected = f"Bearer {token}"
+                    provided = self.headers.get("Authorization", "")
+                    if not compare_digest(provided, expected):
+                        authorization_error = ContractError(
+                            "authorization_failure",
+                            "connection token was rejected",
+                            request_id,
+                        )
+                        self._write_json(
+                            401,
+                            error_response(authorization_error),
+                        )
+                        return
                 if self.path == HEALTH_PATH:
                     status, response = health_response(request_id, observe())
                     self._write_json(status, response)
