@@ -194,4 +194,3 @@ def test_bound_collection_selection_pauses_a_different_open_collection(
         "pausedReason": "wrong_collection",
     }
     addon.stop()
-
