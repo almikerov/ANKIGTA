@@ -1,10 +1,21 @@
+local productionFetchRemote = fetchRemote
+local capturedCallback = false
+local capturedArguments = false
+
+function fetchRemote(url, options, callback, callbackArguments)
+    capturedCallback = callback
+    capturedArguments = callbackArguments
+    return productionFetchRemote(url, options, callback, callbackArguments)
+end
+
 addEventHandler("onResourceStart", resourceRoot, function()
     setTimer(function()
-        local gateway = ANKIGTA and ANKIGTA.CompanionGateway
-        if not gateway or type(gateway.receiveHealthResponse) ~= "function" then
+        if type(capturedCallback) ~= "function"
+            or type(capturedArguments) ~= "table"
+        then
             return
         end
-        gateway.receiveHealthResponse(
+        capturedCallback(
             "{}",
             {
                 success = true,
@@ -13,8 +24,7 @@ addEventHandler("onResourceStart", resourceRoot, function()
                     ["Content-Type"] = "application/json",
                 },
             },
-            "ticket02-late_callback",
-            gateway.generation
+            unpack(capturedArguments)
         )
     end, 5200, 1)
 end)

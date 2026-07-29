@@ -217,7 +217,7 @@ local function timeoutRequest(requestId, generation)
     end
 end
 
-function Gateway.receiveHealthResponse(body, info, requestId, generation)
+local function healthCallback(body, info, requestId, generation)
     local request = Gateway.pending[requestId]
     if not request or request.generation ~= generation or request.settled then
         Gateway.quarantinedCallbacks = Gateway.quarantinedCallbacks + 1
@@ -334,7 +334,7 @@ function Gateway.requestHealth(port, requestId, player)
             connectTimeout = 4000,
             maxRedirects = 0,
         },
-        Gateway.receiveHealthResponse,
+        healthCallback,
         {
             requestId,
             request.generation,

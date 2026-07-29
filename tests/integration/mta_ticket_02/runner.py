@@ -252,7 +252,7 @@ def _install_late_callback_probe(target_resource: Path) -> None:
     )
     companion_index = list(root).index(companion_script)
     root.insert(
-        companion_index + 1,
+        companion_index,
         ET.Element(
             "script",
             {"src": probe_relative_path, "type": "server"},
