@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — Server-side Lua gateway.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 **Environment boundary:** Follow `AGENTS.md` and `docs/agents/mta-gta-reference-policy.md`. Do not launch or access installed MTA/GTA; use the read-only MTA source reference, official manuals and repository-local tests. Prepare any real-runtime verification as a manual checklist and leave it `not run` unless the user separately authorizes runtime validation.
 
