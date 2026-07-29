@@ -93,24 +93,22 @@ addEventHandler("onResourceStart", resourceRoot, function()
         writeResult({error = "invalid_case"})
         return
     end
-    requestId = case.requestId
     startedAt = getTickCount()
     setTimer(function()
         timerTicks = timerTicks + 1
     end, 25, 0)
     setTimer(function()
-        local accepted, requestError = exports.ankigta:requestCompanionHealth(
-            case.port,
-            requestId
-        )
+        local accepted, acceptedRequestId =
+            exports.ankigta:connectCompanion()
         if not accepted then
             writeResult({
-                error = requestError,
+                error = acceptedRequestId,
                 elapsedMs = getTickCount() - startedAt,
                 timerTicks = timerTicks,
             })
             return
         end
+        requestId = acceptedRequestId
         setTimer(pollStatus, 25, 0, case)
     end, 50, 1)
 end)

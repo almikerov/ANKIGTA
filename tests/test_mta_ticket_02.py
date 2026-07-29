@@ -139,7 +139,8 @@ def test_real_mta_server_fetches_companion_health_over_ipv4_loopback() -> None:
 
     assert status["state"] == "connected"
     assert status["category"] is False
-    assert status["requestId"] == "ticket02-success"
+    assert isinstance(status["requestId"], str)
+    assert status["requestId"].startswith("ankigta-health-")
     assert status["httpStatus"] == 200
     assert status["study"] == {
         "sessionActive": False,
@@ -203,5 +204,8 @@ def test_timeout_is_bounded_non_blocking_and_quarantines_a_late_callback() -> No
     assert evidence["timerTicks"] >= 100
     assert evidence["finalStatus"]["state"] == "disconnected"
     assert evidence["finalStatus"]["category"] == "timeout"
-    assert evidence["finalStatus"]["requestId"] == "ticket02-late_callback"
+    assert (
+        evidence["finalStatus"]["requestId"]
+        == evidence["status"]["requestId"]
+    )
     assert evidence["finalStatus"]["quarantinedCallbacks"] >= 1

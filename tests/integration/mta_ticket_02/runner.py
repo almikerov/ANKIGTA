@@ -261,7 +261,11 @@ def _install_late_callback_probe(target_resource: Path) -> None:
     manifest.write(manifest_path, encoding="utf-8", xml_declaration=False)
 
 
-def _prepare_runtime(mta_server_root: Path, case: dict[str, object]) -> tuple[Path, Path]:
+def _prepare_runtime(
+    mta_server_root: Path,
+    case: dict[str, object],
+    connection_token: str,
+) -> tuple[Path, Path]:
     temp_root = Path(tempfile.mkdtemp(prefix="ankigta-ticket02-"))
     server_root = temp_root / "server"
     shutil.copytree(mta_server_root, server_root)
@@ -270,6 +274,25 @@ def _prepare_runtime(mta_server_root: Path, case: dict[str, object]) -> tuple[Pa
     driver_resource = resources / "ankigta_ticket02_tests"
     shutil.copytree(PRODUCTION_RESOURCE, target_resource)
     shutil.copytree(DRIVER_RESOURCE, driver_resource)
+    (target_resource / "connection.json").write_text(
+        json.dumps(
+            {
+                "format": "ankigta-connection",
+                "formatVersion": 1,
+                "protocol": "ankigta-control",
+                "protocolVersion": 1,
+                "revision": 1,
+                "host": "127.0.0.1",
+                "automatic": {
+                    "port": case["port"],
+                    "token": connection_token,
+                },
+                "companion": {"mode": "automatic"},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     if case["name"] == "late_callback":
         _install_late_callback_probe(target_resource)
     (driver_resource / "case.json").write_text(
@@ -283,8 +306,13 @@ def _prepare_runtime(mta_server_root: Path, case: dict[str, object]) -> tuple[Pa
 def _run_mta(
     mta_server_root: Path,
     case: dict[str, object],
+    connection_token: str,
 ) -> dict[str, Any]:
-    temp_root, driver_resource = _prepare_runtime(mta_server_root, case)
+    temp_root, driver_resource = _prepare_runtime(
+        mta_server_root,
+        case,
+        connection_token,
+    )
     server_root = temp_root / "server"
     result_path = driver_resource / "result.json"
     executable = _server_executable(server_root)
@@ -341,6 +369,7 @@ def _run_mta(
 
 
 def run_health_case(mta_server_root: Path, case_name: str) -> dict[str, Any]:
+    connection_token = "ticket02-disposable-connection-token"
     health_case = HEALTH_CASES.get(case_name)
     if health_case is not None:
         observation = RuntimeObservation(
@@ -353,7 +382,8 @@ def run_health_case(mta_server_root: Path, case_name: str) -> dict[str, Any]:
             ),
         )
         server_context: HealthServer | AdverseHealthServer = HealthServer(
-            lambda: observation
+            lambda: observation,
+            token=connection_token,
         )
     elif case_name in ADVERSE_CASES:
         server_context = AdverseHealthServer(case_name)
@@ -364,7 +394,6 @@ def run_health_case(mta_server_root: Path, case_name: str) -> dict[str, Any]:
         case: dict[str, object] = {
             "name": case_name,
             "port": server.port,
-            "requestId": f"ticket02-{case_name}",
         }
         wait_after_ms = ADVERSE_CASES.get(case_name, {}).get("wait_after_ms")
         if isinstance(wait_after_ms, int):
@@ -372,6 +401,7 @@ def run_health_case(mta_server_root: Path, case_name: str) -> dict[str, Any]:
         return _run_mta(
             mta_server_root,
             case,
+            connection_token,
         )
 
 

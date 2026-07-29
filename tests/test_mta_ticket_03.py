@@ -17,6 +17,7 @@ from ankigta_companion.contract import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MTA_RESOURCE = REPO_ROOT / "mta" / "ankigta"
+TICKET_02_INTEGRATION = REPO_ROOT / "tests" / "integration" / "mta_ticket_02"
 
 
 def supported_observation() -> RuntimeObservation:
@@ -68,6 +69,19 @@ def test_mta_manifest_keeps_config_and_control_on_server_side() -> None:
         'type="client" cache="false" />'
         in manifest
     )
+
+
+def test_blocking_ticket_02_harness_uses_configured_gateway_seam() -> None:
+    runner = (TICKET_02_INTEGRATION / "runner.py").read_text(
+        encoding="utf-8"
+    )
+    driver = (TICKET_02_INTEGRATION / "driver" / "server.lua").read_text(
+        encoding="utf-8"
+    )
+
+    assert '"connection.json"' in runner
+    assert "connectCompanion(" in driver
+    assert "requestCompanionHealth(" not in driver
 
 
 def test_mta_config_reader_validates_current_and_last_known_good() -> None:
