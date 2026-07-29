@@ -31,6 +31,10 @@ def main() -> None:
         == "closing"
     )
     assert verification["afterUnload"]["status"] == 503
+    assert (
+        verification["afterUnload"]["body"]["payload"]["collection"]["state"]
+        == "absent"
+    )
     assert verification["reopened"]["status"] == 200
     assert verification["listenerReleased"] is True
     assert verification["ankigtaSessionAbsent"] is True

@@ -13,11 +13,13 @@ addon: CompanionAddon | None = None
 def _start_inside_anki() -> None:
     global addon
     from aqt import appVersion, gui_hooks, mw
+    from aqt.qt import QTimer
 
     addon = CompanionAddon(
         main_window=mw,
         hooks=gui_hooks,
         anki_version=appVersion,
+        defer=lambda delay_ms, action: QTimer.singleShot(delay_ms, action),
     )
     addon.start()
     atexit.register(addon.stop)

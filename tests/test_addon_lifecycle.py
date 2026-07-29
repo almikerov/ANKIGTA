@@ -69,10 +69,12 @@ def request_health(addon: CompanionAddon, request_id: str) -> tuple[int, dict[st
 def test_addon_observes_profile_lifecycle_and_releases_listener() -> None:
     main_window = FakeMainWindow()
     hooks = FakeHooks()
+    deferred: list[Callable[[], None]] = []
     addon = CompanionAddon(
         main_window=main_window,
         hooks=hooks,
         anki_version="26.05",
+        defer=lambda _delay_ms, action: deferred.append(action),
     )
     addon.start()
 
@@ -93,6 +95,12 @@ def test_addon_observes_profile_lifecycle_and_releases_listener() -> None:
     status, response = request_health(addon, "while-closing")
     assert status == 503
     assert response["payload"]["collection"]["state"] == "closing"
+
+    main_window.col = None
+    deferred.pop(0)()
+    status, response = request_health(addon, "after-close")
+    assert status == 503
+    assert response["payload"]["collection"]["state"] == "absent"
 
     addon.stop()
     assert hooks.profile_did_open == []

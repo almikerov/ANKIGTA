@@ -14,27 +14,18 @@ from ankigta_companion.http_server import HealthServer
 
 
 def post_health(server: HealthServer, body: object) -> tuple[int, dict[str, object]]:
-    connection = HTTPConnection(server.host, server.port, timeout=2)
-    connection.request(
-        "POST",
-        "/v1/health",
-        body=json.dumps(body),
-        headers={"Content-Type": "application/json"},
-    )
-    response = connection.getresponse()
-    payload = json.loads(response.read())
-    connection.close()
-    return response.status, payload
+    return post_raw_health(server, json.dumps(body).encode("utf-8"))
 
 
 def post_raw_health(
     server: HealthServer,
     body: bytes,
+    path: str = "/v1/health",
 ) -> tuple[int, dict[str, object]]:
     connection = HTTPConnection(server.host, server.port, timeout=2)
     connection.request(
         "POST",
-        "/v1/health",
+        path,
         body=body,
         headers={"Content-Type": "application/json"},
     )
@@ -189,6 +180,87 @@ def test_malformed_json_returns_a_versioned_error_envelope() -> None:
             "message": "request body must be valid JSON",
         },
         "payload": None,
+    }
+
+
+def test_only_the_health_operation_path_is_exposed() -> None:
+    observation = RuntimeObservation(
+        anki_version="26.05",
+        v3_scheduler=True,
+        fsrs_enabled=True,
+        collection=CollectionObservation(state=CollectionState.OPEN),
+    )
+    request = json.dumps(
+        {
+            "protocol": "ankigta-control",
+            "protocolVersion": 1,
+            "requestId": "wrong-path",
+        }
+    ).encode("utf-8")
+
+    with HealthServer(lambda: observation) as server:
+        status, response = post_raw_health(server, request, path="/v1/rating")
+
+    assert status == 404
+    assert response == {
+        "protocol": "ankigta-control",
+        "protocolVersion": 1,
+        "requestId": "wrong-path",
+        "ok": False,
+        "error": {
+            "category": "operation_not_found",
+            "message": "control operation does not exist",
+        },
+        "payload": None,
+    }
+
+
+def test_control_request_larger_than_two_mib_is_rejected() -> None:
+    observation = RuntimeObservation(
+        anki_version="26.05",
+        v3_scheduler=True,
+        fsrs_enabled=True,
+        collection=CollectionObservation(state=CollectionState.OPEN),
+    )
+
+    with HealthServer(lambda: observation) as server:
+        status, response = post_raw_health(
+            server,
+            b"{" + (b" " * (2 * 1024 * 1024)),
+        )
+
+    assert status == 413
+    assert response["error"] == {
+        "category": "request_too_large",
+        "message": "control request exceeds 2 MiB",
+    }
+
+
+def test_control_response_larger_than_two_mib_is_replaced_by_an_error() -> None:
+    observation = RuntimeObservation(
+        anki_version="26.05",
+        v3_scheduler=True,
+        fsrs_enabled=True,
+        collection=CollectionObservation(
+            state=CollectionState.OPEN,
+            profile_name="x" * (2 * 1024 * 1024),
+        ),
+    )
+
+    with HealthServer(lambda: observation) as server:
+        status, response = post_health(
+            server,
+            {
+                "protocol": "ankigta-control",
+                "protocolVersion": 1,
+                "requestId": "large-response",
+            },
+        )
+
+    assert status == 500
+    assert response["error"] == {
+        "category": "response_too_large",
+        "message": "control response exceeds 2 MiB",
     }
 
 

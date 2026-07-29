@@ -66,11 +66,13 @@ class CompanionAddon:
         main_window: MainWindow,
         hooks: GuiHooks,
         anki_version: str,
+        defer: Callable[[int, Callable[[], None]], None],
         port: int = 0,
     ) -> None:
         self._main_window = main_window
         self._hooks = hooks
         self._anki_version = anki_version
+        self._defer = defer
         self._observations = ObservationStore(
             RuntimeObservation(
                 anki_version=anki_version,
@@ -81,6 +83,7 @@ class CompanionAddon:
         )
         self.server = HealthServer(self._observations.get, port=port)
         self._started = False
+        self._collection_generation = 0
 
     def start(self) -> None:
         if self._started:
@@ -101,6 +104,7 @@ class CompanionAddon:
         self._started = False
 
     def _on_profile_did_open(self) -> None:
+        self._collection_generation += 1
         collection = self._main_window.col
         if collection is None:
             return
@@ -119,6 +123,8 @@ class CompanionAddon:
         )
 
     def _on_profile_will_close(self) -> None:
+        self._collection_generation += 1
+        closing_generation = self._collection_generation
         current = self._observations.get()
         self._observations.set(
             RuntimeObservation(
@@ -129,5 +135,28 @@ class CompanionAddon:
                     state=CollectionState.CLOSING,
                     profile_name=current.collection.profile_name,
                 ),
+            )
+        )
+        self._defer(
+            0,
+            lambda: self._mark_absent_after_close(closing_generation),
+        )
+
+    def _mark_absent_after_close(self, closing_generation: int) -> None:
+        if not self._started or closing_generation != self._collection_generation:
+            return
+        if self._main_window.col is not None:
+            self._defer(
+                10,
+                lambda: self._mark_absent_after_close(closing_generation),
+            )
+            return
+        current = self._observations.get()
+        self._observations.set(
+            RuntimeObservation(
+                anki_version=current.anki_version,
+                v3_scheduler=current.v3_scheduler,
+                fsrs_enabled=current.fsrs_enabled,
+                collection=CollectionObservation(state=CollectionState.ABSENT),
             )
         )

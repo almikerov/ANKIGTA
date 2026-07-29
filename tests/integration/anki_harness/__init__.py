@@ -6,7 +6,7 @@ import traceback
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import aqt
 from anki.decks import UpdateDeckConfigs
@@ -132,11 +132,14 @@ def begin_verification() -> None:
     stage = "closing"
 
     def after_unload() -> None:
-        global after_unload_response, stage
-        after_unload_response = health_request(addon, "real-after-unload")
-        mw.pm.load(profile_name)
-        stage = "reopening"
-        mw.loadProfile()
+        def observe_closed_collection() -> None:
+            global after_unload_response, stage
+            after_unload_response = health_request(addon, "real-after-unload")
+            mw.pm.load(profile_name)
+            stage = "reopening"
+            mw.loadProfile()
+
+        QTimer.singleShot(25, observe_closed_collection)
 
     mw.unloadProfile(after_unload)
 
@@ -184,11 +187,11 @@ def complete_verification() -> None:
 
 def on_profile_did_open() -> None:
     if PHASE == "setup":
-        QTimer.singleShot(0, guarded_setup)
+        QTimer.singleShot(0, lambda: guarded(setup_profile))
     elif stage == "initial":
-        QTimer.singleShot(0, guarded_begin)
+        QTimer.singleShot(0, lambda: guarded(begin_verification))
     elif stage == "reopening":
-        QTimer.singleShot(0, guarded_complete)
+        QTimer.singleShot(0, lambda: guarded(complete_verification))
 
 
 def fail() -> None:
@@ -203,23 +206,9 @@ def fail() -> None:
     finish_process()
 
 
-def guarded_setup() -> None:
+def guarded(action: Callable[[], None]) -> None:
     try:
-        setup_profile()
-    except Exception:
-        fail()
-
-
-def guarded_begin() -> None:
-    try:
-        begin_verification()
-    except Exception:
-        fail()
-
-
-def guarded_complete() -> None:
-    try:
-        complete_verification()
+        action()
     except Exception:
         fail()
 
