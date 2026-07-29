@@ -1,0 +1,11 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+files = ["companion/ankigta_companion"]
+
+[[tool.mypy.overrides]]
+module = ["aqt", "aqt.*"]
+ignore_missing_imports = true
