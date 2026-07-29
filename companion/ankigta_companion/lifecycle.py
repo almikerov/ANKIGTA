@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from threading import Lock
 from typing import Protocol
 
@@ -127,10 +128,8 @@ class CompanionAddon:
         closing_generation = self._collection_generation
         current = self._observations.get()
         self._observations.set(
-            RuntimeObservation(
-                anki_version=current.anki_version,
-                v3_scheduler=current.v3_scheduler,
-                fsrs_enabled=current.fsrs_enabled,
+            replace(
+                current,
                 collection=CollectionObservation(
                     state=CollectionState.CLOSING,
                     profile_name=current.collection.profile_name,
@@ -153,10 +152,8 @@ class CompanionAddon:
             return
         current = self._observations.get()
         self._observations.set(
-            RuntimeObservation(
-                anki_version=current.anki_version,
-                v3_scheduler=current.v3_scheduler,
-                fsrs_enabled=current.fsrs_enabled,
+            replace(
+                current,
                 collection=CollectionObservation(state=CollectionState.ABSENT),
             )
         )

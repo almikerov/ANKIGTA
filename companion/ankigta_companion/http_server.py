@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from threading import Thread
+from concurrent.futures import ThreadPoolExecutor
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from socket import socket
+from threading import BoundedSemaphore, Thread
 
 from .contract import (
     ContractError,
@@ -15,6 +17,60 @@ from .contract import (
 
 HEALTH_PATH = "/v1/health"
 MAX_CONTROL_BYTES = 2 * 1024 * 1024
+MAX_READ_WORKERS = 4
+MAX_QUEUED_READS = 8
+
+ServerRequest = socket | tuple[bytes, socket]
+
+
+class BoundedHTTPServer(HTTPServer):
+    request_queue_size = MAX_QUEUED_READS
+
+    def __init__(
+        self,
+        server_address: tuple[str, int],
+        handler_type: type[BaseHTTPRequestHandler],
+    ) -> None:
+        self._executor = ThreadPoolExecutor(
+            max_workers=MAX_READ_WORKERS,
+            thread_name_prefix="ankigta-health-worker",
+        )
+        self._capacity = BoundedSemaphore(MAX_QUEUED_READS)
+        super().__init__(server_address, handler_type)
+
+    def process_request(
+        self,
+        request: ServerRequest,
+        client_address: tuple[str, int],
+    ) -> None:
+        self._capacity.acquire()
+        try:
+            self._executor.submit(
+                self._finish_bounded_request,
+                request,
+                client_address,
+            )
+        except BaseException:
+            self._capacity.release()
+            self.shutdown_request(request)
+            raise
+
+    def _finish_bounded_request(
+        self,
+        request: ServerRequest,
+        client_address: tuple[str, int],
+    ) -> None:
+        try:
+            self.finish_request(request, client_address)
+        except Exception:
+            self.handle_error(request, client_address)
+        finally:
+            self.shutdown_request(request)
+            self._capacity.release()
+
+    def server_close(self) -> None:
+        super().server_close()
+        self._executor.shutdown(wait=True, cancel_futures=True)
 
 
 class HealthServer:
@@ -22,7 +78,7 @@ class HealthServer:
 
     def __init__(self, observe: Callable[[], RuntimeObservation], port: int = 0) -> None:
         self._observe = observe
-        self._server = ThreadingHTTPServer(
+        self._server = BoundedHTTPServer(
             (self.host, port),
             self._handler_type(),
         )

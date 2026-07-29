@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from http.client import HTTPConnection
+from threading import Event, Lock
 
 import pytest
 
@@ -262,6 +264,55 @@ def test_control_response_larger_than_two_mib_is_replaced_by_an_error() -> None:
         "category": "response_too_large",
         "message": "control response exceeds 2 MiB",
     }
+
+
+def test_health_reads_use_a_bounded_worker_queue() -> None:
+    observation = RuntimeObservation(
+        anki_version="26.05",
+        v3_scheduler=True,
+        fsrs_enabled=True,
+        collection=CollectionObservation(state=CollectionState.OPEN),
+    )
+    release_workers = Event()
+    four_workers_active = Event()
+    eight_workers_active = Event()
+    counter_lock = Lock()
+    active_workers = 0
+    maximum_active_workers = 0
+
+    def observe() -> RuntimeObservation:
+        nonlocal active_workers, maximum_active_workers
+        with counter_lock:
+            active_workers += 1
+            maximum_active_workers = max(maximum_active_workers, active_workers)
+            if active_workers == 4:
+                four_workers_active.set()
+            if active_workers == 8:
+                eight_workers_active.set()
+        release_workers.wait(timeout=2)
+        with counter_lock:
+            active_workers -= 1
+        return observation
+
+    with HealthServer(observe) as server:
+        with ThreadPoolExecutor(max_workers=8) as clients:
+            requests = [
+                clients.submit(
+                    post_health,
+                    server,
+                    {
+                        "protocol": "ankigta-control",
+                        "protocolVersion": 1,
+                        "requestId": f"concurrent-{index}",
+                    },
+                )
+                for index in range(8)
+            ]
+            assert four_workers_active.wait(timeout=2)
+            eight_workers_active.wait(timeout=0.5)
+            assert maximum_active_workers == 4
+            release_workers.set()
+            assert [request.result(timeout=2)[0] for request in requests] == [200] * 8
 
 
 @pytest.mark.parametrize(
