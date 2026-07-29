@@ -18,13 +18,15 @@ from .contract import (
 HEALTH_PATH = "/v1/health"
 MAX_CONTROL_BYTES = 2 * 1024 * 1024
 MAX_READ_WORKERS = 4
-MAX_QUEUED_READS = 8
+MAX_PENDING_READS = 4
+MAX_IN_FLIGHT_READS = MAX_READ_WORKERS + MAX_PENDING_READS
+LISTEN_BACKLOG = MAX_IN_FLIGHT_READS
 
 ServerRequest = socket | tuple[bytes, socket]
 
 
 class BoundedHTTPServer(HTTPServer):
-    request_queue_size = MAX_QUEUED_READS
+    request_queue_size = LISTEN_BACKLOG
 
     def __init__(
         self,
@@ -35,7 +37,7 @@ class BoundedHTTPServer(HTTPServer):
             max_workers=MAX_READ_WORKERS,
             thread_name_prefix="ankigta-health-worker",
         )
-        self._capacity = BoundedSemaphore(MAX_QUEUED_READS)
+        self._capacity = BoundedSemaphore(MAX_IN_FLIGHT_READS)
         super().__init__(server_address, handler_type)
 
     def process_request(
@@ -152,10 +154,16 @@ class HealthServer:
             def _write_json(self, status: int, response: object) -> None:
                 encoded = json.dumps(response).encode("utf-8")
                 if len(encoded) > MAX_CONTROL_BYTES:
+                    request_id = (
+                        response.get("requestId")
+                        if isinstance(response, dict)
+                        and isinstance(response.get("requestId"), str)
+                        else None
+                    )
                     size_error = ContractError(
                         "response_too_large",
                         "control response exceeds 2 MiB",
-                        None,
+                        request_id,
                     )
                     status = 500
                     encoded = json.dumps(error_response(size_error)).encode("utf-8")

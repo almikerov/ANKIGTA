@@ -260,6 +260,7 @@ def test_control_response_larger_than_two_mib_is_replaced_by_an_error() -> None:
         )
 
     assert status == 500
+    assert response["requestId"] == "large-response"
     assert response["error"] == {
         "category": "response_too_large",
         "message": "control response exceeds 2 MiB",
