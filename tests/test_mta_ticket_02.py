@@ -151,12 +151,34 @@ def test_real_mta_server_fetches_companion_health_over_ipv4_loopback() -> None:
 
 
 @pytest.mark.parametrize(
+    ("case_name", "category", "http_status"),
+    [
+        ("collection_unavailable", "collection_unavailable", 503),
+        ("compatibility_failure", "compatibility_failure", 409),
+    ],
+)
+def test_valid_health_failures_keep_the_companion_category(
+    case_name: str,
+    category: str,
+    http_status: int,
+) -> None:
+    evidence = run_health_case(mta_server_root_or_skip(), case_name)
+
+    assert evidence["status"]["state"] == "disconnected"
+    assert evidence["status"]["category"] == category
+    assert evidence["status"]["httpStatus"] == http_status
+
+
+@pytest.mark.parametrize(
     "case_name",
     [
         "wrong_content_type",
         "json_prefix_content_type",
         "malformed_json",
         "missing_health_fields",
+        "success_with_error",
+        "error_missing_message",
+        "compatibility_contradiction",
         "protocol_version_string",
         "wrong_protocol_version",
         "wrong_request_id",

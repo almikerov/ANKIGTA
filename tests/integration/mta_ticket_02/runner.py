@@ -31,6 +31,9 @@ ADVERSE_CASES: dict[str, dict[str, object]] = {
     "json_prefix_content_type": {"content_type": "application/jsonp"},
     "malformed_json": {"malformed_json": True},
     "missing_health_fields": {"missing_health_fields": True},
+    "success_with_error": {"success_with_error": True},
+    "error_missing_message": {"error_missing_message": True},
+    "compatibility_contradiction": {"compatibility_contradiction": True},
     "late_callback": {"delay_seconds": 5.3, "wait_after_ms": 800},
     "protocol_version_string": {"protocol_version": "1"},
     "wrong_protocol_version": {"protocol_version": 2},
@@ -105,6 +108,27 @@ class AdverseHealthServer:
                             "ratingEnabled": False,
                         }
                     }
+                if case.get("success_with_error") is True:
+                    response["error"] = {
+                        "category": "unexpected_error",
+                        "message": "must conflict with ok=true",
+                    }
+                if case.get("error_missing_message") is True:
+                    response["ok"] = False
+                    response["error"] = {
+                        "category": "collection_unavailable",
+                    }
+                    payload = response["payload"]
+                    assert isinstance(payload, dict)
+                    collection = payload["collection"]
+                    assert isinstance(collection, dict)
+                    collection["state"] = "absent"
+                if case.get("compatibility_contradiction") is True:
+                    payload = response["payload"]
+                    assert isinstance(payload, dict)
+                    compatibility = payload["compatibility"]
+                    assert isinstance(compatibility, dict)
+                    compatibility["ratingCompatible"] = False
                 content_type = str(case.get("content_type", "application/json"))
                 if case.get("malformed_json") is True:
                     encoded = b'{"protocol":'
@@ -265,14 +289,30 @@ def _run_mta(
 
 
 def run_health_case(mta_server_root: Path, case_name: str) -> dict[str, Any]:
-    if case_name == "success":
+    if case_name in {
+        "success",
+        "collection_unavailable",
+        "compatibility_failure",
+    }:
         observation = RuntimeObservation(
-            anki_version="26.05",
+            anki_version=(
+                "25.07.3"
+                if case_name == "compatibility_failure"
+                else "26.05"
+            ),
             v3_scheduler=True,
             fsrs_enabled=True,
             collection=CollectionObservation(
-                state=CollectionState.OPEN,
-                profile_name="Ticket 02",
+                state=(
+                    CollectionState.ABSENT
+                    if case_name == "collection_unavailable"
+                    else CollectionState.OPEN
+                ),
+                profile_name=(
+                    None
+                    if case_name == "collection_unavailable"
+                    else "Ticket 02"
+                ),
             ),
         )
         server_context: HealthServer | AdverseHealthServer = HealthServer(

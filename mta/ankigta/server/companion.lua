@@ -96,9 +96,22 @@ local function validHealthPayload(payload)
     then
         return false
     end
-    return payload.collection.state == "open"
+    local validCollectionState = payload.collection.state == "open"
         or payload.collection.state == "absent"
         or payload.collection.state == "closing"
+    local compatibility = payload.compatibility
+    local validCompatibility = (
+        compatibility.status == "supported"
+        and compatibility.previewReadOnlyCompatible == true
+        and compatibility.sessionCompatible == true
+        and compatibility.ratingCompatible == true
+    ) or (
+        compatibility.status == "unsupported"
+        and compatibility.previewReadOnlyCompatible == true
+        and compatibility.sessionCompatible == false
+        and compatibility.ratingCompatible == false
+    )
+    return validCollectionState and validCompatibility
 end
 
 local function validHealthEnvelope(response, expectedRequestId)
@@ -113,13 +126,27 @@ local function validHealthEnvelope(response, expectedRequestId)
     end
 
     if response.ok then
-        return response.payload.collection.state == "open"
+        return (response.error == nil or response.error == false)
+            and response.payload.collection.state == "open"
             and response.payload.compatibility.status == "supported"
     end
 
-    return type(response.error) == "table"
-        and type(response.error.category) == "string"
-        and type(response.payload) == "table"
+    if type(response.error) ~= "table"
+        or type(response.error.category) ~= "string"
+        or response.error.category == ""
+        or type(response.error.message) ~= "string"
+        or response.error.message == ""
+    then
+        return false
+    end
+    if response.error.category == "collection_unavailable" then
+        return response.payload.collection.state ~= "open"
+    end
+    if response.error.category == "compatibility_failure" then
+        return response.payload.collection.state == "open"
+            and response.payload.compatibility.status == "unsupported"
+    end
+    return false
 end
 
 local function canPresentTo(player)
@@ -205,7 +232,11 @@ local function healthCallback(body, info, requestId, generation)
     local httpStatus = type(info) == "table"
         and tonumber(info.statusCode)
         or false
-    if type(info) ~= "table" or info.success ~= true or not httpStatus then
+    if type(info) ~= "table"
+        or not httpStatus
+        or httpStatus < 100
+        or httpStatus > 599
+    then
         settle(request, "disconnected", "transport_error", httpStatus)
         return
     end
