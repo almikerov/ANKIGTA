@@ -26,6 +26,17 @@ PRODUCTION_RESOURCE = REPO_ROOT / "mta" / "ankigta"
 DRIVER_RESOURCE = Path(__file__).resolve().parent / "driver"
 EXPECTED_MTA_BUILD = 24124
 
+ADVERSE_CASES: dict[str, dict[str, object]] = {
+    "wrong_content_type": {"content_type": "text/plain"},
+    "json_prefix_content_type": {"content_type": "application/jsonp"},
+    "malformed_json": {"malformed_json": True},
+    "missing_health_fields": {"missing_health_fields": True},
+    "late_callback": {"delay_seconds": 5.3, "wait_after_ms": 800},
+    "protocol_version_string": {"protocol_version": "1"},
+    "wrong_protocol_version": {"protocol_version": 2},
+    "wrong_request_id": {"request_id": "some-other-request"},
+}
+
 
 def _set_required_text(root: ET.Element[str], tag: str, value: str) -> None:
     element = root.find(tag)
@@ -38,7 +49,10 @@ class AdverseHealthServer:
     host = "127.0.0.1"
 
     def __init__(self, case_name: str) -> None:
-        self._case_name = case_name
+        try:
+            self._case = ADVERSE_CASES[case_name]
+        except KeyError as error:
+            raise ValueError(f"unknown ticket 02 case: {case_name}") from error
         self._server = HTTPServer((self.host, 0), self._handler_type())
         self._thread = Thread(target=self._server.serve_forever, daemon=True)
 
@@ -47,14 +61,15 @@ class AdverseHealthServer:
         return int(self._server.server_address[1])
 
     def _handler_type(self) -> type[BaseHTTPRequestHandler]:
-        case_name = self._case_name
+        case = self._case
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self) -> None:
                 content_length = int(self.headers.get("Content-Length", "0"))
                 request = json.loads(self.rfile.read(content_length))
-                if case_name == "late_callback":
-                    time.sleep(5.3)
+                delay_seconds = case.get("delay_seconds")
+                if isinstance(delay_seconds, float):
+                    time.sleep(delay_seconds)
                 response: dict[str, object] = {
                     "protocol": "ankigta-control",
                     "protocolVersion": 1,
@@ -62,24 +77,42 @@ class AdverseHealthServer:
                     "ok": True,
                     "error": None,
                     "payload": {
+                        "anki": {
+                            "version": "26.05",
+                            "v3Scheduler": True,
+                            "fsrsEnabled": True,
+                        },
+                        "collection": {
+                            "state": "open",
+                            "profileName": "Ticket 02 adverse",
+                        },
+                        "compatibility": {
+                            "status": "supported",
+                            "previewReadOnlyCompatible": True,
+                            "sessionCompatible": True,
+                            "ratingCompatible": True,
+                        },
                         "study": {
                             "sessionActive": False,
                             "ratingEnabled": False,
                         }
                     },
                 }
-                content_type = "application/json"
-                if case_name == "wrong_content_type":
-                    content_type = "text/plain"
-                if case_name == "malformed_json":
+                if case.get("missing_health_fields") is True:
+                    response["payload"] = {
+                        "study": {
+                            "sessionActive": False,
+                            "ratingEnabled": False,
+                        }
+                    }
+                content_type = str(case.get("content_type", "application/json"))
+                if case.get("malformed_json") is True:
                     encoded = b'{"protocol":'
                 else:
-                    if case_name == "protocol_version_string":
-                        response["protocolVersion"] = "1"
-                    if case_name == "wrong_protocol_version":
-                        response["protocolVersion"] = 2
-                    if case_name == "wrong_request_id":
-                        response["requestId"] = "some-other-request"
+                    if "protocol_version" in case:
+                        response["protocolVersion"] = case["protocol_version"]
+                    if "request_id" in case:
+                        response["requestId"] = case["request_id"]
                     encoded = json.dumps(response).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", content_type)
@@ -245,14 +278,7 @@ def run_health_case(mta_server_root: Path, case_name: str) -> dict[str, Any]:
         server_context: HealthServer | AdverseHealthServer = HealthServer(
             lambda: observation
         )
-    elif case_name in {
-        "wrong_content_type",
-        "malformed_json",
-        "late_callback",
-        "protocol_version_string",
-        "wrong_protocol_version",
-        "wrong_request_id",
-    }:
+    elif case_name in ADVERSE_CASES:
         server_context = AdverseHealthServer(case_name)
     else:
         raise ValueError(f"unknown ticket 02 case: {case_name}")
@@ -263,8 +289,9 @@ def run_health_case(mta_server_root: Path, case_name: str) -> dict[str, Any]:
             "port": server.port,
             "requestId": f"ticket02-{case_name}",
         }
-        if case_name == "late_callback":
-            case["waitAfterMs"] = 800
+        wait_after_ms = ADVERSE_CASES.get(case_name, {}).get("wait_after_ms")
+        if isinstance(wait_after_ms, int):
+            case["waitAfterMs"] = wait_after_ms
         return _run_mta(
             mta_server_root,
             case,

@@ -23,13 +23,16 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MTA_RESOURCE = REPO_ROOT / "mta" / "ankigta"
 
 
-@lru_cache(maxsize=1)
-def successful_health_evidence() -> dict[str, object]:
+def mta_server_root_or_skip() -> Path:
     try:
-        server_root = configured_mta_server_root()
+        return configured_mta_server_root()
     except RuntimeError as error:
         pytest.skip(str(error))
-    return run_health_case(server_root, "success")
+
+
+@lru_cache(maxsize=1)
+def successful_health_evidence() -> dict[str, object]:
+    return run_health_case(mta_server_root_or_skip(), "success")
 
 
 def test_companion_control_gateway_is_server_side_only() -> None:
@@ -47,11 +50,9 @@ def test_companion_control_gateway_is_server_side_only() -> None:
         "fetchRemote(",
         "127.0.0.1",
         "::1",
-        "Authorization",
+        '["Authorization"]',
         "connectionToken",
         "reviewTransactionId",
-        "scheduler",
-        "collection",
         "/v1/",
     )
     for script in scripts:
@@ -86,6 +87,15 @@ def test_client_presents_only_the_sanitized_connection_status() -> None:
     assert '"ankigta:companionStatus"' in source
     assert "addEvent(STATUS_EVENT, true)" in source
     assert "outputChatBox" in source
+    for category in (
+        "protocol_error",
+        "timeout",
+        "transport_error",
+        "collection_unavailable",
+        "compatibility_failure",
+    ):
+        assert category in source
+    assert "getLocalization()" in source
 
 
 def test_companion_listener_is_unreachable_through_ipv6_or_lan() -> None:
@@ -144,7 +154,9 @@ def test_real_mta_server_fetches_companion_health_over_ipv4_loopback() -> None:
     "case_name",
     [
         "wrong_content_type",
+        "json_prefix_content_type",
         "malformed_json",
+        "missing_health_fields",
         "protocol_version_string",
         "wrong_protocol_version",
         "wrong_request_id",
@@ -153,12 +165,7 @@ def test_real_mta_server_fetches_companion_health_over_ipv4_loopback() -> None:
 def test_http_200_with_an_invalid_envelope_is_a_protocol_error(
     case_name: str,
 ) -> None:
-    try:
-        server_root = configured_mta_server_root()
-    except RuntimeError as error:
-        pytest.skip(str(error))
-
-    evidence = run_health_case(server_root, case_name)
+    evidence = run_health_case(mta_server_root_or_skip(), case_name)
 
     assert evidence["status"]["state"] == "disconnected"
     assert evidence["status"]["category"] == "protocol_error"
@@ -166,17 +173,13 @@ def test_http_200_with_an_invalid_envelope_is_a_protocol_error(
 
 
 def test_timeout_is_bounded_non_blocking_and_quarantines_a_late_callback() -> None:
-    try:
-        server_root = configured_mta_server_root()
-    except RuntimeError as error:
-        pytest.skip(str(error))
-
-    evidence = run_health_case(server_root, "late_callback")
+    evidence = run_health_case(mta_server_root_or_skip(), "late_callback")
 
     assert evidence["status"]["state"] == "disconnected"
     assert evidence["status"]["category"] == "timeout"
-    assert evidence["elapsedMs"] <= 5000
+    assert evidence["status"]["elapsedMs"] <= 5000
     assert evidence["timerTicks"] >= 100
     assert evidence["finalStatus"]["state"] == "disconnected"
     assert evidence["finalStatus"]["category"] == "timeout"
     assert evidence["finalStatus"]["requestId"] == "ticket02-late_callback"
+    assert evidence["finalStatus"]["quarantinedCallbacks"] >= 1

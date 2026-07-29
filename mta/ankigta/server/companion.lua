@@ -4,6 +4,7 @@ local PROTOCOL_NAME = "ankigta-control"
 local PROTOCOL_VERSION = 1
 local HEALTH_PATH = "/v1/health"
 local REQUEST_TIMEOUT_MS = 4900
+local LATE_CALLBACK_GRACE_MS = 500
 local STUDY_RIGHT = "resource.ankigta.study"
 
 local Gateway = {
@@ -64,8 +65,40 @@ end
 
 local function isJsonContentType(headers)
     local contentType = responseContentType(headers)
-    return contentType
-        and string.match(contentType, "^application/json%s*;?") ~= nil
+    if not contentType then
+        return false
+    end
+    local mediaType = string.match(contentType, "^%s*([^;]+)")
+    if not mediaType then
+        return false
+    end
+    mediaType = string.match(mediaType, "^%s*(.-)%s*$")
+    return mediaType == "application/json"
+end
+
+local function validHealthPayload(payload)
+    if type(payload) ~= "table"
+        or type(payload.anki) ~= "table"
+        or type(payload.anki.version) ~= "string"
+        or payload.anki.version == ""
+        or type(payload.anki.v3Scheduler) ~= "boolean"
+        or type(payload.anki.fsrsEnabled) ~= "boolean"
+        or type(payload.collection) ~= "table"
+        or type(payload.collection.state) ~= "string"
+        or type(payload.compatibility) ~= "table"
+        or type(payload.compatibility.status) ~= "string"
+        or type(payload.compatibility.previewReadOnlyCompatible) ~= "boolean"
+        or type(payload.compatibility.sessionCompatible) ~= "boolean"
+        or type(payload.compatibility.ratingCompatible) ~= "boolean"
+        or type(payload.study) ~= "table"
+        or payload.study.sessionActive ~= false
+        or payload.study.ratingEnabled ~= false
+    then
+        return false
+    end
+    return payload.collection.state == "open"
+        or payload.collection.state == "absent"
+        or payload.collection.state == "closing"
 end
 
 local function validHealthEnvelope(response, expectedRequestId)
@@ -74,15 +107,14 @@ local function validHealthEnvelope(response, expectedRequestId)
         or response.protocolVersion ~= PROTOCOL_VERSION
         or response.requestId ~= expectedRequestId
         or type(response.ok) ~= "boolean"
+        or not validHealthPayload(response.payload)
     then
         return false
     end
 
     if response.ok then
-        return type(response.payload) == "table"
-            and type(response.payload.study) == "table"
-            and response.payload.study.sessionActive == false
-            and response.payload.study.ratingEnabled == false
+        return response.payload.collection.state == "open"
+            and response.payload.compatibility.status == "supported"
     end
 
     return type(response.error) == "table"
@@ -120,6 +152,15 @@ local function setStatus(request, state, category, httpStatus)
             reviewModeOpened = false,
         },
     }
+    outputDebugString(
+        string.format(
+            "[ANKIGTA] companion_health requestId=%s state=%s category=%s httpStatus=%s",
+            request.requestId,
+            state,
+            tostring(category or false),
+            tostring(httpStatus or false)
+        )
+    )
     presentStatus(request.player)
 end
 
@@ -146,7 +187,11 @@ local function timeoutRequest(requestId, generation)
     local handle = request.handle
     settle(request, "disconnected", "timeout", false)
     if handle then
-        abortRemoteRequest(handle)
+        setTimer(function(requestHandle)
+            if getRemoteRequestInfo(requestHandle) then
+                abortRemoteRequest(requestHandle)
+            end
+        end, LATE_CALLBACK_GRACE_MS, 1, handle)
     end
 end
 
