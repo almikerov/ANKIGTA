@@ -12,15 +12,7 @@ from .contract import (
     RuntimeObservation,
     error_response,
     health_response,
-    identity_response,
-    validate_collection_uuid,
-    validate_copy_decision,
     validate_request,
-)
-from .collection_identity import (
-    CollectionCopyDecision,
-    CollectionIdentityCommand,
-    CollectionIdentityObservation,
 )
 
 HEALTH_PATH = "/v1/health"
@@ -29,14 +21,8 @@ MAX_READ_WORKERS = 4
 MAX_PENDING_READS = 4
 MAX_IN_FLIGHT_READS = MAX_READ_WORKERS + MAX_PENDING_READS
 LISTEN_BACKLOG = MAX_IN_FLIGHT_READS
-BIND_COLLECTION_PATH = "/v1/collection/bind"
-COPY_DECISION_PATH = "/v1/collection/copy-decision"
 
 ServerRequest = socket | tuple[bytes, socket]
-IdentityCommand = Callable[
-    [CollectionIdentityCommand, str, CollectionCopyDecision | None],
-    CollectionIdentityObservation,
-]
 
 
 class BoundedHTTPServer(HTTPServer):
@@ -96,11 +82,8 @@ class HealthServer:
         self,
         observe: Callable[[], RuntimeObservation],
         port: int = 0,
-        *,
-        identity_command: IdentityCommand | None = None,
     ) -> None:
         self._observe = observe
-        self._identity_command = identity_command
         self._server = BoundedHTTPServer(
             (self.host, port),
             self._handler_type(),
@@ -117,7 +100,6 @@ class HealthServer:
 
     def _handler_type(self) -> type[BaseHTTPRequestHandler]:
         observe = self._observe
-        identity_command = self._identity_command
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self) -> None:
@@ -166,40 +148,12 @@ class HealthServer:
                     status, response = health_response(request_id, observe())
                     self._write_json(status, response)
                     return
-                if self.path not in {BIND_COLLECTION_PATH, COPY_DECISION_PATH}:
-                    operation_error = ContractError(
-                        "operation_not_found",
-                        "control operation does not exist",
-                        request_id,
-                    )
-                    self._write_json(404, error_response(operation_error))
-                    return
-                if identity_command is None:
-                    unavailable_error = ContractError(
-                        "operation_not_found",
-                        "control operation does not exist",
-                        request_id,
-                    )
-                    self._write_json(404, error_response(unavailable_error))
-                    return
-                try:
-                    collection_uuid = validate_collection_uuid(request, request_id)
-                    decision = (
-                        validate_copy_decision(request, request_id)
-                        if self.path == COPY_DECISION_PATH
-                        else None
-                    )
-                except ContractError as error:
-                    self._write_json(400, error_response(error))
-                    return
-                command = (
-                    CollectionIdentityCommand.BIND
-                    if self.path == BIND_COLLECTION_PATH
-                    else CollectionIdentityCommand.COPY_DECISION
+                operation_error = ContractError(
+                    "operation_not_found",
+                    "control operation does not exist",
+                    request_id,
                 )
-                identity = identity_command(command, collection_uuid, decision)
-                response = identity_response(request_id, identity)
-                self._write_json(200 if response["ok"] else 409, response)
+                self._write_json(404, error_response(operation_error))
 
             def _write_json(self, status: int, response: object) -> None:
                 encoded = json.dumps(response).encode("utf-8")

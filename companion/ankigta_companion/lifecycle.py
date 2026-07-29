@@ -3,15 +3,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from threading import Event, Lock
+from threading import Lock
 from typing import Protocol
 
 from .collection_identity import (
     CollectionCopyDecision,
-    CollectionIdentityCommand,
     CollectionIdentityObservation,
     CollectionIdentityService,
-    CollectionIdentityState,
 )
 from .contract import (
     CollectionObservation,
@@ -92,14 +90,12 @@ class CompanionAddon:
         defer: Callable[[int, Callable[[], None]], None],
         port: int = 0,
         identity_service: CollectionIdentityService | None = None,
-        run_on_main: Callable[[Callable[[], None]], None] | None = None,
     ) -> None:
         self._main_window = main_window
         self._hooks = hooks
         self._anki_version = anki_version
         self._defer = defer
         self._identity_service = identity_service
-        self._run_on_main = run_on_main or (lambda action: action())
         self._observations = ObservationStore(
             RuntimeObservation(
                 anki_version=anki_version,
@@ -111,11 +107,6 @@ class CompanionAddon:
         self.server = HealthServer(
             self._observations.get,
             port=port,
-            identity_command=(
-                self._execute_identity_command
-                if identity_service is not None
-                else None
-            ),
         )
         self._started = False
         self._collection_generation = 0
@@ -179,20 +170,7 @@ class CompanionAddon:
         )
 
     def _on_profile_will_close(self) -> None:
-        self._collection_generation += 1
-        closing_generation = self._collection_generation
-        if self._identity_service is not None:
-            self._identity_service.clear_current()
-        current = self._observations.get()
-        self._observations.set(
-            replace(
-                current,
-                collection=CollectionObservation(
-                    state=CollectionState.CLOSING,
-                    profile_name=current.collection.profile_name,
-                ),
-            )
-        )
+        closing_generation = self._mark_collection_closing()
         self._defer(
             0,
             lambda: self._mark_absent_after_close(closing_generation),
@@ -202,6 +180,9 @@ class CompanionAddon:
         self,
         _collection: Collection,
     ) -> None:
+        self._mark_collection_closing()
+
+    def _mark_collection_closing(self) -> int:
         self._collection_generation += 1
         if self._identity_service is not None:
             self._identity_service.clear_current()
@@ -215,6 +196,7 @@ class CompanionAddon:
                 ),
             )
         )
+        return self._collection_generation
 
     def _on_collection_did_temporarily_close(
         self,
@@ -279,57 +261,6 @@ class CompanionAddon:
                 ),
             )
         )
-
-    def _execute_identity_command(
-        self,
-        command: CollectionIdentityCommand,
-        collection_uuid: str,
-        decision: CollectionCopyDecision | None,
-    ) -> CollectionIdentityObservation:
-        completed = Event()
-        result: list[CollectionIdentityObservation] = []
-        command_lock = Lock()
-        command_started = False
-        command_cancelled = False
-
-        def execute() -> None:
-            nonlocal command_started
-            with command_lock:
-                if command_cancelled:
-                    return
-                command_started = True
-            try:
-                if command is CollectionIdentityCommand.BIND:
-                    identity = self.bind_current_collection(collection_uuid)
-                elif decision is not None:
-                    identity = self.decide_current_collection_copy(
-                        collection_uuid,
-                        decision,
-                    )
-                else:
-                    raise ValueError("copy decision is required")
-            except Exception:
-                identity = CollectionIdentityObservation(
-                    state=CollectionIdentityState.ERROR,
-                    collection_uuid=collection_uuid,
-                    error_category="collection_identity_conflict",
-                )
-                self._publish_identity(identity)
-            result.append(identity)
-            completed.set()
-
-        self._run_on_main(execute)
-        if not completed.wait(timeout=5):
-            with command_lock:
-                if not command_started:
-                    command_cancelled = True
-                    return CollectionIdentityObservation(
-                        state=CollectionIdentityState.ERROR,
-                        collection_uuid=collection_uuid,
-                        error_category="collection_identity_timeout",
-                    )
-            completed.wait()
-        return result[0]
 
     def current_collection_identity(self) -> CollectionIdentityObservation | None:
         return self._observations.get().collection.identity

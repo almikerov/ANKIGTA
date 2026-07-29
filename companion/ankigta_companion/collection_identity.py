@@ -35,11 +35,6 @@ class CollectionIdentityState(StrEnum):
     ERROR = "identity_error"
 
 
-class CollectionIdentityCommand(StrEnum):
-    BIND = "bind"
-    COPY_DECISION = "copy_decision"
-
-
 @dataclass(frozen=True)
 class AnkiCardIdentity:
     collection_uuid: str

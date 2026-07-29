@@ -2,10 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from uuid import UUID
 
 from .collection_identity import (
-    CollectionCopyDecision,
     CollectionIdentityObservation,
     CollectionIdentityState,
 )
@@ -87,75 +85,6 @@ def error_response(error: ContractError) -> dict[str, object]:
             "message": error.message,
         },
         "payload": None,
-    }
-
-
-def validate_collection_uuid(request: object, request_id: str) -> str:
-    assert isinstance(request, dict)
-    value = request.get("collectionUuid")
-    if not isinstance(value, str):
-        raise ContractError(
-            "invalid_collection_uuid",
-            "collectionUuid must be a UUID string",
-            request_id,
-        )
-    try:
-        return str(UUID(value))
-    except ValueError as error:
-        raise ContractError(
-            "invalid_collection_uuid",
-            "collectionUuid must be a UUID string",
-            request_id,
-        ) from error
-
-
-def validate_copy_decision(
-    request: object,
-    request_id: str,
-) -> CollectionCopyDecision:
-    assert isinstance(request, dict)
-    value = request.get("decision")
-    if not isinstance(value, str):
-        raise ContractError(
-            "invalid_copy_decision",
-            "decision must be previous_collection or new_copy",
-            request_id,
-        )
-    try:
-        return CollectionCopyDecision(value)
-    except ValueError as error:
-        raise ContractError(
-            "invalid_copy_decision",
-            "decision must be previous_collection or new_copy",
-            request_id,
-        ) from error
-
-
-def identity_response(
-    request_id: str,
-    observation: CollectionIdentityObservation,
-) -> dict[str, object]:
-    payload: dict[str, object] = {
-        "collectionUuid": observation.collection_uuid,
-        "identityState": observation.state.value,
-    }
-    if observation.error_category is not None:
-        payload["identityErrorCategory"] = observation.error_category
-    return {
-        "protocol": PROTOCOL_NAME,
-        "protocolVersion": PROTOCOL_VERSION,
-        "requestId": request_id,
-        "ok": observation.state is not CollectionIdentityState.ERROR,
-        "error": (
-            None
-            if observation.state is not CollectionIdentityState.ERROR
-            else {
-                "category": observation.error_category
-                or "collection_identity_failure",
-                "message": "collection identity could not be persisted",
-            }
-        ),
-        "payload": payload,
     }
 
 
