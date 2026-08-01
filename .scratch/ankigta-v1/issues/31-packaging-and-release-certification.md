@@ -90,6 +90,19 @@ which is the point of the story. `f7_entity_filter` is a new threshold in the
 report; `search_filter` keeps the Card Picker's half of the same promise, and
 its context no longer claims there is nothing else to time.
 
+A filter and a selection can disagree, and the selection wins. Pick Entity
+closes F7 and reopens it, so the query survives the trip while the entity the
+player just pointed at may not match it — the window would come back with that
+entity hidden, nothing selected and no reason given, and a relink whose source
+is hidden loses `Relink entity` with it, because the source is read back off
+the grid. The filter is dropped before the box is drawn rather than after, so
+the box and the list never disagree about what is in force. It answers one
+arrival and then stops: a selection outlives the window it was made in and
+every link, unlink or undo brings a fresh snapshot, so re-reading it each time
+would keep discarding a filter the player typed since. Only a pick that
+succeeded counts as an arrival — pressing `Pick target` starts one rather than
+making one, and ticket 24 asks that a cancel restore what the player left.
+
 ### Packaging
 
 `python -m tools.package` builds two archives and an inventory. The MTA
@@ -175,7 +188,7 @@ as unconfirmed. The numbers are real; the machine is not the documented one, in
 ways it names. Taking them again on the certifying machine is the first item of
 the ticket 30 checklist, which is still `not run`.
 
-Automated evidence: `python -m pytest tests/ -q` → 1088 passed, 1 skipped;
+Automated evidence: `python -m pytest tests/ -q` → 1095 passed, 1 skipped;
 `python -m mypy` strict clean; `python -m tests.perf` → clear, exit 0.
 
 ## Manual runtime checklist

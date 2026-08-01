@@ -76,6 +76,12 @@ local entityFilterLabel = nil
 -- a language change or a new UI Scale rebuilds the window, and throwing away
 -- what someone typed would be the window losing their work to redraw itself.
 local entityFilter = ""
+--- Whether a selection made outside F7 is still waiting to be shown.
+--
+-- Set where one arrives, read and cleared by the next render. Not cleared by
+-- `closeF7`, because Pick Entity closes the window on its way to making the
+-- selection this exists to honour.
+local selectionArrivedFromOutside = false
 local relinkSource = nil
 
 -- When the last F7 and the last Card Picker search were asked for, so the
@@ -564,6 +570,47 @@ local function fillEntityGrid(entities)
     return matched
 end
 
+local function isEntity(mapEntity, mapId, entityId)
+    return mapId ~= nil
+        and mapEntity.mapId == mapId
+        and mapEntity.entityId == entityId
+end
+
+--- Drop the filter if it hides an entity the window is about to select.
+--
+-- The two selections that arrive from outside F7 are the one Pick Entity
+-- returned and the `Entity missing` record a relink is in the middle of. Both
+-- are the player pointing at something; a filter they typed before that must
+-- not be what stops the window showing it.
+--
+-- It answers one arrival and then stops. A selection outlives the window it
+-- was made in and every link, unlink or undo brings a fresh snapshot, so
+-- re-reading it on each of those would keep discarding a filter the player
+-- typed since -- with no action of theirs to explain it.
+local function dropFilterHidingNewSelection(entities)
+    if not selectionArrivedFromOutside then
+        return
+    end
+    selectionArrivedFromOutside = false
+    if entityFilter == "" then
+        return
+    end
+    local needle = string.lower(entityFilter)
+    for _, entry in ipairs(entities or {}) do
+        local mapEntity = entry.mapEntity
+        local arrived = isEntity(mapEntity, selectedMapId, selectedEntityId)
+            or isEntity(
+                mapEntity,
+                pendingRelinkSourceMapId,
+                pendingRelinkSourceEntityId
+            )
+        if arrived and not entityMatches(entry, needle) then
+            entityFilter = ""
+            return
+        end
+    end
+end
+
 local function renderSnapshot(snapshot)
     closeF7()
 
@@ -575,6 +622,11 @@ local function renderSnapshot(snapshot)
     -- Design pixels: the coordinates below say where a control goes in the
     -- window as drawn, and the layout manager decides how big that is.
     local width, height = surface.width, surface.height
+    -- Before the box is built, so it is drawn with the query that is actually
+    -- in force. Built first and cleared afterwards, the box would read `north`
+    -- over a list showing everything, and the next press of `Filter` would
+    -- hide the row the player had just pointed at.
+    dropFilterHidingNewSelection(snapshot.entities)
     entityFilterEdit = surface.edit(16, 32, width - 360, 26, entityFilter)
     guiSetProperty(entityFilterEdit, "NormalTextColour", "FF000000")
     entityFilterButton = surface.button(
@@ -886,6 +938,7 @@ addEventHandler(PICK_ENTITY_FINISHED_EVENT, resourceRoot, function(
     if success == true then
         selectedMapId = mapId
         selectedEntityId = entityId
+        selectionArrivedFromOutside = true
     elseif mode == "relink" then
         pendingRelinkSourceMapId = nil
         pendingRelinkSourceEntityId = nil

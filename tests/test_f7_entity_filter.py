@@ -130,6 +130,70 @@ def grid_entity_ids(sandbox: MtaSandbox) -> list[str]:
     return [cell for cell in sandbox.grid_texts() if cell.startswith("m1 / ")]
 
 
+def apply_filter(sandbox: MtaSandbox, query: str) -> None:
+    """Type into the filter box and press the button, as the player does."""
+    edit = sandbox.live_widgets("edit")[0]
+    sandbox.widgets[edit].text = query
+    sandbox.click_widget("Filter")
+
+
+def filter_box_text(sandbox: MtaSandbox) -> str:
+    return str(sandbox.widgets[sandbox.live_widgets("edit")[0]].text)
+
+
+def selected_entity_id(sandbox: MtaSandbox) -> str | None:
+    """The `mapId / entityId` of the selected grid row, or `None` if none is."""
+    grid = sandbox.widgets[sandbox.live_widgets("gridlist")[0]]
+    if grid.selected_row < 0:
+        return None
+    row = grid.rows[grid.selected_row]
+    return str(row[min(row)])
+
+
+def pick_entity_finished(
+    sandbox: MtaSandbox,
+    entity_id: str,
+    *,
+    map_id: str = "m1",
+    mode: str = "link",
+) -> None:
+    """The world-click that Pick Entity turns into a selection."""
+    sandbox.eval(
+        """
+        function(mapId, entityId, mode)
+            triggerEvent(
+                "ankigta:pickEntityFinished",
+                resourceRoot,
+                true,
+                nil,
+                mapId,
+                entityId,
+                mode
+            )
+        end
+        """
+    )(map_id, entity_id, mode)
+
+
+def pick_entity_cancelled(sandbox: MtaSandbox, *, mode: str = "link") -> None:
+    """Escape out of Pick Entity, which selects nothing."""
+    sandbox.eval(
+        """
+        function(mode)
+            triggerEvent(
+                "ankigta:pickEntityFinished",
+                resourceRoot,
+                false,
+                "cancelled",
+                nil,
+                nil,
+                mode
+            )
+        end
+        """
+    )(mode)
+
+
 # --- the rule ----------------------------------------------------------------
 
 
@@ -201,8 +265,7 @@ def test_the_grid_shows_only_the_rows_the_filter_keeps(f7: MtaSandbox) -> None:
     render(f7, [entry("gate-north"), entry("gate-south")])
     assert len(grid_entity_ids(f7)) == 2
 
-    f7.widgets[f7.find_widget("", "edit")].text = "north"
-    f7.click_widget("Filter")
+    apply_filter(f7, "north")
 
     assert grid_entity_ids(f7) == ["m1 / gate-north"]
 
@@ -212,22 +275,160 @@ def test_the_window_says_how_much_it_is_hiding(f7: MtaSandbox) -> None:
     two rows in it."""
     render(f7, [entry("a", name="keep"), entry("b"), entry("c")])
 
-    f7.widgets[f7.find_widget("", "edit")].text = "keep"
-    f7.click_widget("Filter")
+    apply_filter(f7, "keep")
 
     assert "Showing 1 of 3" in f7.widget_texts()
 
 
 def test_clearing_the_filter_brings_the_rows_back(f7: MtaSandbox) -> None:
     render(f7, [entry("a", name="keep"), entry("b")])
-    f7.widgets[f7.find_widget("", "edit")].text = "keep"
-    f7.click_widget("Filter")
+    apply_filter(f7, "keep")
     assert len(grid_entity_ids(f7)) == 1
 
-    f7.widgets[f7.find_widget("keep", "edit")].text = ""
-    f7.click_widget("Filter")
+    apply_filter(f7, "")
 
     assert len(grid_entity_ids(f7)) == 2
+
+
+def test_a_selection_made_in_the_world_outranks_the_filter(
+    f7: MtaSandbox,
+) -> None:
+    """Pick Entity closes F7 and reopens it, so the filter is still there.
+
+    The player pointed at the entity; a query they typed before that must not
+    be what leaves the reopened window showing nothing selected and no reason.
+    """
+    entities = [entry("a", name="keep"), entry("b", name="other")]
+    render(f7, entities)
+    apply_filter(f7, "keep")
+    assert grid_entity_ids(f7) == ["m1 / a"]
+
+    pick_entity_finished(f7, "b")
+    render(f7, entities)
+
+    assert selected_entity_id(f7) == "m1 / b"
+    assert grid_entity_ids(f7) == ["m1 / a", "m1 / b"]
+
+
+def test_the_dropped_filter_leaves_the_box_and_the_grid_agreeing(
+    f7: MtaSandbox,
+) -> None:
+    """A box still reading `keep` over a list showing everything is a lie the
+    next press of `Filter` would make true again."""
+    entities = [entry("a", name="keep"), entry("b", name="other")]
+    render(f7, entities)
+    apply_filter(f7, "keep")
+
+    pick_entity_finished(f7, "b")
+    render(f7, entities)
+
+    assert filter_box_text(f7) == ""
+    assert "Showing 2 of 2" in f7.widget_texts()
+
+
+def test_a_filter_that_keeps_the_selection_survives(f7: MtaSandbox) -> None:
+    """Only a filter that hides the target is dropped. One that would have
+    shown it anyway is still the player's own narrowing of a long list."""
+    entities = [entry("a", name="keep"), entry("b", name="keep too")]
+    render(f7, entities)
+    apply_filter(f7, "keep")
+
+    pick_entity_finished(f7, "b")
+    render(f7, entities)
+
+    assert filter_box_text(f7) == "keep"
+    assert selected_entity_id(f7) == "m1 / b"
+
+
+def test_a_filter_typed_after_the_pick_survives_the_next_refresh(
+    f7: MtaSandbox,
+) -> None:
+    """The drop answers the selection that just arrived, and only that one.
+
+    A selection outlives the window it was made in, so re-reading it on every
+    refresh would keep discarding filters the player typed since.
+    """
+    entities = [entry("a", name="keep"), entry("b", name="other")]
+    render(f7, entities)
+    pick_entity_finished(f7, "b")
+    render(f7, entities)
+
+    apply_filter(f7, "keep")
+    render(f7, entities)  # any mutating action refreshes the window
+
+    assert filter_box_text(f7) == "keep"
+    assert grid_entity_ids(f7) == ["m1 / a"]
+
+
+def test_a_cancelled_pick_leaves_the_filter_alone(f7: MtaSandbox) -> None:
+    """Cancelling selects nothing, so there is nothing for the filter to hide.
+
+    Ticket 24 asks that cancelling restore the state the player left; wiping
+    what they had typed is the opposite of restoring it.
+    """
+    entities = [entry("a", name="keep"), entry("b", name="other")]
+    render(f7, entities)
+    pick_entity_finished(f7, "b")
+    render(f7, entities)
+    apply_filter(f7, "keep")
+
+    pick_entity_cancelled(f7)
+    render(f7, entities)
+
+    assert filter_box_text(f7) == "keep"
+    assert grid_entity_ids(f7) == ["m1 / a"]
+
+
+def test_a_cancelled_relink_pick_leaves_the_filter_alone(f7: MtaSandbox) -> None:
+    """`Pick target` is not itself a selection — the pick it starts may be
+    escaped, and then nothing arrived for the filter to be hiding."""
+    missing = entry("gone", name="ruined", available=False, state="Entity missing")
+    missing["link"]["relinkAvailable"] = True
+    entities = [missing, entry("free", name="spare")]
+    render(f7, entities)
+    pick_entity_finished(f7, "gone")
+    render(f7, entities)
+
+    grid = f7.live_widgets("gridlist")[0]
+    f7.widgets[grid].selected_row = 0
+    f7.click_widget(grid)
+    apply_filter(f7, "spare")
+    assert f7.widgets[f7.find_widget("Relink entity", "button")].enabled is True
+    f7.click_widget("Relink entity")
+    f7.click_widget("Pick target")
+
+    pick_entity_cancelled(f7, mode="relink")
+    render(f7, entities)
+
+    assert filter_box_text(f7) == "spare"
+    assert grid_entity_ids(f7) == ["m1 / free"]
+
+
+def test_a_relink_in_progress_reveals_its_hidden_source(f7: MtaSandbox) -> None:
+    """The relink source is read back off the grid, so a filter hiding it
+    leaves `Confirm` disabled with nothing on screen explaining why."""
+    missing = entry("gone", name="ruined", available=False, state="Entity missing")
+    missing["link"]["relinkAvailable"] = True
+    entities = [missing, entry("free", name="spare")]
+    render(f7, entities)
+
+    grid = f7.live_widgets("gridlist")[0]
+    f7.widgets[grid].selected_row = 0
+    f7.click_widget(grid)
+    f7.click_widget("Relink entity")
+    f7.click_widget("Pick target")
+
+    # The player typed this before starting the relink; it hides the source.
+    render(f7, entities)
+    apply_filter(f7, "spare")
+    pick_entity_finished(f7, "free", mode="relink")
+    render(f7, entities)
+
+    assert grid_entity_ids(f7) == ["m1 / gone", "m1 / free"]
+    assert f7.widgets[f7.find_widget("Relink entity", "button")].enabled is True
+
+    f7.click_widget("Relink entity")
+    assert f7.widgets[f7.find_widget("Confirm", "button")].enabled is True
 
 
 def test_a_hidden_pending_entity_still_has_its_action(f7: MtaSandbox) -> None:
@@ -240,8 +441,7 @@ def test_a_hidden_pending_entity_still_has_its_action(f7: MtaSandbox) -> None:
     pending["link"]["recheckAvailable"] = True
     render(f7, [entry("a", name="keep"), pending])
 
-    f7.widgets[f7.find_widget("", "edit")].text = "keep"
-    f7.click_widget("Filter")
+    apply_filter(f7, "keep")
 
     recheck = f7.widgets[f7.find_widget("Check again", "button")]
     assert recheck.enabled is True
