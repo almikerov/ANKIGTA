@@ -2,7 +2,7 @@
     <info
         author="ANKIGTA"
         name="ANKIGTA"
-        version="0.1.0"
+        version="1.0.0"
         type="script"
         edf:definition="ankigta.edf"
     />
@@ -36,6 +36,9 @@
     <script src="client/review_mode.lua" type="client" cache="false" />
     <script src="client/activation.lua" type="client" cache="false" />
     <script src="client/indicator.lua" type="client" cache="false" />
+    <!-- After both: it is the world-polling that feeds them, and it hands the
+         indicator the source its markers follow. -->
+    <script src="client/spatial.lua" type="client" cache="false" />
     <script src="client/recovery.lua" type="client" cache="false" />
     <!-- Last on this side: it puts the stored settings in force, so the
          modules it applies them to have to exist by then. -->

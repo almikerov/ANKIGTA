@@ -450,9 +450,23 @@ class HealthServer:
                         states[
                             f"{identity.collection_uuid}/{identity.card_id}"
                         ] = view.state.value
+                    # The card the scheduler chose next, asked of the
+                    # scheduler. ANKIGTA never picks one itself: the marker
+                    # points at Anki's choice or at nothing (ADR 0017).
+                    top = session.scheduler_top() if session is not None else None
                     status, response = session_response(
                         request_id,
-                        {"cardStates": states},
+                        {
+                            "cardStates": states,
+                            "nextCard": (
+                                None
+                                if top is None
+                                else {
+                                    "collectionUuid": top.collection_uuid,
+                                    "cardId": top.card_id,
+                                }
+                            ),
+                        },
                     )
                     self._write_json(status, response)
                     return

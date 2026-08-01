@@ -1,0 +1,352 @@
+{
+  "report": "ankigta-performance",
+  "reportVersion": 1,
+  "ticket": 30,
+  "blocksRelease": false,
+  "blockingReasons": [],
+  "runs": [
+    "cold",
+    "warm"
+  ],
+  "dataset": {
+    "mapEntities": 10000,
+    "spatialLinks": 5000,
+    "ankiCards": 100000,
+    "uniqueLinkedCards": 4751,
+    "collectionUuid": "30000000-3000-4000-8000-300000000030"
+  },
+  "machine": {
+    "operatingSystem": "Windows",
+    "release": "11",
+    "processor": "AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD",
+    "logicalCores": 16,
+    "memoryGiB": 15.24,
+    "pythonVersion": "3.14.6",
+    "matchesReferenceEnvelope": false,
+    "unconfirmed": [
+      "storage_is_ssd",
+      "anki_desktop_installed",
+      "mta_server_available"
+    ]
+  },
+  "measurements": [
+    {
+      "key": "f7_available",
+      "statement": "F7 snapshot is available",
+      "criterion": "F7 available <=2 s; search/filter <=150 ms.",
+      "status": "passed",
+      "aggregate": "max",
+      "value": 606.1565999989398,
+      "limit": 2000.0,
+      "unit": "ms",
+      "sampleCount": 6,
+      "spread": {
+        "min": 435.4622999999265,
+        "median": 507.5962000009895,
+        "max": 606.1565999989398
+      },
+      "samples": [
+        507.596,
+        435.462,
+        435.685,
+        600.335,
+        461.262,
+        606.157
+      ],
+      "unavailableReason": null,
+      "context": {
+        "measures": "onResourceStart to the f7Snapshot event: presence refresh, the store read, and the contract every entity is rendered from",
+        "excludes": "CEGUI drawing the window, which no automated check can time",
+        "entitiesInSnapshot": 10001,
+        "rowsServed": 10001,
+        "resourceReportedBuildMsMax": 606.0,
+        "storeReadMsMax": 264.10179999948014,
+        "storeReadNote": "Store.listMapEntities alone, harness included: MTA builds a result row in C++, this harness builds it in Python"
+      }
+    },
+    {
+      "key": "search_filter",
+      "statement": "Card Picker deck filter returns its first page",
+      "criterion": "F7 available <=2 s; search/filter <=150 ms.",
+      "status": "passed",
+      "aggregate": "max",
+      "value": 36.762700001418125,
+      "limit": 150.0,
+      "unit": "ms",
+      "sampleCount": 20,
+      "spread": {
+        "min": 11.157100001582876,
+        "median": 12.662400000408525,
+        "max": 36.762700001418125
+      },
+      "samples": [
+        36.763,
+        13.256,
+        13.374,
+        13.964,
+        12.207,
+        11.182,
+        12.254,
+        12.018,
+        12.724,
+        14.781,
+        12.535,
+        27.394,
+        12.662,
+        11.339,
+        11.372,
+        12.956,
+        11.981,
+        11.157,
+        13.06,
+        11.599
+      ],
+      "unavailableReason": null,
+      "context": {
+        "measures": "POST /v1/cards/search with deck:\"...\" over loopback: the handler, the narrowing, and the page that comes back",
+        "excludes": "Anki's own find_cards, which the reference collection answers from a generated index rather than from Anki's search",
+        "companion": "the other half of the same 150 ms promise is F7's own Map Entity filter, measured separately as f7_entity_filter",
+        "deckFilter": "Reference::deck-00",
+        "cardsInCollection": 100000,
+        "cardsMatched": 5000,
+        "pageSize": 50
+      }
+    },
+    {
+      "key": "f7_entity_filter",
+      "statement": "F7's Map Entity filter narrows the list",
+      "criterion": "F7 available <=2 s; search/filter <=150 ms.",
+      "status": "passed",
+      "aggregate": "max",
+      "value": 49.33869999877061,
+      "limit": 150.0,
+      "unit": "ms",
+      "sampleCount": 6,
+      "spread": {
+        "min": 40.15059999801451,
+        "median": 46.81479999999283,
+        "max": 49.33869999877061
+      },
+      "samples": [
+        48.947,
+        49.339,
+        41.487,
+        44.308,
+        40.151,
+        46.815
+      ],
+      "unavailableReason": null,
+      "context": {
+        "measures": "ANKIGTA.F7.matching over every Map Entity in the snapshot: identity, name, Entity Tag, type and Spatial Link state",
+        "excludes": "CEGUI clearing and repopulating the grid with the rows that survive, which no automated check can time",
+        "entities": 10000,
+        "matched": 1
+      }
+    },
+    {
+      "key": "spatial_frame",
+      "statement": "Activation Zone, Pick Entity and HUD, per frame",
+      "criterion": "Pick Entity, Activation Zone and HUD add <=2 ms average frame time.",
+      "status": "passed",
+      "aggregate": "mean",
+      "value": 0.09362687500242829,
+      "limit": 2.0,
+      "unit": "ms",
+      "sampleCount": 8,
+      "spread": {
+        "min": 0.08141416668271026,
+        "median": 0.09657416667323561,
+        "max": 0.10519249999560999
+      },
+      "samples": [
+        0.101,
+        0.097,
+        0.086,
+        0.099,
+        0.087,
+        0.105,
+        0.093,
+        0.081
+      ],
+      "unavailableReason": null,
+      "context": {
+        "measures": "Indicator.plan and the HUD line every frame, plus Activation.update over every Spatial Link amortised at the cadence client/spatial.lua polls at",
+        "excludes": "dxDraw and blip calls and the element accessors the runtime index reads positions through, which are the game's cost rather than ANKIGTA's, and Pick Entity, which runs only while picking",
+        "candidates": 5000,
+        "markers": 2,
+        "pollIntervalMs": 250.0,
+        "pollMsMax": 1.4639500000157568,
+        "pollMsMedian": 1.322937499935506,
+        "referenceFps": 60.0,
+        "framesPerPoll": 14.999999999999998,
+        "framesPerBatch": 120,
+        "pollsPerBatch": 8,
+        "batches": 8
+      }
+    },
+    {
+      "key": "card_picker_first_page",
+      "statement": "Card Picker first page",
+      "criterion": "Card Picker first page, card open and rating confirmation <=1 s for 95% local requests.",
+      "status": "passed",
+      "aggregate": "p95",
+      "value": 24.200899999414105,
+      "limit": 1000.0,
+      "unit": "ms",
+      "sampleCount": 20,
+      "spread": {
+        "min": 20.561799999995856,
+        "median": 21.955899999738904,
+        "max": 25.20150000054855
+      },
+      "samples": [
+        22.127,
+        21.062,
+        21.373,
+        20.601,
+        21.956,
+        21.542,
+        22.894,
+        24.029,
+        25.202,
+        23.767,
+        24.201,
+        21.241,
+        21.635,
+        21.32,
+        20.963,
+        21.66,
+        20.562,
+        22.656,
+        22.011,
+        23.413
+      ],
+      "unavailableReason": null,
+      "context": {
+        "measures": "POST /v1/cards/search over loopback: the handler, the Card Picker service reading and shaping cards, and the response",
+        "excludes": "Anki's own find_cards, which the reference collection answers from a generated index rather than from Anki's search",
+        "cardsInCollection": 100000,
+        "cardsMatched": 100000,
+        "pageSize": 50
+      }
+    },
+    {
+      "key": "card_open",
+      "statement": "Card open",
+      "criterion": "Card Picker first page, card open and rating confirmation <=1 s for 95% local requests.",
+      "status": "passed",
+      "aggregate": "p95",
+      "value": 1.5864000015426427,
+      "limit": 1000.0,
+      "unit": "ms",
+      "sampleCount": 20,
+      "spread": {
+        "min": 0.9858999983407557,
+        "median": 1.1272000010649208,
+        "max": 1.7744999968272168
+      },
+      "samples": [
+        1.318,
+        1.774,
+        1.06,
+        1.291,
+        1.019,
+        1.002,
+        1.117,
+        1.019,
+        0.986,
+        1.033,
+        1.175,
+        1.294,
+        1.127,
+        1.076,
+        1.586,
+        1.07,
+        1.143,
+        1.185,
+        1.053,
+        1.509
+      ],
+      "unavailableReason": null,
+      "context": {
+        "measures": "issuing a render capability and fetching the card document over the content endpoint",
+        "excludes": "stock MTA CEF laying the document out, which only a human can observe (ADR 0027)",
+        "documentBytes": 3412
+      }
+    },
+    {
+      "key": "rating_confirmation",
+      "statement": "Rating confirmation",
+      "criterion": "Card Picker first page, card open and rating confirmation <=1 s for 95% local requests.",
+      "status": "passed",
+      "aggregate": "p95",
+      "value": 28.0510000011418,
+      "limit": 1000.0,
+      "unit": "ms",
+      "sampleCount": 20,
+      "spread": {
+        "min": 4.603000001225155,
+        "median": 5.1514000006136484,
+        "max": 30.689900002471404
+      },
+      "samples": [
+        5.681,
+        4.603,
+        5.3,
+        4.778,
+        5.067,
+        4.978,
+        5.151,
+        4.829,
+        23.713,
+        4.898,
+        5.432,
+        4.882,
+        4.841,
+        4.789,
+        6.408,
+        30.69,
+        6.221,
+        5.556,
+        5.132,
+        28.051
+      ],
+      "unavailableReason": null,
+      "context": {
+        "measures": "POST /v1/session/admit then POST /v1/review/rate over loopback, including the Review Journal's durable write",
+        "excludes": "Anki's scheduler applying the answer, which is Anki's own cost and is never driven by an automated check",
+        "ratings": 20
+      }
+    },
+    {
+      "key": "session_rebuild",
+      "statement": "Full 5,000-link session rebuild",
+      "criterion": "Full 5,000-link session rebuild <=5 s while UI remains responsive/progress visible.",
+      "status": "passed",
+      "aggregate": "max",
+      "value": 117.6703000019188,
+      "limit": 5000.0,
+      "unit": "ms",
+      "sampleCount": 3,
+      "spread": {
+        "min": 98.54659999837168,
+        "median": 115.43489999894518,
+        "max": 117.6703000019188
+      },
+      "samples": [
+        98.547,
+        117.67,
+        115.435
+      ],
+      "unavailableReason": null,
+      "context": {
+        "measures": "SessionCoordinator.start over every linked identity: deduplication, reading each card, eligibility, and the build",
+        "excludes": "Anki rebuilding the filtered deck, which is Anki's own work",
+        "identities": 4751,
+        "admitted": 4251,
+        "skipped": 500,
+        "progressReported": true
+      }
+    }
+  ]
+}

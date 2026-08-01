@@ -67,6 +67,15 @@ local replaceOldIdentity = nil
 local oldCardIdentity = nil
 local newCardIdentity = nil
 local entityRows = {}
+local entityFilterEdit = nil
+local entityFilterButton = nil
+local entityFilterLabel = nil
+--- What the player last typed into the Map Entity filter.
+--
+-- Kept across a rebuild for the same reason the Card Picker's deck filter is:
+-- a language change or a new UI Scale rebuilds the window, and throwing away
+-- what someone typed would be the window losing their work to redraw itself.
+local entityFilter = ""
 local relinkSource = nil
 
 -- When the last F7 and the last Card Picker search were asked for, so the
@@ -129,6 +138,9 @@ local function closeF7()
     oldCardIdentity = nil
     newCardIdentity = nil
     entityRows = {}
+    entityFilterEdit = nil
+    entityFilterButton = nil
+    entityFilterLabel = nil
     relinkSource = nil
     relinkTarget = nil
     pendingMapId = nil
@@ -446,29 +458,66 @@ local function renderReplaceConfirmation(entry, oldIdentity, newIdentity)
     end, false)
 end
 
-local function renderSnapshot(snapshot)
-    closeF7()
-
-    local surface = ANKIGTA.Layout.open("f7", text("f7.title"))
-    if not surface then
-        return
+--- Does this Map Entity match what the player typed?
+--
+-- Over the record, never over the world: story 51 says search and filtering do
+-- not depend on current streaming, so an entity whose Runtime Instance is gone
+-- is found by the same words that find one standing in front of you.
+--
+-- Substring rather than pattern, because a Map Entity name may contain `-`,
+-- `(` or `%`, and a player typing one of those means the character.
+--
+-- `string.lower` folds ASCII only. A Cyrillic name matches case-sensitively,
+-- which is worth knowing and not worth a case-folding table for two alphabets.
+local function entityMatches(entry, needle)
+    if needle == "" then
+        return true
     end
-    window = surface.window
-    -- Design pixels: the coordinates below say where a control goes in the
-    -- window as drawn, and the layout manager decides how big that is.
-    local width, height = surface.width, surface.height
-    grid = surface.gridList(16, 32, width - 32, height - 84)
-    guiGridListAddColumn(grid, text("f7.column.mapEntity"), 0.17)
-    guiGridListAddColumn(grid, text("f7.column.type"), 0.08)
-    guiGridListAddColumn(grid, text("f7.column.authored"), 0.29)
-    guiGridListAddColumn(grid, text("f7.column.runtime"), 0.24)
-    guiGridListAddColumn(grid, text("f7.column.link"), 0.18)
+    local mapEntity = entry.mapEntity
+    local metadata = entry.metadata or entry.link.metadata or {}
+    local fields = {
+        mapEntity.mapId,
+        mapEntity.entityId,
+        mapEntity.type,
+        metadata.name,
+        metadata.entityTag,
+        entry.link.state,
+    }
+    for _, field in ipairs(fields) do
+        if type(field) == "string"
+            and string.find(string.lower(field), needle, 1, true)
+        then
+            return true
+        end
+    end
+    return false
+end
 
-    local hasPending = false
+--- The entries a query keeps, in the order they arrived.
+local function matchingEntities(entities, query)
+    local needle = string.lower(tostring(query or ""))
+    local matched = {}
+    for _, entry in ipairs(entities or {}) do
+        if entityMatches(entry, needle) then
+            matched[#matched + 1] = entry
+        end
+    end
+    return matched
+end
+
+--- Put the rows the current filter keeps into the grid.
+--
+-- Separate from the snapshot because it runs again on every filter, and the
+-- things that must happen once per snapshot -- asking Anki for card state,
+-- finding the pending and the collided entity -- must not run again with it.
+local function fillEntityGrid(entities)
+    if not isElement(grid) then
+        return {}
+    end
+    guiGridListClear(grid)
     entityRows = {}
-    relinkSource = nil
-    relinkTarget = nil
-    for _, entry in ipairs(snapshot.entities) do
+    local matched = matchingEntities(entities, entityFilter)
+    for _, entry in ipairs(matched) do
         local row = guiGridListAddRow(grid)
         entityRows[row] = entry
         local mapEntity = entry.mapEntity
@@ -501,13 +550,60 @@ local function renderSnapshot(snapshot)
         if entry.link.guidanceKey then
             linkText = linkText .. " — " .. text(entry.link.guidanceKey)
         end
+        if entry.link.copyCollision == true then
+            linkText = linkText .. " — " .. text("f7.copyDecisionHint")
+        end
         guiGridListSetItemText(grid, row, 5, linkText, false, false)
+    end
+    if isElement(entityFilterLabel) then
+        guiSetText(
+            entityFilterLabel,
+            text("f7.filterResult", #matched, #(entities or {}))
+        )
+    end
+    return matched
+end
+
+local function renderSnapshot(snapshot)
+    closeF7()
+
+    local surface = ANKIGTA.Layout.open("f7", text("f7.title"))
+    if not surface then
+        return
+    end
+    window = surface.window
+    -- Design pixels: the coordinates below say where a control goes in the
+    -- window as drawn, and the layout manager decides how big that is.
+    local width, height = surface.width, surface.height
+    entityFilterEdit = surface.edit(16, 32, width - 360, 26, entityFilter)
+    guiSetProperty(entityFilterEdit, "NormalTextColour", "FF000000")
+    entityFilterButton = surface.button(
+        width - 336,
+        32,
+        130,
+        26,
+        text("f7.filterApply")
+    )
+    entityFilterLabel = surface.label(width - 196, 32, 180, 26, "")
+    grid = surface.gridList(16, 66, width - 32, height - 118)
+    guiGridListAddColumn(grid, text("f7.column.mapEntity"), 0.17)
+    guiGridListAddColumn(grid, text("f7.column.type"), 0.08)
+    guiGridListAddColumn(grid, text("f7.column.authored"), 0.29)
+    guiGridListAddColumn(grid, text("f7.column.runtime"), 0.24)
+    guiGridListAddColumn(grid, text("f7.column.link"), 0.18)
+
+    local hasPending = false
+    relinkSource = nil
+    relinkTarget = nil
+    -- Once per snapshot, over every entity rather than over the filtered ones:
+    -- a pending or collided entity the filter happens to hide is still one the
+    -- window has an action for.
+    for _, entry in ipairs(snapshot.entities) do
+        local mapEntity = entry.mapEntity
         hasPending = hasPending or entry.link.recheckAvailable == true
         if entry.link.copyCollision == true then
             copyMapId = mapEntity.mapId
             copyEntityId = mapEntity.entityId
-            linkText = linkText .. " — " .. text("f7.copyDecisionHint")
-            guiGridListSetItemText(grid, row, 5, linkText, false, false)
         end
         if entry.link.recheckAvailable == true then
             pendingMapId = mapEntity.mapId
@@ -524,6 +620,11 @@ local function renderSnapshot(snapshot)
             )
         end
     end
+    fillEntityGrid(snapshot.entities)
+    addEventHandler("onClientGUIClick", entityFilterButton, function()
+        entityFilter = guiGetText(entityFilterEdit) or ""
+        fillEntityGrid(snapshot.entities)
+    end, false)
     addEventHandler("onClientGUIClick", grid, function()
         local selectedRow = guiGridListGetSelectedItem(grid)
         local entry = entityRows[selectedRow]
@@ -1079,3 +1180,12 @@ addEventHandler("onClientResourceStart", resourceRoot, function()
 end)
 
 addEventHandler("onClientResourceStop", resourceRoot, closeF7)
+
+--- The Map Entity filter, on its own.
+--
+-- Exposed because the 150 ms promise in story 58 is about this narrowing, and
+-- a benchmark that had to click a button to measure it would be measuring
+-- CEGUI instead.
+ANKIGTA.F7 = {
+    matching = matchingEntities,
+}

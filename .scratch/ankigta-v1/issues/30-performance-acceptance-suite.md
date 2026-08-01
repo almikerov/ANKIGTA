@@ -83,7 +83,14 @@ once and writes only where the stored state disagrees. The Lua sandbox grew real
 `xmlLoadFile`/`xmlNodeGet*` stubs over the same files `fileOpen` reads, so this
 is covered by behaviour rather than by a source search.
 
-### Open findings, not fixed here
+### Open findings, not fixed here — both closed by ticket 31
+
+Ticket 31 closed the first and closed the second, and the numbers moved with
+them: `spatial_frame` is now the marker and the HUD every frame plus one full
+pass every 250 ms rather than a full pass every frame, and `f7_entity_filter`
+is a new threshold for the surface that did not exist. The two findings are
+kept below as they were written.
+
 
 **Nothing drives the Activation Zone or the Next Card Indicator in a running
 resource.** `Activation.update` has no caller anywhere in `mta/ankigta/`, and no

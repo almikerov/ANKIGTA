@@ -145,6 +145,36 @@ def test_the_spatial_report_states_what_is_tracked_and_what_is_nearest(
     assert spatial["nearestDistance"] == pytest.approx(1.5)
 
 
+def test_the_report_says_whether_the_world_is_being_polled_at_all(
+    client: MtaSandbox,
+) -> None:
+    """The other half of "why did the card not open".
+
+    The decision's own report cannot say that nothing is asking it, or that the
+    entity has no Runtime Instance here to ask about.
+    """
+    idle = report(client)["polling"]
+    assert idle["polling"] is False
+    assert idle["links"] == 0
+
+    client.add_world_element(x=1.0, ankigtaEntityId="e1")
+    client.eval(
+        """
+        function()
+            triggerEvent("ankigta:spatialCandidates", resourceRoot, {
+                {mapId = "m1", entityId = "e1", radius = 3},
+            })
+        end
+        """
+    )()
+
+    running = report(client)["polling"]
+    assert running["polling"] is True
+    assert running["links"] == 1
+    assert running["streamedInstances"] == 1
+    assert running["pollIntervalMs"] == 250
+
+
 def test_the_nearest_distance_is_a_distance_not_its_square(
     client: MtaSandbox,
 ) -> None:

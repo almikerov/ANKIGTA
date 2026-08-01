@@ -70,6 +70,35 @@ the code was simplified instead of the comment being kept.
 Automated evidence: `pytest -q tests/test_statistics.py tests/test_indicator.py`
 → 39 passed; full suite 462 passed; mypy strict clean.
 
+## Where the polling lives (added by ticket 31)
+
+Like ticket 22, this ticket built the rules and left out what feeds them. Ticket
+30 found that no server code sent `ankigta:statistics` or `ankigta:nextCard`
+and nothing called `Statistics.summarize`, so the HUD stayed blank and the
+marker never appeared. Ticket 31 wrote that half.
+
+- One refresh answers all three questions at once, in `server/main.lua`: how
+  much work there is, which Spatial Link may activate, and which Map Entity
+  carries the marker. They are statements about the same moment, and asking
+  twice would let them disagree about it.
+- `ANKIGTA.CompanionGateway.requestCardStates` is the query. It posts every
+  linked Anki Card Identity to `/v1/cards/states`, which now answers with the
+  observed state per card **and** with `nextCard` — the card Anki's own
+  scheduler has as top. ANKIGTA still decides nothing about card state or order
+  (ADR 0017).
+- The refresh runs when the session state changes and when a link, replace,
+  unlink or relink invalidates what was counted.
+- `ankigta:nextCard` carries the identity and the Map Entity carrying it,
+  never coordinates. `client/spatial.lua` resolves those to live positions
+  **every frame** — the marker follows a moving Runtime Instance frame by
+  frame rather than in 250 ms steps — through
+  `Indicator.setCandidateSource`, which is the one change to this ticket's own
+  module.
+- A next card that nothing in the Active Map Set carries is not announced: a
+  marker with no target would leave the player believing they had one.
+
+Tests: `tests/test_study_refresh.py` and `tests/test_spatial_polling.py`.
+
 ## Manual runtime checklist
 
 See `docs/checklists/ticket23-indicator-statistics.md` (`Status: not run`).

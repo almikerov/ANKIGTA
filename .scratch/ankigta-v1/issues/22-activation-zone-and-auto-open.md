@@ -55,6 +55,33 @@
 Automated evidence: `pytest -q tests/test_activation_zone.py` → 35 passed;
 full suite 389 passed; mypy strict clean.
 
+## Where the polling lives (added by ticket 31)
+
+This ticket built the decision and deliberately left out the world-polling that
+feeds it. Ticket 30 then found the consequence: nothing in a running resource
+ever called `Activation.update`, so no card could open by walking up to it.
+Ticket 31 wrote that half.
+
+- `client/spatial.lua` owns it. It holds the runtime index — which streamed
+  element is which Map Entity, kept current by `onClientElementStreamIn` /
+  `StreamOut` / `onClientElementDestroy` — builds the player observation from
+  the world, and calls `ANKIGTA.Activation.update` with it.
+- The server sends `ankigta:spatialCandidates`: identities, radius and
+  `Show radius` for every active, eligible Spatial Link, and never a
+  coordinate. Where the Runtime Instance is *now* is read off the live element
+  on this side (spec Implementation Decision 14).
+- Polling runs while there is something to poll for and stops when the set is
+  empty, which is how `Pause studying` turns the Activation Zone off.
+- **Every 250 ms, not every frame**, with the reasoning in the module header
+  and the number in `spatial_frame` in `python -m tests.perf` — which reads the
+  interval out of the resource rather than restating it.
+- A decision goes to the server as `ankigta:requestSpatialOpen`, which resolves
+  the Map Entity to a card itself and calls the same `openReviewModeFor` a
+  manual opening uses. There is no second way into Review Mode, so spatial
+  opening cannot skip Exact Card Admission.
+
+Tests: `tests/test_spatial_polling.py` and `tests/test_study_refresh.py`.
+
 ## Manual runtime checklist
 
 See `docs/checklists/ticket22-activation-zone.md` (`Status: not run`).

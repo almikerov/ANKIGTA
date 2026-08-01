@@ -51,6 +51,12 @@ function Diagnostics.snapshot()
     if ANKIGTA.Activation and ANKIGTA.Activation.diagnostics then
         report.spatial = ANKIGTA.Activation.diagnostics()
     end
+    if ANKIGTA.Spatial and ANKIGTA.Spatial.diagnostics then
+        -- The other half of "why did the card not open": whether the world is
+        -- being polled at all, and whether the entity is here to be polled
+        -- for. The decision's own report cannot say either.
+        report.polling = ANKIGTA.Spatial.diagnostics()
+    end
     return report
 end
 
