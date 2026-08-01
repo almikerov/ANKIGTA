@@ -47,9 +47,10 @@ def test_companion_control_gateway_is_server_side_only() -> None:
 
     assert [script.get("type") for script in gateway_scripts] == ["server"]
 
+    # The client must be unable to reach the companion itself: no HTTP, no
+    # credentials, no control paths, no transaction identity it could forge.
     forbidden_client_fragments = (
         "fetchRemote(",
-        "127.0.0.1",
         "::1",
         '["Authorization"]',
         "connectionToken",
@@ -61,6 +62,16 @@ def test_companion_control_gateway_is_server_side_only() -> None:
             continue
         source = (MTA_RESOURCE / str(script.get("src"))).read_text(encoding="utf-8")
         assert all(fragment not in source for fragment in forbidden_client_fragments)
+
+        # Loopback may appear only where CEF requires the client to whitelist
+        # the content endpoint's host. The URL itself always arrives from the
+        # server, so the client never learns the port or the capability.
+        for line in source.splitlines():
+            if "127.0.0.1" not in line:
+                continue
+            assert "requestBrowserDomains" in line, (
+                f"unexpected loopback reference in {script.get('src')}: {line}"
+            )
 
     gateway_source = (MTA_RESOURCE / "server" / "companion.lua").read_text(
         encoding="utf-8"

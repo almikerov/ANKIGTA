@@ -1,0 +1,436 @@
+ANKIGTA = ANKIGTA or {}
+
+local REVIEW_OPEN_EVENT = "ankigta:openReviewMode"
+local REVIEW_SIDE_EVENT = "ankigta:reviewSide"
+local REVIEW_REVEAL_REQUEST_EVENT = "ankigta:revealAnswer"
+local REVIEW_RATE_REQUEST_EVENT = "ankigta:submitRating"
+local REVIEW_RESULT_EVENT = "ankigta:reviewResult"
+local REVIEW_CLOSED_EVENT = "ankigta:reviewClosed"
+local AUTHORIZATION_EVENT = "ankigta:setAuthorized"
+
+local RATINGS = {"again", "hard", "good", "easy"}
+local RATING_LABELS = {
+    again = "Again",
+    hard = "Hard",
+    good = "Good",
+    easy = "Easy",
+}
+
+-- Game controls ANKIGTA must not act on while a card is open. Movement is left
+-- alone deliberately: taking it away mid-review is more disorienting than a
+-- player wandering off, and the review does not depend on standing still.
+local BLOCKED_CONTROLS = {
+    "fire",
+    "vehicle_fire",
+    "vehicle_secondary_fire",
+    "enter_exit",
+    "action",
+    "next_weapon",
+    "previous_weapon",
+    "radio_next",
+    "radio_previous",
+}
+
+local RATING_BAR_HEIGHT = 56
+local SURFACE_MARGIN = 48
+
+local Review = {
+    active = false,
+    side = "question",
+    submitted = false,
+    awaitingResult = false,
+    result = false,
+    warning = false,
+    focused = true,
+    closeAfterRating = true,
+    browser = false,
+    identity = false,
+    ratingBounds = {},
+    captured = false,
+}
+
+local function surfaceRect()
+    local screenWidth, screenHeight = guiGetScreenSize()
+    local width = math.floor(screenWidth * 0.7)
+    local height = math.floor(screenHeight * 0.7)
+    local x = math.floor((screenWidth - width) / 2)
+    local y = math.floor((screenHeight - height) / 2)
+    return x, y, width, height
+end
+
+local function captureClientState()
+    -- Restoration must return what was actually there, not a default: the
+    -- player may already have had the cursor up, or controls disabled by
+    -- another resource.
+    local controls = {}
+    for _, control in ipairs(BLOCKED_CONTROLS) do
+        controls[control] = isControlEnabled(control)
+        toggleControl(control, false)
+    end
+    Review.captured = {
+        controls = controls,
+        cursor = isCursorShowing(),
+        cameraTarget = getCameraTarget(),
+        radioChannel = getRadioChannel(),
+    }
+    showCursor(true)
+end
+
+local function restoreClientState()
+    local captured = Review.captured
+    if not captured then
+        return
+    end
+    for control, enabled in pairs(captured.controls or {}) do
+        toggleControl(control, enabled == true)
+    end
+    showCursor(captured.cursor == true)
+    if captured.cameraTarget and isElement(captured.cameraTarget) then
+        setCameraTarget(captured.cameraTarget)
+    end
+    if type(captured.radioChannel) == "number" then
+        setRadioChannel(captured.radioChannel)
+    end
+    Review.captured = false
+end
+
+local function destroyBrowser()
+    if isElement(Review.browser) then
+        destroyElement(Review.browser)
+    end
+    Review.browser = false
+end
+
+function isReviewModeActive()
+    return Review.active == true
+end
+
+function reviewModeState()
+    return {
+        active = Review.active,
+        side = Review.side,
+        submitted = Review.submitted,
+        awaitingResult = Review.awaitingResult,
+        result = Review.result,
+        warning = Review.warning,
+        focused = Review.focused,
+    }
+end
+
+local function closeReviewMode(reason)
+    if not Review.active then
+        return false
+    end
+    Review.active = false
+    Review.awaitingResult = false
+    unbindKey("escape", "down", requestCloseReviewMode)
+    removeEventHandler("onClientRender", root, renderReviewMode)
+    destroyBrowser()
+    restoreClientState()
+    local identity = Review.identity
+    Review.identity = false
+    Review.result = false
+    Review.warning = false
+    Review.submitted = false
+    Review.side = "question"
+    triggerServerEvent(
+        REVIEW_CLOSED_EVENT,
+        resourceRoot,
+        identity or false,
+        reason or "closed"
+    )
+    return true
+end
+
+function requestCloseReviewMode()
+    if not Review.active then
+        return false
+    end
+    if Review.awaitingResult then
+        -- A rating is in flight; closing now would leave the player unsure
+        -- whether it counted.
+        return false
+    end
+    return closeReviewMode(Review.submitted and "closed_after_rating" or "cancelled")
+end
+
+function renderReviewMode()
+    if not Review.active then
+        return
+    end
+    local x, y, width, height = surfaceRect()
+    dxDrawRectangle(0, 0, guiGetScreenSize(), tocolor(0, 0, 0, 180))
+    dxDrawRectangle(x, y, width, height, tocolor(16, 16, 16, 235))
+
+    if isElement(Review.browser) then
+        dxDrawImage(
+            x,
+            y,
+            width,
+            height - RATING_BAR_HEIGHT,
+            Review.browser
+        )
+    end
+
+    if Review.warning then
+        dxDrawText(
+            Review.warning,
+            x + 8,
+            y + 8,
+            x + width - 8,
+            y + 28,
+            tocolor(255, 190, 60, 255),
+            1,
+            "default-bold"
+        )
+    end
+
+    Review.ratingBounds = {}
+    local barY = y + height - RATING_BAR_HEIGHT
+    if Review.side ~= "answer" then
+        local label = "Показать ответ"
+        Review.ratingBounds.reveal = {x, barY, width, RATING_BAR_HEIGHT}
+        dxDrawRectangle(x, barY, width, RATING_BAR_HEIGHT, tocolor(40, 40, 40, 235))
+        dxDrawText(
+            label,
+            x,
+            barY,
+            x + width,
+            barY + RATING_BAR_HEIGHT,
+            tocolor(235, 235, 235, 255),
+            1,
+            "default-bold",
+            "center",
+            "center"
+        )
+        return
+    end
+
+    local buttonWidth = width / #RATINGS
+    for index, rating in ipairs(RATINGS) do
+        local buttonX = x + (index - 1) * buttonWidth
+        Review.ratingBounds[rating] = {
+            buttonX,
+            barY,
+            buttonWidth,
+            RATING_BAR_HEIGHT,
+        }
+        local enabled = not Review.submitted and not Review.awaitingResult
+        dxDrawRectangle(
+            buttonX,
+            barY,
+            buttonWidth - 2,
+            RATING_BAR_HEIGHT,
+            enabled and tocolor(48, 48, 48, 235) or tocolor(28, 28, 28, 235)
+        )
+        dxDrawText(
+            RATING_LABELS[rating],
+            buttonX,
+            barY,
+            buttonX + buttonWidth,
+            barY + RATING_BAR_HEIGHT,
+            enabled and tocolor(235, 235, 235, 255) or tocolor(120, 120, 120, 255),
+            1,
+            "default-bold",
+            "center",
+            "center"
+        )
+    end
+
+    if Review.result then
+        dxDrawText(
+            Review.result,
+            x,
+            barY - 24,
+            x + width,
+            barY,
+            tocolor(150, 220, 150, 255),
+            1,
+            "default-bold",
+            "center",
+            "center"
+        )
+    end
+end
+
+local function withinBounds(bounds, cursorX, cursorY)
+    if type(bounds) ~= "table" then
+        return false
+    end
+    return cursorX >= bounds[1]
+        and cursorX <= bounds[1] + bounds[3]
+        and cursorY >= bounds[2]
+        and cursorY <= bounds[2] + bounds[4]
+end
+
+function handleReviewClick(button, state, _absoluteX, _absoluteY, cursorX, cursorY)
+    if not Review.active or button ~= "left" or state ~= "down" then
+        return
+    end
+    cancelEvent()
+    if not Review.focused then
+        -- Regaining focus after Alt+Tab must cost a click, so the click that
+        -- brings the window back cannot also rate the card.
+        Review.focused = true
+        return
+    end
+    if Review.side ~= "answer" then
+        if withinBounds(Review.ratingBounds.reveal, cursorX, cursorY) then
+            triggerServerEvent(
+                REVIEW_REVEAL_REQUEST_EVENT,
+                resourceRoot,
+                Review.identity or false
+            )
+        end
+        return
+    end
+    if Review.submitted or Review.awaitingResult then
+        -- One accepted rating per Review Mode; further clicks are noise.
+        return
+    end
+    for _, rating in ipairs(RATINGS) do
+        if withinBounds(Review.ratingBounds[rating], cursorX, cursorY) then
+            Review.awaitingResult = true
+            triggerServerEvent(
+                REVIEW_RATE_REQUEST_EVENT,
+                resourceRoot,
+                Review.identity or false,
+                rating
+            )
+            return
+        end
+    end
+end
+
+local function openReviewMode(payload)
+    if Review.active or type(payload) ~= "table" then
+        return false
+    end
+    if type(payload.url) ~= "string" or payload.url == "" then
+        return false
+    end
+    Review.active = true
+    Review.side = payload.side == "answer" and "answer" or "question"
+    Review.submitted = false
+    Review.awaitingResult = false
+    Review.result = false
+    Review.warning = payload.warning or false
+    Review.focused = true
+    Review.closeAfterRating = payload.closeAfterRating ~= false
+    Review.identity = payload.cardIdentity or false
+    Review.ratingBounds = {}
+
+    captureClientState()
+
+    local _x, _y, width, height = surfaceRect()
+    Review.browser = createBrowser(
+        width,
+        height - RATING_BAR_HEIGHT,
+        false,
+        false
+    )
+    if not Review.browser then
+        closeReviewMode("browser_unavailable")
+        return false
+    end
+    bindKey("escape", "down", requestCloseReviewMode)
+    addEventHandler("onClientRender", root, renderReviewMode)
+    return true
+end
+
+addEvent(REVIEW_OPEN_EVENT, true)
+addEventHandler(REVIEW_OPEN_EVENT, resourceRoot, function(payload)
+    openReviewMode(payload)
+end)
+
+addEvent(REVIEW_SIDE_EVENT, true)
+addEventHandler(REVIEW_SIDE_EVENT, resourceRoot, function(payload)
+    if not Review.active or type(payload) ~= "table" then
+        return
+    end
+    if type(payload.url) ~= "string" or payload.url == "" then
+        Review.warning = "Не удалось загрузить сторону карточки"
+        return
+    end
+    Review.side = payload.side == "answer" and "answer" or "question"
+    Review.warning = payload.warning or false
+    if isElement(Review.browser) then
+        loadBrowserURL(Review.browser, payload.url)
+    end
+end)
+
+addEvent(REVIEW_RESULT_EVENT, true)
+addEventHandler(REVIEW_RESULT_EVENT, resourceRoot, function(outcome)
+    if not Review.active or type(outcome) ~= "table" then
+        return
+    end
+    Review.awaitingResult = false
+    if outcome.state == "applied" then
+        Review.submitted = true
+        Review.result = "Оценка принята"
+        if Review.closeAfterRating then
+            closeReviewMode("closed_after_rating")
+        end
+        return
+    end
+    if outcome.state == "outcome_unknown" then
+        -- Not a failure the player can retry away: say so plainly and keep the
+        -- card open rather than pretending the rating did or did not land.
+        Review.submitted = true
+        Review.result = false
+        Review.warning = "Результат оценки неизвестен; ANKIGTA сверит его позже"
+        return
+    end
+    Review.warning = "Оценка отклонена: " .. tostring(outcome.category or "unknown")
+end)
+
+addEventHandler("onClientBrowserCreated", root, function()
+    if not Review.active or source ~= Review.browser then
+        return
+    end
+    requestBrowserDomains({"127.0.0.1"})
+end)
+
+addEvent("ankigta:reviewBrowserReady", true)
+
+addEventHandler("onClientBrowserWhitelistChange", root, function()
+    if not Review.active or not isElement(Review.browser) then
+        return
+    end
+    triggerServerEvent(
+        REVIEW_REVEAL_REQUEST_EVENT,
+        resourceRoot,
+        Review.identity or false,
+        "question"
+    )
+end)
+
+-- Focus loss must neither close the card nor submit anything.
+addEventHandler("onClientMainMenuOpen", root, function()
+    Review.focused = false
+end)
+
+addEventHandler("onClientRestore", root, function(didClearRenderTargets)
+    if Review.active then
+        Review.focused = false
+        if didClearRenderTargets and isElement(Review.browser) then
+            focusBrowser(Review.browser)
+        end
+    end
+end)
+
+addEvent(AUTHORIZATION_EVENT, true)
+addEventHandler(AUTHORIZATION_EVENT, resourceRoot, function(authorized)
+    if authorized ~= true and Review.active then
+        closeReviewMode("authorization_revoked")
+    end
+end)
+
+addEventHandler("onClientClick", root, handleReviewClick)
+addEventHandler("onClientResourceStop", resourceRoot, function()
+    if Review.active then
+        closeReviewMode("resource_stop")
+    end
+end)
+
+ANKIGTA.ReviewMode = Review

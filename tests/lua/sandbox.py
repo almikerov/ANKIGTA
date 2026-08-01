@@ -117,6 +117,16 @@ class MtaSandbox:
         self._elements: set[int] = set()
         self._handlers: dict[str, list[Any]] = {}
         self._exports: dict[str, Any] = {}
+        # Client-side observable state, for tests to assert against.
+        self.controls: dict[str, bool] = {}
+        self.cursor_visible = False
+        self.camera_target: Any = None
+        self.radio_channel = 0
+        self.bound_keys: dict[tuple[str, str], list[Any]] = {}
+        self.browsers: list[Any] = []
+        self.loaded_urls: list[str] = []
+        self.requested_domains: list[str] = []
+        self.browser_available = True
         self._install_globals()
 
     # ---------------------------------------------------------------- loading
@@ -187,9 +197,22 @@ class MtaSandbox:
     # ---------------------------------------------------------------- events
 
     def trigger(self, event: str, source: Any = None, *args: Any) -> None:
-        """Invoke every handler registered for an event."""
+        """Invoke every handler registered for an event.
+
+        MTA exposes the event's source as a global during dispatch, and handlers
+        legitimately branch on it, so set it the same way.
+        """
         for handler in self._handlers.get(event, []):
+            self._dispatch(handler, source, args)
+
+    def _dispatch(self, handler: Any, source: Any, args: tuple[Any, ...]) -> None:
+        g = self.lua.globals()
+        previous = g.source
+        g.source = source
+        try:
             handler(*args)
+        finally:
+            g.source = previous
 
     def handlers(self, event: str) -> list[Any]:
         return list(self._handlers.get(event, []))
@@ -287,12 +310,17 @@ class MtaSandbox:
         def is_element(value: Any) -> bool:
             if isinstance(value, _Connection):
                 return not value.destroyed
+            if lua_type(value) == "table":
+                return value["__element"] is True and value["__destroyed"] is not True
             return id(value) in self._elements
 
         def destroy_element(value: Any) -> bool:
             if isinstance(value, _Connection):
                 value.close()
                 self._elements.discard(id(value))
+                return True
+            if lua_type(value) == "table" and value["__element"] is True:
+                value["__destroyed"] = True
                 return True
             if id(value) in self._elements:
                 self._elements.discard(id(value))
@@ -379,7 +407,7 @@ class MtaSandbox:
                 TriggeredEvent(str(name), source, tuple(args))
             )
             for handler in self._handlers.get(str(name), []):
-                handler(*args)
+                self._dispatch(handler, source, args)
             return True
 
         def trigger_client_event(*args: Any) -> bool:
@@ -410,8 +438,9 @@ class MtaSandbox:
 
         # --- resource identity ---------------------------------------------
         resource = self.lua.table_from({"name": "ankigta"})
-        resource_root = self.lua.table_from({"type": "resourceRoot"})
-        self._elements.add(id(resource_root))
+        resource_root = self.lua.table_from(
+            {"__element": True, "type": "resourceRoot"}
+        )
         g.resource = resource
         g.resourceRoot = resource_root
         g.root = self.lua.table_from({"type": "root"})
@@ -446,6 +475,90 @@ class MtaSandbox:
 
         g.fetchRemote = fetch_remote
         g.abortRemoteRequest = lambda _handle=None: True
+
+        self._install_client_globals(g)
+
+    def _install_client_globals(self, g: Any) -> None:
+        """Client-side surface: input, drawing and the CEF browser."""
+
+        # --- input state ----------------------------------------------------
+        def toggle_control(control: str, enabled: Any = True) -> bool:
+            self.controls[str(control)] = enabled is True
+            return True
+
+        def is_control_enabled(control: str) -> bool:
+            return self.controls.get(str(control), True)
+
+        def show_cursor(visible: Any = True, *_rest: Any) -> bool:
+            self.cursor_visible = visible is True
+            return True
+
+        g.toggleControl = toggle_control
+        g.isControlEnabled = is_control_enabled
+        g.showCursor = show_cursor
+        g.isCursorShowing = lambda: self.cursor_visible
+        g.bindKey = lambda key, state, handler, *_rest: self.bound_keys.setdefault(
+            (str(key), str(state)), []
+        ).append(handler) or True
+        g.unbindKey = lambda key, state=None, handler=None: True
+
+        # --- camera, radio ---------------------------------------------------
+        g.getCameraTarget = lambda *_args: self.camera_target
+        g.setCameraTarget = lambda target, *_rest: (
+            setattr(self, "camera_target", target) or True
+        )
+        g.getRadioChannel = lambda: self.radio_channel
+        g.setRadioChannel = lambda channel: (
+            setattr(self, "radio_channel", int(channel)) or True
+        )
+
+        # --- drawing ---------------------------------------------------------
+        g.guiGetScreenSize = lambda: (1920.0, 1080.0)
+        g.dxDrawRectangle = lambda *_args, **_kwargs: True
+        g.dxDrawText = lambda *_args, **_kwargs: True
+        g.dxDrawImage = lambda *_args, **_kwargs: True
+        g.tocolor = lambda r=0, gr=0, b=0, a=255: (
+            (int(a) << 24) | (int(r) << 16) | (int(gr) << 8) | int(b)
+        )
+
+        # --- browser ---------------------------------------------------------
+        def create_browser(
+            width: float,
+            height: float,
+            is_local: Any = False,
+            transparent: Any = False,
+        ) -> Any:
+            if not self.browser_available:
+                return False
+            browser = self.lua.table_from(
+                {
+                    "__element": True,
+                    "type": "browser",
+                    "width": float(width),
+                    "height": float(height),
+                    "isLocal": is_local is True,
+                }
+            )
+            self.browsers.append(browser)
+            return browser
+
+        def load_browser_url(browser: Any, url: str, *_rest: Any) -> bool:
+            self.loaded_urls.append(str(url))
+            return True
+
+        def request_browser_domains(domains: Any, *_rest: Any) -> bool:
+            if lua_type(domains) == "table":
+                self.requested_domains.extend(
+                    str(domains[key]) for key in domains.keys()
+                )
+            return True
+
+        g.createBrowser = create_browser
+        g.loadBrowserURL = load_browser_url
+        g.requestBrowserDomains = request_browser_domains
+        g.focusBrowser = lambda _browser=None: True
+        g.isBrowserFocused = lambda _browser=None: True
+        g.cancelEvent = lambda *_args: True
 
     # ------------------------------------------------------------ conversion
 

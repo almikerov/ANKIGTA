@@ -20,6 +20,7 @@ from .contract import (
 )
 from .cards import CardPickerError, CardPickerService
 from .collection_identity import AnkiCardIdentity
+from .content import ContentServer
 from .review import ReviewCoordinator, ReviewError
 from .session import SessionCoordinator, SessionError
 
@@ -34,6 +35,8 @@ SESSION_CANCEL_PATH = "/v1/session/cancel"
 SESSION_ADMIT_PATH = "/v1/session/admit"
 SESSION_RESTORE_PATH = "/v1/session/restore"
 REVIEW_RATE_PATH = "/v1/review/rate"
+RENDER_ISSUE_PATH = "/v1/render/issue"
+RENDER_CLOSE_PATH = "/v1/render/close"
 MAX_CONTROL_BYTES = 2 * 1024 * 1024
 MAX_READ_WORKERS = 4
 MAX_PENDING_READS = 4
@@ -100,6 +103,18 @@ def _parse_identity(request: object) -> AnkiCardIdentity:
             "cardIdentity must contain collectionUuid and positive cardId",
         )
     return AnkiCardIdentity(collection_uuid, card_id)
+
+
+def _parse_side(request: object) -> str:
+    if not isinstance(request, dict):
+        raise SessionError("invalid_session_request", "request body must be an object")
+    value = request.get("side", "question")
+    if value not in {"question", "answer"}:
+        raise SessionError(
+            "invalid_session_request",
+            "side must be question or answer",
+        )
+    return str(value)
 
 
 def _parse_transaction_id(request: object) -> str:
@@ -187,12 +202,14 @@ class HealthServer:
         card_picker: CardPickerService | None = None,
         session_coordinator: SessionCoordinator | None = None,
         review_coordinator: ReviewCoordinator | None = None,
+        content_server: ContentServer | None = None,
     ) -> None:
         self._observe = observe
         self._token = token or None
         self._card_picker = card_picker
         self._session = session_coordinator
         self._review = review_coordinator
+        self._content = content_server
         self._server = BoundedHTTPServer(
             (self.host, port),
             self._handler_type(),
@@ -213,6 +230,7 @@ class HealthServer:
         card_picker = self._card_picker
         session = self._session
         review = self._review
+        content = self._content
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self) -> None:
@@ -394,6 +412,67 @@ class HealthServer:
                             ),
                         )
                         return
+                    self._write_json(status, response)
+                    return
+                if self.path in {RENDER_ISSUE_PATH, RENDER_CLOSE_PATH}:
+                    if content is None:
+                        unavailable = ContractError(
+                            "render_unavailable",
+                            "card content is unavailable",
+                            request_id,
+                        )
+                        self._write_json(503, error_response(unavailable))
+                        return
+                    if self.path == RENDER_CLOSE_PATH:
+                        content.close()
+                        status, response = session_response(
+                            request_id,
+                            {"render": {"closed": True}},
+                        )
+                        self._write_json(status, response)
+                        return
+                    try:
+                        identity = _parse_identity(request)
+                        side = _parse_side(request)
+                        capability = content.issue(identity, side)
+                    except SessionError as error:
+                        self._write_json(
+                            400,
+                            error_response(
+                                ContractError(
+                                    error.category,
+                                    error.message,
+                                    request_id,
+                                )
+                            ),
+                        )
+                        return
+                    except LookupError:
+                        self._write_json(
+                            404,
+                            error_response(
+                                ContractError(
+                                    "card_missing",
+                                    "card cannot be rendered",
+                                    request_id,
+                                )
+                            ),
+                        )
+                        return
+                    status, response = session_response(
+                        request_id,
+                        {
+                            "render": {
+                                "url": (
+                                    f"http://{content.host}:{content.port}"
+                                    f"{capability.document_path}"
+                                ),
+                                "side": capability.side,
+                                "generation": capability.generation,
+                                "expiresInSeconds": capability.lifetime_seconds,
+                            }
+                        },
+                    )
                     self._write_json(status, response)
                     return
                 if self.path == REVIEW_RATE_PATH:

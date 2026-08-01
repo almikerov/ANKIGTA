@@ -26,6 +26,13 @@ local SESSION_INVALIDATED_EVENT = "ankigta:sessionInvalidated"
 local CARD_STATE_REFRESHED_EVENT = "ankigta:cardStateRefreshed"
 local UNDO_REQUEST_EVENT = "ankigta:undo"
 local REDO_REQUEST_EVENT = "ankigta:redo"
+local REVIEW_OPEN_EVENT = "ankigta:openReviewMode"
+local REVIEW_SIDE_EVENT = "ankigta:reviewSide"
+local REVIEW_REVEAL_REQUEST_EVENT = "ankigta:revealAnswer"
+local REVIEW_RATE_REQUEST_EVENT = "ankigta:submitRating"
+local REVIEW_RESULT_EVENT = "ankigta:reviewResult"
+local REVIEW_CLOSED_EVENT = "ankigta:reviewClosed"
+local RENDER_ISSUED_EVENT = "ankigta:renderIssued"
 local PICK_ENTITY_REQUEST_EVENT = "ankigta:pickEntity"
 local PICK_ENTITY_RESULT_EVENT = "ankigta:pickEntityResult"
 -- Ticket 05 uses this only to observe a disposable map-created element.
@@ -1089,6 +1096,202 @@ addEventHandler("onResourceStart", resourceRoot, function()
         sendAuthorization(player)
     end
 end)
+
+-- Review Mode ---------------------------------------------------------------
+--
+-- The server owns the whole privileged half: it issues the short-lived content
+-- capability, admits the card and carries the rating. The client only ever
+-- receives a URL and sends back a rating name.
+
+local openReview = false
+
+local function sameCardIdentity(left, right)
+    return type(left) == "table"
+        and type(right) == "table"
+        and left.collectionUuid == right.collectionUuid
+        and tonumber(left.cardId) == tonumber(right.cardId)
+end
+
+local function normalizedCardIdentity(value)
+    if type(value) ~= "table"
+        or type(value.collectionUuid) ~= "string"
+        or value.collectionUuid == ""
+        or (tonumber(value.cardId) or 0) <= 0
+    then
+        return false
+    end
+    return {
+        collectionUuid = value.collectionUuid,
+        cardId = tonumber(value.cardId),
+    }
+end
+
+function openReviewModeFor(player, cardIdentity)
+    local authorized = playerAuthorization(player)
+    if not authorized then
+        return false, "forbidden"
+    end
+    local identity = normalizedCardIdentity(cardIdentity)
+    if not identity then
+        return false, "invalid_card_identity"
+    end
+    if openReview then
+        return false, "review_open"
+    end
+    openReview = {
+        player = player,
+        cardIdentity = identity,
+        side = "question",
+        opened = false,
+    }
+    local accepted, reason =
+        ANKIGTA.CompanionGateway.requestRender(player, identity, "question")
+    if not accepted then
+        openReview = false
+        return false, reason
+    end
+    return true
+end
+
+addEventHandler(RENDER_ISSUED_EVENT, resourceRoot, function(
+    player,
+    render,
+    category,
+    side
+)
+    if not openReview or openReview.player ~= player then
+        return
+    end
+    if not render then
+        triggerClientEvent(
+            player,
+            REVIEW_RESULT_EVENT,
+            resourceRoot,
+            {state = "rejected", category = category or "render_failed"}
+        )
+        return
+    end
+    openReview.side = side or render.side or "question"
+    if not openReview.opened then
+        openReview.opened = true
+        triggerClientEvent(
+            player,
+            REVIEW_OPEN_EVENT,
+            resourceRoot,
+            {
+                url = render.url,
+                side = openReview.side,
+                cardIdentity = openReview.cardIdentity,
+                closeAfterRating = ANKIGTA.closeAfterRating ~= false,
+            }
+        )
+        return
+    end
+    triggerClientEvent(
+        player,
+        REVIEW_SIDE_EVENT,
+        resourceRoot,
+        {url = render.url, side = openReview.side}
+    )
+end)
+
+addEvent(REVIEW_REVEAL_REQUEST_EVENT, true)
+addEventHandler(REVIEW_REVEAL_REQUEST_EVENT, resourceRoot, function(
+    cardIdentity,
+    requestedSide
+)
+    if not client or source ~= resourceRoot then
+        return
+    end
+    if not openReview or openReview.player ~= client then
+        return
+    end
+    if not sameCardIdentity(openReview.cardIdentity, cardIdentity) then
+        return
+    end
+    ANKIGTA.CompanionGateway.requestRender(
+        client,
+        openReview.cardIdentity,
+        requestedSide == "question" and "question" or "answer"
+    )
+end)
+
+addEvent(REVIEW_RATE_REQUEST_EVENT, true)
+addEventHandler(REVIEW_RATE_REQUEST_EVENT, resourceRoot, function(
+    cardIdentity,
+    rating
+)
+    if not client or source ~= resourceRoot then
+        return
+    end
+    if not openReview or openReview.player ~= client then
+        return
+    end
+    -- The client proposes; the server decides which card is being rated.
+    if not sameCardIdentity(openReview.cardIdentity, cardIdentity) then
+        triggerClientEvent(
+            client,
+            REVIEW_RESULT_EVENT,
+            resourceRoot,
+            {state = "rejected", category = "card_not_open"}
+        )
+        return
+    end
+    local accepted, reason = ANKIGTA.CompanionGateway.requestRating(
+        client,
+        openReview.cardIdentity,
+        rating
+    )
+    if not accepted then
+        triggerClientEvent(
+            client,
+            REVIEW_RESULT_EVENT,
+            resourceRoot,
+            {state = "rejected", category = reason}
+        )
+    end
+end)
+
+addEventHandler(REVIEW_RESULT_EVENT, resourceRoot, function(outcome)
+    if not openReview or type(outcome) ~= "table" then
+        return
+    end
+    if not sameCardIdentity(openReview.cardIdentity, outcome.cardIdentity) then
+        return
+    end
+    triggerClientEvent(
+        openReview.player,
+        REVIEW_RESULT_EVENT,
+        resourceRoot,
+        outcome
+    )
+end)
+
+addEvent(REVIEW_CLOSED_EVENT, true)
+addEventHandler(REVIEW_CLOSED_EVENT, resourceRoot, function(_identity, reason)
+    if not client or source ~= resourceRoot then
+        return
+    end
+    if not openReview or openReview.player ~= client then
+        return
+    end
+    openReview = false
+    -- Revoke the capability immediately rather than waiting out its lifetime.
+    ANKIGTA.CompanionGateway.requestRenderClose(client)
+    outputDebugString(
+        "[ANKIGTA] review_closed reason=" .. tostring(reason or "closed")
+    )
+end)
+
+addEventHandler("onPlayerQuit", root, function()
+    if openReview and openReview.player == source then
+        openReview = false
+    end
+end)
+
+function reviewModeOpenCard()
+    return openReview and openReview.cardIdentity or false
+end
 
 addEventHandler("onResourceStop", resourceRoot, function()
     ANKIGTA.Store.close()

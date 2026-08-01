@@ -14,6 +14,9 @@ local SESSION_CANCEL_PATH = "/v1/session/cancel"
 local SESSION_ADMIT_PATH = "/v1/session/admit"
 local SESSION_RESTORE_PATH = "/v1/session/restore"
 local REVIEW_RATE_PATH = "/v1/review/rate"
+local RENDER_ISSUE_PATH = "/v1/render/issue"
+local RENDER_CLOSE_PATH = "/v1/render/close"
+local RENDER_RESULT_EVENT = "ankigta:renderIssued"
 local REVIEW_RESULT_EVENT = "ankigta:reviewResult"
 local CARD_PICKER_SNAPSHOT_EVENT = "ankigta:cardPickerSnapshot"
 local REQUEST_TIMEOUT_MS = 4900
@@ -755,6 +758,152 @@ end
 
 function Gateway.reviewOutcome(reviewTransactionId)
     return Gateway.reviewOutcomes[reviewTransactionId]
+end
+
+local function renderCallback(body, info, requestId, generation)
+    local request = Gateway.sessionPending[requestId]
+    if not request
+        or request.generation ~= generation
+        or request.settled
+    then
+        Gateway.quarantinedCallbacks = Gateway.quarantinedCallbacks + 1
+        return
+    end
+    request.settled = true
+    Gateway.sessionPending[requestId] = nil
+    if isTimer(request.timeoutTimer) then
+        killTimer(request.timeoutTimer)
+    end
+    local httpStatus = type(info) == "table"
+        and tonumber(info.statusCode)
+        or false
+    local response = decodeJson(body)
+    if type(info) ~= "table"
+        or httpStatus ~= 200
+        or not isJsonContentType(info.headers)
+        or type(response) ~= "table"
+        or response.protocol ~= PROTOCOL_NAME
+        or response.protocolVersion ~= PROTOCOL_VERSION
+        or response.requestId ~= requestId
+        or response.ok ~= true
+        or type(response.payload) ~= "table"
+        or type(response.payload.render) ~= "table"
+        or type(response.payload.render.url) ~= "string"
+    then
+        triggerEvent(
+            RENDER_RESULT_EVENT,
+            resourceRoot,
+            request.player,
+            false,
+            type(response) == "table"
+                and type(response.error) == "table"
+                and response.error.category
+                or "protocol_error",
+            request.renderSide
+        )
+        return
+    end
+    triggerEvent(
+        RENDER_RESULT_EVENT,
+        resourceRoot,
+        request.player,
+        response.payload.render,
+        false,
+        request.renderSide
+    )
+end
+
+function Gateway.requestRender(player, cardIdentity, side)
+    if type(cardIdentity) ~= "table"
+        or type(cardIdentity.collectionUuid) ~= "string"
+        or (tonumber(cardIdentity.cardId) or 0) <= 0
+    then
+        return false, "invalid_card_identity"
+    end
+    if side ~= "question" and side ~= "answer" then
+        return false, "invalid_side"
+    end
+    for _ in pairs(Gateway.sessionPending) do
+        return false, "request_in_flight"
+    end
+
+    local effective, category = ANKIGTA.ConnectionConfig.loadEffective()
+    if not effective then
+        return false, category
+    end
+    if not validPort(tonumber(effective.port)) then
+        return false, "invalid_port"
+    end
+
+    local requestId = nextSessionRequestId()
+    local request = {
+        requestId = requestId,
+        generation = Gateway.sessionGeneration,
+        startedAt = getTickCount(),
+        player = player,
+        renderSide = side,
+        settled = false,
+        handle = false,
+    }
+    Gateway.sessionPending[requestId] = request
+
+    local envelope = encodeJson({
+        protocol = PROTOCOL_NAME,
+        protocolVersion = PROTOCOL_VERSION,
+        requestId = requestId,
+        cardIdentity = {
+            collectionUuid = cardIdentity.collectionUuid,
+            cardId = tonumber(cardIdentity.cardId),
+        },
+        side = side,
+    })
+    if not envelope then
+        Gateway.sessionPending[requestId] = nil
+        return false, "json_encode_failed"
+    end
+
+    request.timeoutTimer = setTimer(
+        sessionTimeout,
+        SESSION_TIMEOUT_MS,
+        1,
+        requestId,
+        request.generation
+    )
+    local headers = {
+        ["Accept"] = "application/json",
+        ["Content-Type"] = "application/json; charset=utf-8",
+    }
+    if type(effective.token) == "string" and effective.token ~= "" then
+        headers["Authorization"] = "Bearer " .. effective.token
+    end
+    request.handle = fetchRemote(
+        string.format(
+            "http://127.0.0.1:%d%s",
+            effective.port,
+            RENDER_ISSUE_PATH
+        ),
+        {
+            method = "POST",
+            postData = envelope,
+            postIsBinary = false,
+            headers = headers,
+            queueName = "ankigta-render",
+            connectionAttempts = 1,
+            connectTimeout = SESSION_TIMEOUT_MS,
+            maxRedirects = 0,
+        },
+        renderCallback,
+        { requestId, request.generation }
+    )
+    if not request.handle then
+        Gateway.sessionPending[requestId] = nil
+        return false, "fetch_rejected"
+    end
+    return true, requestId
+end
+
+function Gateway.requestRenderClose(player)
+    return requestSessionWithConfig(player, RENDER_CLOSE_PATH, {})
 end
 
 validPort = function(port)
