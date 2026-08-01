@@ -139,6 +139,57 @@ function SettingsStore.set(key, value)
     return true
 end
 
+--- Every map the server knows about, and whether it is included in study.
+--
+-- `includeInStudy` is the one setting that is per map rather than global:
+-- excluding one map must not take the rest of the Active Map Set with it, so
+-- the panel is given a row per map instead of a single toggle.
+function SettingsStore.mapPreferences()
+    local rows = ANKIGTA.Store.listMapEntities()
+    if type(rows) ~= "table" then
+        return {}
+    end
+
+    local preferences = {}
+    local seen = {}
+    for _, row in ipairs(rows) do
+        local mapId = row.map_id
+        if type(mapId) == "string" and not seen[mapId] then
+            seen[mapId] = true
+            table.insert(preferences, {
+                mapId = mapId,
+                mapName = row.map_name or mapId,
+                includeInStudy = tonumber(row.include_in_study) ~= 0,
+            })
+        end
+    end
+    return preferences
+end
+
+--- Include or exclude one map, recording the change in Change History.
+--
+-- The value still goes through the schema even though the caller named the
+-- setting: this side owns `includeInStudy`, and owning it is not a reason to
+-- skip asking whether the value is one the schema accepts.
+function SettingsStore.setMapIncludeInStudy(mapId, includeInStudy)
+    if type(mapId) ~= "string" or mapId == "" then
+        return false, "settings.error.map_required"
+    end
+    local valid, reason = schema().validate("includeInStudy", includeInStudy)
+    if not valid then
+        return false, reason
+    end
+
+    local saved, saveError = ANKIGTA.Store.setMapIncludeInStudy(
+        mapId,
+        includeInStudy
+    )
+    if not saved then
+        return false, saveError or "settings.error.not_saved"
+    end
+    return true
+end
+
 --- Only the settings this side owns outright.
 --
 -- This is what the client is told: its own settings are none of the server's

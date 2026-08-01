@@ -19,6 +19,7 @@ local PICK_ENTITY_START_EVENT = "ankigta:pickEntityStart"
 local PICK_ENTITY_REQUEST_EVENT = "ankigta:pickEntity"
 local PICK_ENTITY_RESULT_EVENT = "ankigta:pickEntityResult"
 local PICK_ENTITY_FINISHED_EVENT = "ankigta:pickEntityFinished"
+local OPEN_SETTINGS_EVENT = "ankigta:openSettings"
 
 ANKIGTA = ANKIGTA or {}
 
@@ -785,6 +786,19 @@ local function renderSnapshot(snapshot)
     addEventHandler("onClientGUIClick", pickEntityButton, function()
         closeF7()
         triggerEvent(PICK_ENTITY_START_EVENT, resourceRoot, "pick")
+    end, false)
+
+    local settingsButton = guiCreateButton(
+        360,
+        height - 74,
+        150,
+        26,
+        text("settings.title"),
+        false,
+        window
+    )
+    addEventHandler("onClientGUIClick", settingsButton, function()
+        triggerEvent(OPEN_SETTINGS_EVENT, resourceRoot)
     end, false)
 
     undoButton = guiCreateButton(

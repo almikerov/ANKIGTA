@@ -290,6 +290,14 @@ class Widget:
     #: with it the way CEGUI does. Lupa hands out a fresh wrapper per crossing,
     #: so the handle's Python identity is not something to key on.
     parent: int | None = None
+    #: Where the control was created, and where dragging it leaves it. Only a
+    #: window is ever moved, but every control carries the pair so the position
+    #: calls do not have to care which kind they were handed.
+    x: float = 0.0
+    y: float = 0.0
+    #: The Lua handle this widget was created as, so a test that found a control
+    #: by its text has something it can click.
+    handle: Any = None
     enabled: bool = True
     selected: bool = False
     masked: bool = False
@@ -313,6 +321,9 @@ class MtaSandbox:
         self._connections: list[_Connection] = []
         self._elements: set[int] = set()
         self._handlers: dict[str, list[Any]] = {}
+        #: Handlers paired with the element they were attached to, so a click
+        #: can be delivered to one control rather than to every listener.
+        self._attachments: dict[str, list[tuple[Any, Any]]] = {}
         self._exports: dict[str, Any] = {}
         # The resource directory. A caller that named a database file gets that
         # file's directory, so `ankigta.sqlite` resolves to the path it passed.
@@ -476,6 +487,43 @@ class MtaSandbox:
 
     def handlers(self, event: str) -> list[Any]:
         return list(self._handlers.get(event, []))
+
+    def same_element(self, left: Any, right: Any) -> bool:
+        """Compare two element references the way Lua itself would.
+
+        Lupa hands out a fresh Python wrapper per crossing, so `is` would call
+        two references to one Lua table different objects. Ask Lua instead.
+        """
+        if left is None or right is None:
+            return False
+        return bool(self.lua.eval("function(a, b) return a == b end")(left, right))
+
+    def click_gui(self, element: Any, event: str = "onClientGUIClick") -> None:
+        """Click one control, reaching only the handlers hung on it.
+
+        MTA passes the clicked control as the event's `source`, and a resource
+        that attached with `propagate` false hears about its own control only.
+        """
+        for attached_to, handler in list(self._attachments.get(event, [])):
+            if self.same_element(attached_to, element):
+                self._dispatch(handler, element, ())
+
+    def widget_named(self, text: str, kind: str = "button") -> Any:
+        """The one live control of this kind showing this text, or `None`.
+
+        Tests use it to find a control the way a player would -- by reading the
+        screen -- rather than by reaching into the module that drew it.
+        """
+        found = [
+            widget
+            for widget in self.widgets
+            if widget.kind == kind
+            and widget.text == text
+            and not widget.destroyed
+        ]
+        if len(found) != 1:
+            return None
+        return found[0].handle
 
     # ----------------------------------------------------------------- http
 
@@ -724,11 +772,17 @@ class MtaSandbox:
 
         def add_event_handler(
             name: str,
-            _attached_to: Any,
+            attached_to: Any,
             handler: Any,
             *_rest: Any,
         ) -> bool:
             self._handlers.setdefault(str(name), []).append(handler)
+            # Kept alongside, not instead: `triggerEvent` still reaches every
+            # handler of an event, while `click_gui` needs to know which control
+            # each one was hung on so a click lands on one button only.
+            self._attachments.setdefault(str(name), []).append(
+                (attached_to, handler)
+            )
             return True
 
         def trigger_event(name: str, source: Any = None, *args: Any) -> bool:
@@ -1166,8 +1220,20 @@ class MtaSandbox:
             index = parent["__widget"]
             return None if index is None else int(index)
 
-        def register(kind: str, text: Any = "", parent: Any = None) -> Any:
-            widget = Widget(kind=kind, text=str(text), parent=parent_index(parent))
+        def register(
+            kind: str,
+            text: Any = "",
+            parent: Any = None,
+            x: float = 0.0,
+            y: float = 0.0,
+        ) -> Any:
+            widget = Widget(
+                kind=kind,
+                text=str(text),
+                parent=parent_index(parent),
+                x=float(x),
+                y=float(y),
+            )
             self.widgets.append(widget)
             handle = self.lua.table_from(
                 {
@@ -1176,6 +1242,7 @@ class MtaSandbox:
                     "__widget": len(self.widgets) - 1,
                 }
             )
+            widget.handle = handle
             return handle
 
         def widget_of(handle: Any) -> Widget | None:
@@ -1187,35 +1254,35 @@ class MtaSandbox:
             return self.widgets[int(index)]
 
         def create_window(
-            _x: float, _y: float, _w: float, _h: float,
+            x: float, y: float, _w: float, _h: float,
             title: Any = "", _relative: Any = False, parent: Any = None,
         ) -> Any:
-            return register("window", title, parent)
+            return register("window", title, parent, x, y)
 
         def create_label(
-            _x: float, _y: float, _w: float, _h: float,
+            x: float, y: float, _w: float, _h: float,
             text: Any = "", _relative: Any = False, parent: Any = None,
         ) -> Any:
-            return register("label", text, parent)
+            return register("label", text, parent, x, y)
 
         def create_button(
-            _x: float, _y: float, _w: float, _h: float,
+            x: float, y: float, _w: float, _h: float,
             text: Any = "", _relative: Any = False, parent: Any = None,
         ) -> Any:
-            return register("button", text, parent)
+            return register("button", text, parent, x, y)
 
         def create_edit(
-            _x: float, _y: float, _w: float, _h: float,
+            x: float, y: float, _w: float, _h: float,
             text: Any = "", _relative: Any = False, parent: Any = None,
         ) -> Any:
-            return register("edit", text, parent)
+            return register("edit", text, parent, x, y)
 
         def create_check_box(
-            _x: float, _y: float, _w: float, _h: float,
+            x: float, y: float, _w: float, _h: float,
             text: Any = "", selected: Any = False,
             _relative: Any = False, parent: Any = None,
         ) -> Any:
-            handle = register("checkbox", text, parent)
+            handle = register("checkbox", text, parent, x, y)
             widget = widget_of(handle)
             if widget is not None:
                 widget.selected = selected is True
@@ -1303,6 +1370,24 @@ class MtaSandbox:
         g.guiCreateEdit = create_edit
         g.guiCreateCheckBox = create_check_box
         g.guiCreateGridList = create_grid_list
+        def get_position(handle: Any, _relative: Any = False) -> Any:
+            widget = widget_of(handle)
+            if widget is None:
+                return False
+            return widget.x, widget.y
+
+        def set_position(
+            handle: Any, x: float, y: float, _relative: Any = False
+        ) -> bool:
+            widget = widget_of(handle)
+            if widget is None:
+                return False
+            widget.x = float(x)
+            widget.y = float(y)
+            return True
+
+        g.guiGetPosition = get_position
+        g.guiSetPosition = set_position
         g.guiSetText = set_text
         g.guiGetText = get_text
         def get_enabled(handle: Any) -> bool:

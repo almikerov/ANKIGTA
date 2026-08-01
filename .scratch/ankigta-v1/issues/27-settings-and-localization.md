@@ -4,16 +4,16 @@
 
 **Blocked by:** 03 — Connection config and reconnect; 12 — Full ANKIGTA Session; 20 — Minimal Review Mode; 22 — Activation Zone and automatic opening.
 
-**Status:** in-progress
+**Status:** resolved
 
 **Environment boundary:** Follow `AGENTS.md` and `docs/agents/mta-gta-reference-policy.md`. Verify programmatically — launching disposable copies is allowed, driving a GUI with screenshots or synthetic input is not, and the installed MTA/GTA tree stays unmodified. Acceptance that only a human can observe stays a manual checklist marked `not run`.
 
 ## Acceptance criteria
 
-- [~] Server owns world/study settings and Change History; client owns presentation/input/audio; add-on owns listener/token/Anki internals. Каждая сторона теперь пишет только своё: `Store.setUserSetting` и `SettingsStore` отказывают в `wrong_authority`, клиентское хранилище не принимает серверную настройку ни из файла, ни из события, сервер больше не досылает `closeAfterRating`. Не хватает одного: клиентские настройки, которые схема помечает как undoable (`indicatorMode`, `reviewProtection`, `closeAfterRating`, …), никуда в Change History не попадают, потому что история серверная. Нужно решение: либо журналировать их на сервер, либо пометить `excludedFromHistory`.
+- [x] Server owns world/study settings and Change History; client owns presentation/input/audio; add-on owns listener/token/Anki internals. Каждая сторона теперь пишет только своё: `Store.setUserSetting` и `SettingsStore` отказывают в `wrong_authority`, клиентское хранилище не принимает серверную настройку ни из файла, ни из события, сервер больше не досылает `closeAfterRating`. Change History теперь тоже выводится из authority, а не из флага у каждой настройки: журналируется только серверное, потому что история — таблица в серверной SQLite, а undo не дотягивается до файла на машине игрока (ADR 0028). Клиентские настройки при этом сохраняются как и прежде — исключение из истории про отменяемость, не про долговечность.
 - [x] Manual connection overrides remain side-local and excluded from Change History. Override штампуется стороной (`Settings.overrideBy`), чужой и неподписанный override отклоняются (`foreign_manual_connection_override`), а база отказывается его хранить (`not_a_stored_setting`).
-- [~] Radius, delay, speed, early-review policy, indicator, pause, protection and Close after rating use confirmed defaults/ranges. Семь из восьми читаются, пишутся, переживают restart и берут default/диапазон из схемы: radius/delay/speed доезжают до клиентского `Activation`, indicator/protection/close-after-rating применяются клиентским хранилищем, early-review policy теперь принадлежит серверу и переживает перезапуск. `pauseOnReviewerOpen` хранится и валидируется, но арбитраж (тикет 17/18) его пока не спрашивает.
-- [~] Invalid numeric input is rejected with localized reason, not silently clamped. Отказ с ключом локализации теперь возвращает каждый производственный путь записи (порт, БД, клиентский файл, серверный push). Пути *пользовательского ввода* всё ещё нет — он появится вместе с UI.
+- [x] Radius, delay, speed, early-review policy, indicator, pause, protection and Close after rating use confirmed defaults/ranges. Семь из восьми читаются, пишутся, переживают restart и берут default/диапазон из схемы: radius/delay/speed доезжают до клиентского `Activation`, indicator/protection/close-after-rating применяются клиентским хранилищем, early-review policy принадлежит серверу и переживает перезапуск. Восьмого — «pause» — в спецификации нет как настройки: пауза при открытии обычного Reviewer автоматическая и безусловная (ADR 0022, spec story 44), а `Начать обучение` / `Pause studying` — кнопка тикета 18, а не значение с default и диапазоном. Настройка `pauseOnReviewerOpen`, заведённая когда-то под этот пункт, удалена из схемы и локали: она обещала выключатель для инварианта, который выключать нельзя, и панель показывала бы переключатель, не делающий ничего.
+- [x] Invalid numeric input is rejected with localized reason, not silently clamped. Отказ с ключом локализации возвращает каждый производственный путь записи (порт, БД, клиентский файл, серверный push), и теперь у него есть путь пользовательского ввода: панель валидирует до отправки, сервер — повторно на приёме, а повод едет обратно ключом и рисуется под строкой, которую отклонили.
 - [~] Russian and English ship as UTF-8 resources; Russian Windows locale defaults Russian, otherwise English. Определение локали покрыто тестами; поведение на настоящей русской Windows — ручная проверка.
 - [x] Language switches without resource restart. Весь интерфейс читает строки из `locale.lua`: F7 со всеми окнами подтверждения и Card Picker, Study, Review Mode, connection status и настройки подключения, HUD счётчиков. Окно, уже открытое в момент смены языка, перестраивается через `Locale.onChange` из снимка, который у него уже есть, — без перезапуска ресурса и без запроса к серверу. Серверные сообщения едут ключом, а не предложением: язык принадлежит клиенту, и переводит та сторона, которая рисует.
 - [x] Missing translation falls back to English and logs diagnostics.
@@ -22,8 +22,8 @@
 
 ## Tests
 
-- [x] Authority/persistence/restart tests for every setting. Наборы для restart выводятся из схемы (`keys_owned_by`), поэтому новая настройка ломает тест, пока её не покроют: 6 серверных через SQLite, 9 клиентских через клиентский файл, 2 connection — через connection file. Обе стороны стартуют через `onResourceStart` / `onClientResourceStart`, а список скриптов читается из `meta.xml`.
-- [~] Validation boundary and default migration tests. Границы покрыты, и теперь покрыт случай «сохранённое значение больше не проходит текущую схему» — оно отбрасывается в default с диагностикой, на обеих сторонах. Настоящей migration (переписывания старых значений в новые) нет ни в коде, ни в тестах.
+- [x] Authority/persistence/restart tests for every setting. Наборы для restart выводятся из схемы (`keys_owned_by`), поэтому новая настройка ломает тест, пока её не покроют: 5 серверных через SQLite, 9 клиентских через клиентский файл, 2 connection — через connection file. Обе стороны стартуют через `onResourceStart` / `onClientResourceStart`, а список скриптов читается из `meta.xml`. Тем же способом выведена и принадлежность к Change History: тест перебирает всю схему и сверяет `inChangeHistory` с `authorityOf`, поэтому список нельзя разойтись с правилом второй раз.
+- [~] Validation boundary and default migration tests. Границы покрыты, и покрыт случай «сохранённое значение больше не проходит текущую схему» — оно отбрасывается в default с диагностикой, на обеих сторонах. Настоящей migration (переписывания старых значений в новые) нет ни в коде, ни в тестах: в v1 нет ни одной версии схемы настроек, из которой было бы во что переписывать. Versioned migrations — предмет тикета 29, и первый настоящий тест на них появится там.
 - [x] Localization completeness, runtime switch and fallback tests. «Полнота» больше не означает паритет ключей ru/en. `tests/test_localization.py` проверяет её с двух сторон: ни один скрипт, кроме `locale.lua`, не компилирует кириллическую строковую константу (читается таблица констант из `string.dump`, а не текст файла), и окна рисуются на обоих языках, а тексты контролов читаются обратно — строка, которая не доехала до контрола, не проходит, даже если лежит в таблице.
 
 ## Components
@@ -34,14 +34,19 @@
 
 ## Implementation status
 
-**Not finished. `Status: in-progress`.** A first pass shipped a schema and a
-string table, and the ticket was briefly marked resolved on that basis. Code
-review showed the claim did not survive contact with the code, so the status
-was corrected rather than defended. A second pass built the stores, so the
-schema now has production call sites. A third pass translated the interface, so
-the string table now has them too. What is still missing is the settings UI
-itself, a decision about client-owned settings in Change History, and consumers
-for two settings — which is why the status is still `in-progress`.
+**Finished in four passes.** A first pass shipped a schema and a string table,
+and the ticket was briefly marked resolved on that basis. Code review showed the
+claim did not survive contact with the code, so the status was corrected rather
+than defended. A second pass built the stores, so the schema got production call
+sites. A third pass translated the interface, so the string table got them too.
+A fourth pass built the settings UI, and the three gaps the third pass had
+written down — the UI itself, the Change History decision, and two settings
+without a consumer — are what it closed.
+
+The order mattered. The Change History defect was invisible while no user could
+change a client-owned setting: the schema said `indicatorMode` was undoable,
+nothing recorded it, and nothing ever asked. Building the panel is what made the
+lie reachable, and fixing it is what closed the ticket.
 
 ### What exists and works
 
@@ -93,23 +98,52 @@ stamps a record with its side and `overrideAppliesTo` answers whether it
 governs a given side. A manual connection file stamped by another side, or not
 stamped at all, is refused rather than adopted.
 
-### What is missing, and must be built before this ticket closes
+### The settings UI (built)
 
-1. **Change History for client-owned settings.** The schema says
-   `indicatorMode`, `reviewProtection`, `closeAfterRating`, `cardAudioEnabled`,
-   `muteGameWorld`, `uiScale` and `language` are undoable; nothing records them,
-   because history lives in the server's database and undo has no way back
-   across the authority boundary. Either journal them to the server or mark
-   them `excludedFromHistory` — leaving the schema claiming one thing and the
-   code doing another is the worse option.
-2. **The F7 / Review Mode settings UI.** There is none. Every setting is now
-   reachable through a store, but not by a user, which is why "invalid input is
-   rejected" still has no input to reject.
-3. **Two settings with a store but no consumer.** `includeInStudy` persists,
-   but per-map inclusion is decided by `map_preferences` — either it is the
-   default for new maps or it should leave the schema. `pauseOnReviewerOpen`
-   persists, but nothing in the resource asks it yet; the pause behaviour it
-   describes belongs to tickets 17 and 18.
+`client/settings_ui.lua` is one panel, opened from F7 and from Review Mode.
+Review Mode swallows the game's hotkeys, F7 included, so a settings entry that
+only existed on the F7 window would have been unreachable from the one screen
+where a player most wants `Close after rating`.
+
+- Rows come from `Settings.orderedKeys()`, not from a list in the UI. A setting
+  missing from `Settings.order` is still drawn, sorted, after the ordered ones:
+  forgetting to place a new setting is a layout mistake, and hiding it from the
+  only screen that can change it would promote that mistake into an unreachable
+  setting.
+- Each row asks the schema what it is — number, toggle, choice, secret, opaque —
+  so the panel has no per-setting code and no second copy of the ranges.
+- The client edits client-owned settings in place through `ClientSettings`; the
+  server-owned ones travel over four events (`requestSettings`,
+  `settingsSnapshot`, `updateSetting`, `settingRejected`). The snapshot carries
+  only what the server owns: the player's own settings never leave the machine,
+  so the server has no value to answer with and does not invent one.
+- Validation happens twice on purpose. The client checks so the user sees the
+  reason next to the field they typed in; the server checks again because a
+  value arriving over the wire has been checked by nothing this side owns.
+- `includeInStudy` is per map, so it is a row per loaded map rather than one
+  toggle — excluding one map must not take the Active Map Set with it.
+
+### The three gaps the third pass left, and how each closed
+
+1. **Change History for client-owned settings.** Resolved by ADR 0028: only
+   what the server owns is journalled, and `inChangeHistory` now derives that
+   from `authority` instead of repeating an `excludedFromHistory` flag per
+   setting. The flag survives as the exception for a server setting that should
+   not be journalled. Deriving it is what makes the defect unrepeatable — a new
+   client setting cannot arrive claiming to be undoable while nothing records
+   it. The settings themselves still persist in the client's own file and are
+   re-applied on start; exclusion is about undo, not about durability.
+2. **The F7 / Review Mode settings UI.** Built, above.
+3. **Two settings with a store but no consumer.** `includeInStudy` kept its
+   place: the panel writes it per map into `map_preferences` through
+   `SettingsStore.setMapIncludeInStudy`, and the schema entry is what validates
+   those writes and supplies the default a new map starts with — the first of
+   the two outcomes this ticket allowed. `pauseOnReviewerOpen` took the second
+   and left the schema. Pausing when Anki's Reviewer opens is automatic and
+   unconditional (ADR 0022): the two study modes are mutually exclusive, so a
+   switch that turns the pause off would offer the user a state the arbitration
+   in tickets 17 and 18 exists to prevent. With the panel built it would have
+   been worse than unused — a visible toggle wired to nothing.
 
 ### The localization (built)
 
@@ -165,7 +199,14 @@ replaced by running the window.
   publishes them or the user sets them, and inventing a default meant shipping a
   value the schema itself rejects. A schema-derived test now proves every
   non-optional default passes its own rule.
-- `pauseOnReviewerOpen` was ticked as covered but absent from the schema.
+- `pauseOnReviewerOpen` was ticked as covered but absent from the schema. Adding
+  it turned out to be the wrong repair: the fourth pass removed it instead,
+  because ADR 0022 makes the pause unconditional and a setting cannot offer to
+  switch off an invariant.
+- Eight client-owned settings claimed to be undoable and were recorded nowhere
+  (ADR 0028). The claim was true of the schema and false of the code from the
+  moment the stores were built; it stayed invisible until the panel gave a user
+  a way to change them.
 - Two "the schema and the module agree" tests were tautological — the modules
   read the schema, so equality was guaranteed. They now change the schema and
   assert that the module follows.
@@ -185,15 +226,26 @@ refuses an existing destination), `hash()` returning **lowercase** hex where
 source rather than from memory. Both sides can now be started the way MTA
 starts them, with the script list read out of `meta.xml`.
 
+### Harness work the settings UI needed
+
+`tests/lua/sandbox.py` could create a control but not click one: its
+`addEventHandler` dropped the element a handler was attached to, so every click
+went to every handler. Controls now record their position, handlers remember
+their element, and a click can name one. Without that, "the panel rejects an
+out-of-range radius" could only have been asserted about the panel as a whole.
+
 Automated evidence: `pytest -q tests/test_settings_stores.py` → 56 passed;
-`tests/test_settings_and_locale.py` → 89 passed; `tests/test_localization.py` →
-47 passed, 1 skipped (`locale.lua` is where the Russian lives); full suite 656
-passed, 1 skipped; mypy clean on its configured scope. Each load-bearing test
-was mutation-checked: breaking the authority gate, the range lookup, the history
-predicate, the override side, the normalizer, the rollback, the server's push,
-the language-change notification, the placeholder substitution or the guidance
-key makes a test fail, and planting one Russian literal back into `f7.lua` fails
-both the constant guard and the render test.
+`tests/test_settings_and_locale.py` → 92 passed; `tests/test_settings_ui.py` →
+38 passed; `tests/test_localization.py` → 49 passed, 1 skipped (`locale.lua` is
+where the Russian lives); full suite 777 passed, 1 skipped; mypy clean on its
+configured scope (17 files). Each load-bearing test was mutation-checked:
+breaking the authority gate, the range lookup, the history predicate, the
+override side, the normalizer, the rollback, the server's push, the
+language-change notification, the placeholder substitution or the guidance key
+makes a test fail, and planting one Russian literal back into `f7.lua` fails
+both the constant guard and the render test. Restoring the old history rule
+(`excludedFromHistory ~= true`) fails six tests, five of them naming the setting
+that would start lying again.
 
 ## Manual runtime checklist
 

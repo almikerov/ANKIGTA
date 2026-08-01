@@ -12,6 +12,10 @@ the behaviour of a real MTA client's private file directory.
 
 ## Scenarios
 
+- Open the settings panel from the F7 window, then again from inside Review
+  Mode with a card open. Review Mode blocks F7, so its own button is the only
+  way in; confirm the panel opens over the card, that closing it returns the
+  card to its previous state, and that rating still works afterwards.
 - Change every server-owned setting (radius, delay, speed, early review,
   include in study) and restart the resource. Confirm each persists and appears
   in Change History, and that Undo restores it.

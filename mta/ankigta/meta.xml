@@ -31,6 +31,8 @@
     <!-- Last on this side: it puts the stored settings in force, so the
          modules it applies them to have to exist by then. -->
     <script src="client/settings_store.lua" type="client" cache="false" />
+    <!-- After the store it reads from, and after the windows it opens over. -->
+    <script src="client/settings_ui.lua" type="client" cache="false" />
     <map src="maps/ticket05.map" dimension="0" />
     <map src="maps/ticket07-matrix.map" dimension="0" />
     <export function="requestCompanionHealth" type="server" />

@@ -7,6 +7,7 @@ local REVIEW_RATE_REQUEST_EVENT = "ankigta:submitRating"
 local REVIEW_RESULT_EVENT = "ankigta:reviewResult"
 local REVIEW_CLOSED_EVENT = "ankigta:reviewClosed"
 local REVIEW_RETURN_REQUEST_EVENT = "ankigta:returnToCard"
+local OPEN_SETTINGS_EVENT = "ankigta:openSettings"
 local AUTHORIZATION_EVENT = "ankigta:setAuthorized"
 
 local RATINGS = {"again", "hard", "good", "easy"}
@@ -62,6 +63,8 @@ local BLOCKED_CONTROLS = {
 }
 
 local RATING_BAR_HEIGHT = 56
+local SETTINGS_BUTTON_WIDTH = 150
+local SETTINGS_BUTTON_HEIGHT = 26
 local SURFACE_MARGIN = 48
 
 -- Defaults come from the shared schema where it is loaded, so this module and
@@ -305,6 +308,34 @@ function renderReviewMode()
     Review.ratingBounds = {}
     local barY = y + height - RATING_BAR_HEIGHT
 
+    -- Review Mode swallows the game's hotkeys, F7 included, so the settings
+    -- panel needs a way in that does not require closing the card first.
+    Review.ratingBounds.settings = {
+        x + 8,
+        barY - SETTINGS_BUTTON_HEIGHT - 4,
+        SETTINGS_BUTTON_WIDTH,
+        SETTINGS_BUTTON_HEIGHT,
+    }
+    dxDrawRectangle(
+        x + 8,
+        barY - SETTINGS_BUTTON_HEIGHT - 4,
+        SETTINGS_BUTTON_WIDTH,
+        SETTINGS_BUTTON_HEIGHT,
+        tocolor(48, 48, 48, 235)
+    )
+    dxDrawText(
+        label("review.settings"),
+        x + 8,
+        barY - SETTINGS_BUTTON_HEIGHT - 4,
+        x + 8 + SETTINGS_BUTTON_WIDTH,
+        barY - 4,
+        tocolor(235, 235, 235, 255),
+        1,
+        "default-bold",
+        "center",
+        "center"
+    )
+
     if Review.externalPage then
         -- Optional, and never automatic: the card may have navigated somewhere
         -- the player actually wanted to read.
@@ -421,6 +452,10 @@ function handleReviewClick(button, state, _absoluteX, _absoluteY, cursorX, curso
         -- Regaining focus after Alt+Tab must cost a click, so the click that
         -- brings the window back cannot also rate the card.
         Review.focused = true
+        return
+    end
+    if withinBounds(Review.ratingBounds.settings, cursorX, cursorY) then
+        triggerEvent(OPEN_SETTINGS_EVENT, resourceRoot)
         return
     end
     if withinBounds(Review.ratingBounds.returnToCard, cursorX, cursorY) then

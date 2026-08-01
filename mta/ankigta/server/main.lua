@@ -8,6 +8,10 @@ local AUTHORIZATION_EVENT = "ankigta:setAuthorized"
 local SETTINGS_EVENT = "ankigta:settings"
 local AUTHORIZATION_REQUEST_EVENT = "ankigta:requestAuthorization"
 local RECHECK_REQUEST_EVENT = "ankigta:recheckPendingMapSave"
+local SETTINGS_REQUEST_EVENT = "ankigta:requestSettings"
+local SETTINGS_SNAPSHOT_EVENT = "ankigta:settingsSnapshot"
+local SETTINGS_UPDATE_EVENT = "ankigta:updateSetting"
+local SETTINGS_REJECTED_EVENT = "ankigta:settingRejected"
 local COPY_DECISION_REQUEST_EVENT = "ankigta:resolveMapCopyDecision"
 local PENDING_NOTICE_EVENT = "ankigta:pendingMapSaveNotice"
 local IDENTITY_CHANGED_EVENT = "ankigta:mapIdentityChanged"
@@ -699,6 +703,82 @@ addEventHandler(F7_REQUEST_EVENT, resourceRoot, function()
         return
     end
     sendF7Snapshot(client)
+end)
+
+--- Everything the server owns, for the client's settings panel.
+--
+-- Only what the server owns: the client's own settings never leave its machine,
+-- so the server has no value to answer with and does not invent one (ADR 0014).
+local function sendSettingsSnapshot(player)
+    triggerClientEvent(
+        player,
+        SETTINGS_SNAPSHOT_EVENT,
+        resourceRoot,
+        {
+            values = ANKIGTA.SettingsStore.owned(),
+            maps = ANKIGTA.SettingsStore.mapPreferences(),
+        }
+    )
+end
+
+addEvent(SETTINGS_REQUEST_EVENT, true)
+addEventHandler(SETTINGS_REQUEST_EVENT, resourceRoot, function()
+    if not client or source ~= resourceRoot then
+        return
+    end
+    local authorized, authorizationError = playerAuthorization(client)
+    if not authorized then
+        triggerClientEvent(
+            client,
+            F7_DENIED_EVENT,
+            resourceRoot,
+            authorizationError
+        )
+        return
+    end
+    sendSettingsSnapshot(client)
+end)
+
+addEvent(SETTINGS_UPDATE_EVENT, true)
+addEventHandler(SETTINGS_UPDATE_EVENT, resourceRoot, function(key, value, mapId)
+    if not client or source ~= resourceRoot then
+        return
+    end
+    local authorized, authorizationError = playerAuthorization(client)
+    if not authorized then
+        triggerClientEvent(
+            client,
+            F7_DENIED_EVENT,
+            resourceRoot,
+            authorizationError
+        )
+        return
+    end
+
+    -- Checked again here. The client validated for the user's sake, so a bad
+    -- value is caught before it leaves the machine; a value arriving over the
+    -- wire has been checked by nothing this side owns.
+    local stored, reason
+    if key == "includeInStudy" and mapId ~= nil then
+        -- The only per-map setting: it names the map it is about.
+        stored, reason = ANKIGTA.SettingsStore.setMapIncludeInStudy(
+            mapId,
+            value
+        )
+    else
+        stored, reason = ANKIGTA.SettingsStore.set(key, value)
+    end
+    if not stored then
+        triggerClientEvent(
+            client,
+            SETTINGS_REJECTED_EVENT,
+            resourceRoot,
+            key,
+            reason
+        )
+        return
+    end
+    sendSettingsSnapshot(client)
 end)
 
 addEvent(RECHECK_REQUEST_EVENT, true)

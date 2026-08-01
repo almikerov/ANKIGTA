@@ -183,27 +183,66 @@ def test_only_a_valid_local_override_can_be_stamped(
     assert why == reason
 
 
+def test_change_history_covers_exactly_what_the_server_owns(
+    settings: MtaSandbox,
+) -> None:
+    """Derived from the schema rather than listed here, so a new setting cannot
+    arrive claiming to be undoable while nothing on the server records it."""
+    in_history = settings.eval(
+        "function(k) return ANKIGTA.Settings.inChangeHistory(k) end"
+    )
+    authority_of = settings.eval(
+        "function(k) return ANKIGTA.Settings.authorityOf(k) end"
+    )
+
+    keys = [str(key) for key in settings.eval("ANKIGTA.Settings.schema").keys()]
+    assert len(keys) > 1
+    for key in keys:
+        assert in_history(key) is (authority_of(key) == "server"), key
+
+
 @pytest.mark.parametrize(
     "key",
-    ["connectionPort", "connectionToken", "uiPlacement"],
+    ["activationRadius", "allowEarlyReview", "includeInStudy"],
 )
-def test_connection_and_ui_placement_stay_out_of_change_history(
+def test_settings_the_server_owns_are_undoable(
     settings: MtaSandbox,
     key: str,
 ) -> None:
     assert settings.eval(
         "function(k) return ANKIGTA.Settings.inChangeHistory(k) end"
-    )(key) is False
+    )(key) is True
 
 
 @pytest.mark.parametrize(
     "key",
-    ["activationRadius", "allowEarlyReview", "indicatorMode", "closeAfterRating"],
+    ["connectionPort", "connectionToken", "uiPlacement", "indicatorMode", "language"],
 )
-def test_ordinary_settings_are_undoable(settings: MtaSandbox, key: str) -> None:
+def test_settings_the_server_does_not_own_stay_out_of_change_history(
+    settings: MtaSandbox,
+    key: str,
+) -> None:
+    """The player's machine keeps these in its own file. They persist across a
+    restart -- see the client store's restart test -- but the server's history
+    is not where that persistence lives, and undo has no way to reach them."""
     assert settings.eval(
         "function(k) return ANKIGTA.Settings.inChangeHistory(k) end"
-    )(key) is True
+    )(key) is False
+
+
+def test_a_server_setting_can_still_be_excluded_from_history(
+    settings: MtaSandbox,
+) -> None:
+    """Authority is the rule, not the whole story: a server setting that should
+    not be journalled can still say so, and is believed."""
+    settings.eval(
+        "function() ANKIGTA.Settings.schema.activationRadius.excludedFromHistory"
+        " = true end"
+    )()
+
+    assert settings.eval(
+        "function(k) return ANKIGTA.Settings.inChangeHistory(k) end"
+    )("activationRadius") is False
 
 
 # --- defaults ----------------------------------------------------------------
