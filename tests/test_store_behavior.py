@@ -273,3 +273,103 @@ def test_operations_are_rejected_before_the_store_is_open(
     )
     assert ok is False
     assert category == "storage_unavailable"
+
+
+def test_the_row_carries_the_same_identity_collision_answer_as_the_query(
+    store: tuple[MtaSandbox, Any],
+) -> None:
+    """One rule, two ways of asking it (ticket 30).
+
+    The F7 snapshot walks every Map Entity, and asking per entity is one query
+    per entity: over the reference world that was ten thousand queries inside
+    one F7 open. The read now carries the answer as a column, which is only
+    safe while the column agrees with the query for every entity — including
+    the ones with no collision, which is where a broken join reads as innocent.
+
+    Reopened first, because the whole-map flag lives in memory: while it is set
+    every entity in the map collides and the column is never consulted. The
+    state that consults it is the ordinary one — a restart, reading collisions
+    that were persisted before it.
+    """
+    sandbox, _handle = store
+    call(sandbox, "function() return ANKIGTA.Store.open() end")
+    call(
+        sandbox,
+        """
+        function()
+            ANKIGTA.Store.createMapEntityCopy(
+                "ticket05-map", "ticket05-entity", "ticket05-map", "copied-entity"
+            )
+            ANKIGTA.Store.markEntityIdentityCollision(
+                "ticket05-map", "copied-entity", "duplicate_editor_id"
+            )
+        end
+        """,
+    )
+    call(sandbox, "function() return ANKIGTA.Store.open() end")
+
+    answers = sandbox.to_python(
+        call(
+            sandbox,
+            """
+            function()
+                local answers = {}
+                for _, row in ipairs(ANKIGTA.Store.listMapEntities()) do
+                    table.insert(answers, {
+                        entityId = row.entity_id,
+                        fromRow = ANKIGTA.Store.rowIsIdentityCollision(row),
+                        fromQuery = ANKIGTA.Store.isIdentityCollision(
+                            row.map_id, row.entity_id
+                        ),
+                    })
+                end
+                return answers
+            end
+            """,
+        )
+    )
+
+    assert [answer["entityId"] for answer in answers] == [
+        "copied-entity",
+        "ticket05-entity",
+    ]
+    assert [answer["fromRow"] for answer in answers] == [True, False]
+    assert all(answer["fromRow"] == answer["fromQuery"] for answer in answers)
+
+
+def test_a_row_from_a_read_that_does_not_carry_the_column_is_still_asked(
+    store: tuple[MtaSandbox, Any],
+) -> None:
+    """The fallback the column-based answer is only safe because of.
+
+    Not every read carries `identity_collision`, and a caller cannot tell which
+    one produced the row it holds. Reading a missing column as "no collision"
+    would let a colliding entity through as an ordinary one.
+    """
+    sandbox, _handle = store
+    call(sandbox, "function() return ANKIGTA.Store.open() end")
+    call(
+        sandbox,
+        """
+        function()
+            ANKIGTA.Store.markEntityIdentityCollision(
+                "ticket05-map", "ticket05-entity", "duplicate_editor_id"
+            )
+        end
+        """,
+    )
+
+    assert (
+        call(
+            sandbox,
+            """
+            function()
+                return ANKIGTA.Store.rowIsIdentityCollision({
+                    map_id = "ticket05-map",
+                    entity_id = "ticket05-entity",
+                })
+            end
+            """,
+        )
+        is True
+    )

@@ -141,7 +141,32 @@ local function entityContract(row)
     }
 end
 
+--- What the F7 snapshot cost to build, measured where it is built.
+--
+-- The threshold ticket 30 states is about the window being usable, which no
+-- automated check can watch. This is the part of it the server owns and can
+-- report: how long the read and the contract took, over how much data, and
+-- whether that data is still inside the volume the promise covers. It travels
+-- with the snapshot so a player's bug report carries it too.
+local function snapshotDiagnostics(startedAt, entityCount, linkCount)
+    local volume = ANKIGTA.Store.volumeReport()
+    return {
+        buildMs = getTickCount() - startedAt,
+        entityCount = entityCount,
+        linkCount = linkCount,
+        mapEntities = type(volume) == "table" and volume.mapEntities or false,
+        spatialLinks = type(volume) == "table" and volume.spatialLinks or false,
+        referenceMapEntities = type(volume) == "table"
+            and volume.referenceMapEntities or false,
+        referenceSpatialLinks = type(volume) == "table"
+            and volume.referenceSpatialLinks or false,
+        overReferenceVolume = type(volume) == "table"
+            and volume.overReference == true,
+    }
+end
+
 local function buildF7Snapshot()
+    local startedAt = getTickCount()
     local refreshed, refreshError = ANKIGTA.MapIdentity.refreshEntityPresence()
     if not refreshed and refreshError ~= "entity_read_failed" then
         return false, denial(refreshError or "entity_presence_refresh_failed")
@@ -152,8 +177,12 @@ local function buildF7Snapshot()
     end
 
     local entities = {}
+    local linkCount = 0
     for _, row in ipairs(rows) do
         table.insert(entities, entityContract(row))
+        if row.link_state == "active" or row.link_state == "card_missing" then
+            linkCount = linkCount + 1
+        end
     end
 
     local history = ANKIGTA.Store.historyStatus()
@@ -175,6 +204,7 @@ local function buildF7Snapshot()
         },
         entities = entities,
         history = history,
+        diagnostics = snapshotDiagnostics(startedAt, #entities, linkCount),
     }
 end
 

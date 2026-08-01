@@ -215,3 +215,79 @@ def test_card_control_rejects_malformed_search_parameters() -> None:
 
     assert status == 400
     assert response["error"]["category"] == "invalid_query"
+
+
+class CountingCollection:
+    """A collection that records how much of itself was read.
+
+    The point of a page is that it costs a page. Nothing about the returned
+    cards distinguishes "read fifty" from "read a hundred thousand and threw
+    away all but fifty", so the counts are the only place that shows.
+    """
+
+    def __init__(self, card_count: int) -> None:
+        self.decks = FakeDecks()
+        self.card_count = card_count
+        self.card_reads = 0
+        self.deck_reads = 0
+
+        class CountingDecks:
+            def all_names_and_ids(inner) -> list[tuple[str, int]]:
+                self.deck_reads += 1
+                return [("Languages", 10), ("Archive", 20)]
+
+        self.decks = CountingDecks()
+
+    def find_cards(self, query: str) -> list[int]:
+        return list(range(1, self.card_count + 1))
+
+    def get_card(self, card_id: int) -> FakeCard | None:
+        if not 1 <= card_id <= self.card_count:
+            return None
+        self.card_reads += 1
+        return FakeCard(card_id, 10, 0, 0, ["reference"])
+
+
+def test_a_page_of_fifty_reads_fifty_cards_however_many_the_search_matched() -> None:
+    collection = CountingCollection(100_000)
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+
+    result = service.search(page=0, page_size=50)
+
+    assert result.total == 100_000
+    assert [card.identity.card_id for card in result.cards] == list(range(1, 51))
+    assert collection.card_reads == 50
+    # And the deck list once for the page, not once per card.
+    assert collection.deck_reads == 1
+
+
+def test_a_later_page_reads_its_own_cards_and_no_earlier_ones() -> None:
+    collection = CountingCollection(100_000)
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+
+    result = service.search(page=10, page_size=50)
+
+    assert [card.identity.card_id for card in result.cards] == list(range(501, 551))
+    assert collection.card_reads == 50
+
+
+def test_a_card_that_vanished_between_the_search_and_the_read_leaves_a_gap() -> None:
+    """The collection changed under the search, and the page says so.
+
+    Pulling the next page's first card forward to fill the hole would make a
+    page of forty-nine look like a page of fifty and disagree with `total`,
+    which is the count the search actually returned.
+    """
+    collection = CountingCollection(100)
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+    original = collection.get_card
+
+    def vanishing(card_id: int) -> FakeCard | None:
+        return None if card_id == 3 else original(card_id)
+
+    collection.get_card = vanishing  # type: ignore[method-assign]
+
+    result = service.search(page=0, page_size=5)
+
+    assert result.total == 100
+    assert [card.identity.card_id for card in result.cards] == [1, 2, 4, 5]

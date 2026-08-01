@@ -124,47 +124,68 @@ function Activation.radiusForNewEntity()
     return Activation.settings.defaultRadius
 end
 
-local function distanceSquared(a, b)
-    local dx = a.x - b.x
-    local dy = a.y - b.y
-    local dz = a.z - b.z
-    return dx * dx + dy * dy + dz * dz
-end
-
 local function candidateKey(candidate)
     return tostring(candidate.mapId) .. "/" .. tostring(candidate.entityId)
 end
 
---- Entities whose zone the player is currently inside.
--- A zone exists only where its Runtime Instance does: an unstreamed or
--- destroyed instance has no zone, though its Spatial Link is untouched.
-local function eligibleCandidates(player, candidates)
-    local inside = {}
-    for _, candidate in ipairs(candidates or {}) do
-        local radius = tonumber(candidate.radius)
-            or Activation.settings.defaultRadius
-        if candidate.eligible == true
-            and candidate.present ~= false
-            and candidate.interior == player.interior
-            and candidate.dimension == player.dimension
-            and radius > 0
-            and distanceSquared(player, candidate) <= radius * radius
-        then
-            table.insert(inside, candidate)
-        end
-    end
-    return inside
-end
-
-local function nearest(player, candidates)
+--- How many candidates there are, whose zone the player is in, and which of
+--- those is nearest.
+--
+-- One pass. A zone exists only where its Runtime Instance does: an unstreamed
+-- or destroyed instance has no zone, though its Spatial Link is untouched.
+--
+-- Collecting the ones inside into a list and then picking the nearest from it
+-- read more plainly, and it walked the world twice and allocated a table on
+-- every observation. This runs against every streamed Spatial Link, sixty
+-- times a second, inside a two-millisecond budget for everything ANKIGTA draws
+-- and decides; the second walk is a third of it.
+--
+-- The order comes from `shared/nearest.lua` rather than from a comparison
+-- written here, so the Activation Zone and the Next Card Indicator cannot
+-- drift into disagreeing about which entity is nearest.
+--
+-- Distance is tested before eligibility, which reads backwards: eligibility is
+-- the interesting rule and distance is arithmetic. It is the order that costs
+-- least, and the two are conditions of the same `and` -- every candidate that
+-- ends up inside satisfies both, whichever was asked first. Almost every
+-- Spatial Link in a loaded world is far away, and one axis rejects it.
+local function observeZones(player, candidates)
+    local tracked, inside = 0, 0
     local best, bestDistance = false, nil
-    for _, candidate in ipairs(candidates) do
-        local distance = distanceSquared(player, candidate)
-        if bestDistance == nil or distance < bestDistance then
-            best, bestDistance = candidate, distance
+    local defaultRadius = Activation.settings.defaultRadius
+    -- Everything the loop reads on every candidate, read once. Each of these
+    -- is a table lookup per Spatial Link per observation, and the world holds
+    -- thousands of them.
+    local nearest = ANKIGTA.Nearest
+    local withinRadius, beats = nearest.withinRadius, nearest.beats
+    local interior, dimension = player.interior, player.dimension
+    local originX = player.x
+    for _, candidate in ipairs(candidates or {}) do
+        tracked = tracked + 1
+        local radius = candidate.radius
+        if type(radius) ~= "number" then
+            radius = tonumber(radius) or defaultRadius
+        end
+        -- One axis, before anything else is read: this is the rejection almost
+        -- every candidate takes, and `withinRadius` makes it again for the few
+        -- that survive it.
+        local offset = candidate.x - originX
+        if radius > 0 and offset <= radius and offset >= -radius
+            and candidate.eligible == true
+            and candidate.present ~= false
+            and candidate.interior == interior
+            and candidate.dimension == dimension
+        then
+            local distance = withinRadius(player, candidate, radius)
+            if distance ~= nil then
+                inside = inside + 1
+                if beats(candidate, distance, best, bestDistance) then
+                    best, bestDistance = candidate, distance
+                end
+            end
         end
     end
-    return best
+    return tracked, inside, best, bestDistance
 end
 
 function Activation.cancel(reason)
@@ -179,33 +200,116 @@ function Activation.pending()
     return Activation.countdown
 end
 
+-- What the last observation that walked the world saw.
+--
+-- An observation that stopped at a gate -- a review is open, the player is too
+-- fast -- never looks, and says so through `reason` while leaving the counts at
+-- what the last real look found.
+--
+-- "Why did nothing open" has no cheap answer from a player's machine, and the
+-- benchmark has nothing to assert against either: the update function reports
+-- an opening and is otherwise silent. This is the seam for both -- how many
+-- candidates were tracked, how many of their zones the player is inside, which
+-- one is nearest and how far, and what is open right now.
+local observation = {
+    observedAt = false,
+    tracked = 0,
+    inZone = 0,
+    nearestMapId = false,
+    nearestEntityId = false,
+    nearestDistance = false,
+    -- Why nothing is counting down, when nothing is.
+    reason = "not_observed",
+    -- The last card activation asked to open, kept until the next observation
+    -- that runs with the review closed.
+    openMapId = false,
+    openEntityId = false,
+}
+
+local function note(fields)
+    for key, value in pairs(fields) do
+        observation[key] = value
+    end
+end
+
+--- The activation state, as one flat table.
+function Activation.diagnostics()
+    local countdown = Activation.countdown
+    return {
+        observedAt = observation.observedAt,
+        tracked = observation.tracked,
+        inZone = observation.inZone,
+        nearestMapId = observation.nearestMapId,
+        nearestEntityId = observation.nearestEntityId,
+        nearestDistance = observation.nearestDistance,
+        reason = observation.reason,
+        openMapId = observation.openMapId,
+        openEntityId = observation.openEntityId,
+        countingDown = countdown ~= false and countdown ~= nil,
+        countdownKey = countdown and countdown.key or false,
+        countdownStartedAt = countdown and countdown.startedAt or false,
+        defaultRadius = Activation.settings.defaultRadius,
+        delaySeconds = Activation.settings.delaySeconds,
+        maxSpeedKmh = Activation.settings.maxSpeedKmh,
+    }
+end
+
 --- Advance the activation state by one observation.
 -- `now` is in seconds. Returns `false` when nothing should happen, or a table
 -- describing the card to open.
 function Activation.update(now, player, candidates)
     if type(player) ~= "table" then
+        note({reason = "no_observation"})
         return false
     end
     if player.reviewOpen == true then
         -- An open card outranks the world. Map, runtime and link changes may
-        -- happen underneath it; activation recalculates once it closes.
+        -- happen underneath it; activation recalculates once it closes. The
+        -- world is not walked at all here, so the counts stay at what the last
+        -- observation that did look saw.
+        note({observedAt = now, reason = "review_open"})
         return false
     end
+    -- Nothing is open once an observation runs with the review closed, so the
+    -- report cannot go on naming a card the player already finished.
+    note({observedAt = now, openMapId = false, openEntityId = false})
 
     local speed = tonumber(player.speedKmh) or 0
     if speed > Activation.settings.maxSpeedKmh then
+        -- Also without walking the world: at this speed nothing may open
+        -- whatever is around, and the scan is the expensive part.
         Activation.cancel("too_fast")
+        note({
+            reason = "too_fast",
+            inZone = 0,
+            nearestMapId = false,
+            nearestEntityId = false,
+            nearestDistance = false,
+        })
         return false
     end
 
-    local inside = eligibleCandidates(player, candidates)
-    if #inside == 0 then
+    local tracked, inside, target, targetDistanceSquared =
+        observeZones(player, candidates)
+    note({
+        tracked = tracked,
+        inZone = inside,
+        nearestMapId = false,
+        nearestEntityId = false,
+        nearestDistance = false,
+    })
+    if not target then
         Activation.cancel("left_zone")
+        note({reason = "no_zone"})
         return false
     end
 
-    local target = nearest(player, inside)
     local key = candidateKey(target)
+    note({
+        nearestMapId = target.mapId,
+        nearestEntityId = target.entityId,
+        nearestDistance = math.sqrt(targetDistanceSquared),
+    })
     local countdown = Activation.countdown
 
     if not countdown or countdown.key ~= key then
@@ -220,10 +324,16 @@ function Activation.update(now, player, candidates)
     end
 
     if now - countdown.startedAt < Activation.settings.delaySeconds then
+        note({reason = "counting_down"})
         return false
     end
 
     Activation.countdown = false
+    note({
+        reason = "opened",
+        openMapId = target.mapId,
+        openEntityId = target.entityId,
+    })
     return {
         mapId = target.mapId,
         entityId = target.entityId,

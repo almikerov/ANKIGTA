@@ -72,7 +72,9 @@ def test_collision_coordinator_blocks_ambiguous_ids_before_activation() -> None:
     assert "Store.mapIdentityOwner" in activation
     assert "identity_collision" in activation
     assert "markIdentityCollision" in identity
-    assert "isIdentityCollision" in identity
+    # Off the row rather than one query per entity (ticket 30), which is the
+    # same answer `Store.isIdentityCollision` gives.
+    assert "rowIsIdentityCollision" in identity
     assert "state = \"Identity Collision\"" in identity
     assert "needsEntityTypeMigration" in store
     # What the rebuild is called, and whether it goes via a `_legacy` table, is

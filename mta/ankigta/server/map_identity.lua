@@ -34,41 +34,81 @@ local function readSavedMapHash(pending)
     return readMapFileHash(pending.mapLocator.virtualPath)
 end
 
-local function mapFileContainsEntity(row)
+--- Which ANKIGTA identities one saved map file carries.
+--
+-- Read whole rather than searched per entity. A map file is one document: the
+-- answer for one Map Entity and the answer for ten thousand of them cost the
+-- same parse, and asking per entity made the presence refresh reparse the map
+-- once per row -- the whole of F7's two-second budget, several times over, on
+-- a reference-sized world.
+--
+-- `nil` means the file could not be read, which is not the same answer as a
+-- file that was read and does not contain something.
+local function readMapFileIdentities(virtualPath)
+    local root = xmlLoadFile(virtualPath, true)
+    if not root then
+        return nil
+    end
+    local mapIds = {}
+    local entityIds = {}
+    for _, child in ipairs(xmlNodeGetChildren(root)) do
+        local childName = xmlNodeGetName(child)
+        if childName == "ankigta_map_identity" then
+            local mapId = xmlNodeGetAttribute(child, "ankigtaMapId")
+            if type(mapId) == "string" and mapId ~= "" then
+                mapIds[mapId] = true
+            end
+        elseif childName == "object"
+            or childName == "vehicle"
+            or childName == "ped"
+        then
+            local entityId = xmlNodeGetAttribute(child, "ankigtaEntityId")
+            if type(entityId) == "string" and entityId ~= "" then
+                entityIds[entityId] = true
+            end
+        end
+    end
+    xmlUnloadFile(root)
+    return {mapIds = mapIds, entityIds = entityIds}
+end
+
+local function mapFileVirtualPath(row)
     if type(row) ~= "table"
         or type(row.resource_name) ~= "string"
         or type(row.map_name) ~= "string"
     then
         return nil
     end
-    local root = xmlLoadFile(
-        ":" .. row.resource_name .. "/" .. row.map_name,
-        true
-    )
-    if not root then
+    return ":" .. row.resource_name .. "/" .. row.map_name
+end
+
+--- Is this row's Map Entity in its saved map file?
+--
+-- `nil` where the file could not be read, so a map that is not there is never
+-- mistaken for a map whose entities have gone.
+local function mapFileContainsEntity(row, readFiles)
+    local virtualPath = mapFileVirtualPath(row)
+    if virtualPath == nil then
         return nil
     end
-    local mapFound = false
-    local entityFound = false
-    for _, child in ipairs(xmlNodeGetChildren(root)) do
-        local childName = xmlNodeGetName(child)
-        if childName == "ankigta_map_identity"
-            and xmlNodeGetAttribute(child, "ankigtaMapId") == row.map_id
-        then
-            mapFound = true
-        elseif childName == "object"
-            or childName == "vehicle"
-            or childName == "ped"
-        then
-            if xmlNodeGetAttribute(child, "ankigtaEntityId")
-                == row.entity_id
-            then
-                entityFound = true
-            end
+    local contents
+    if readFiles ~= nil then
+        contents = readFiles[virtualPath]
+        if contents == nil then
+            contents = readMapFileIdentities(virtualPath) or false
+            readFiles[virtualPath] = contents
+        end
+        if contents == false then
+            return nil
+        end
+    else
+        contents = readMapFileIdentities(virtualPath)
+        if contents == nil then
+            return nil
         end
     end
-    xmlUnloadFile(root)
-    return mapFound and entityFound
+    return contents.mapIds[row.map_id] == true
+        and contents.entityIds[row.entity_id] == true
 end
 
 function MapIdentity.refreshEntityPresence()
@@ -78,11 +118,17 @@ function MapIdentity.refreshEntityPresence()
     if not rows then
         return false, readError
     end
+    -- Each map file, read once for the whole refresh.
+    local readFiles = {}
     for _, row in ipairs(rows) do
-        local present = mapFileContainsEntity(row)
-        if present == true then
+        local present = mapFileContainsEntity(row, readFiles)
+        -- Only where the stored state disagrees. The refresh runs on every F7
+        -- open, and a write per entity is twenty thousand statements to record
+        -- that nothing changed.
+        local missing = row.entity_state == "entity_missing"
+        if present == true and missing then
             ANKIGTA.Store.clearEntityMissing(row.map_id, row.entity_id)
-        elseif present == false then
+        elseif present == false and not missing then
             ANKIGTA.Store.markEntityMissing(row.map_id, row.entity_id)
         end
     end
@@ -781,7 +827,7 @@ function MapIdentity.linkSnapshot(row)
         showRadius = tonumber(row.show_radius) == 1,
     }
     local pending = pendingByEntity[entityKey(row.map_id, row.entity_id)]
-    if ANKIGTA.Store.isIdentityCollision(row.map_id, row.entity_id) then
+    if ANKIGTA.Store.rowIsIdentityCollision(row) then
         return {
             state = "Identity Collision",
             guidanceKey = "guidance.copyBlocked",

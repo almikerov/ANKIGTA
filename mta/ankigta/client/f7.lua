@@ -68,6 +68,17 @@ local oldCardIdentity = nil
 local newCardIdentity = nil
 local entityRows = {}
 local relinkSource = nil
+
+-- When the last F7 and the last Card Picker search were asked for, so the
+-- report can state how long each took rather than only that it arrived. Both
+-- are measured on this side, because this is the side that waits.
+--
+-- Declared up here with the rest of the file's state, because the search is
+-- stamped where the button is wired and read where the page arrives, and a
+-- local declared between the two would leave the first writing a global that
+-- the second never sees.
+local f7RequestedAt = false
+local searchRequestedAt = false
 local relinkTarget = nil
 local selectedMapId = nil
 local selectedEntityId = nil
@@ -912,6 +923,7 @@ local function renderCardPicker(snapshot)
     end, false)
     addEventHandler("onClientGUIClick", cardSearchButton, function()
         local deckFilter = guiGetText(deckFilterEdit)
+        searchRequestedAt = getTickCount()
         triggerServerEvent(
             CARD_PICKER_REQUEST_EVENT,
             resourceRoot,
@@ -921,6 +933,12 @@ local function renderCardPicker(snapshot)
             50
         )
     end, false)
+end
+
+local function record(section, values)
+    if ANKIGTA.Diagnostics then
+        ANKIGTA.Diagnostics.record(section, values)
+    end
 end
 
 local function requestF7()
@@ -936,6 +954,7 @@ local function requestF7()
         return
     end
 
+    f7RequestedAt = getTickCount()
     triggerServerEvent(F7_REQUEST_EVENT, resourceRoot)
 end
 
@@ -953,7 +972,24 @@ addEvent(F7_SNAPSHOT_EVENT, true)
 addEventHandler(F7_SNAPSHOT_EVENT, resourceRoot, function(snapshot)
     if authorized and type(snapshot) == "table" and snapshot.visible == true then
         lastSnapshot = snapshot
+        local arrivedAt = getTickCount()
         renderSnapshot(snapshot)
+        local server = type(snapshot.diagnostics) == "table"
+            and snapshot.diagnostics
+            or {}
+        record("f7", {
+            -- The whole wait, as the player experiences it: the key press to
+            -- the window being on screen.
+            openMs = f7RequestedAt and (getTickCount() - f7RequestedAt) or false,
+            renderMs = getTickCount() - arrivedAt,
+            serverBuildMs = server.buildMs or false,
+            entityCount = server.entityCount or false,
+            linkCount = server.linkCount or false,
+            mapEntities = server.mapEntities or false,
+            spatialLinks = server.spatialLinks or false,
+            overReferenceVolume = server.overReferenceVolume == true,
+        })
+        f7RequestedAt = false
     end
 end)
 
@@ -1004,7 +1040,27 @@ addEvent(CARD_PICKER_SNAPSHOT_EVENT, true)
 addEventHandler(CARD_PICKER_SNAPSHOT_EVENT, resourceRoot, function(snapshot)
     if authorized and type(snapshot) == "table" and snapshot.enabled == true then
         lastCardPickerSnapshot = snapshot
+        local arrivedAt = getTickCount()
         renderCardPicker(snapshot)
+        local cards = type(snapshot.cards) == "table" and snapshot.cards or {}
+        local shown = 0
+        for _ in ipairs(cards) do
+            shown = shown + 1
+        end
+        record("search", {
+            -- The press to the page being on screen. Only a search the player
+            -- started is timed; a picker opened from a link carries no wait.
+            pageMs = searchRequestedAt
+                and (getTickCount() - searchRequestedAt)
+                or false,
+            renderMs = getTickCount() - arrivedAt,
+            deckFilter = snapshot.deckFilter or false,
+            page = snapshot.page or 0,
+            pageSize = snapshot.pageSize or false,
+            shown = shown,
+            total = snapshot.total or false,
+        })
+        searchRequestedAt = false
     end
 end)
 

@@ -4,6 +4,13 @@ local DATABASE_PATH = "ankigta.sqlite"
 local CURRENT_SCHEMA_VERSION = 4
 local HISTORY_LIMIT = 100
 
+-- The volume ticket 30 states its thresholds against. Nothing here is a limit:
+-- a larger world is stored, read and written exactly as a smaller one is. It is
+-- the point past which ANKIGTA stops promising the response times, and says so
+-- rather than letting the player conclude something is broken.
+local REFERENCE_MAP_ENTITIES = 10000
+local REFERENCE_SPATIAL_LINKS = 5000
+
 local TRACER_MAP = {
     mapId = "ticket05-map",
     resourceName = "ankigta",
@@ -67,6 +74,9 @@ local Store = {
     -- Set only when the database cannot be opened and the user has to choose
     -- what happens next. Nothing here ever resolves it on its own.
     recoveryState = nil,
+    -- Whether the "past the reference volume" line has already been logged for
+    -- the current crossing.
+    volumeWarned = false,
 }
 
 local function execute(connection, statement, ...)
@@ -989,6 +999,31 @@ function Store.isIdentityCollision(mapId, entityId)
     return ok and rows[1] ~= nil
 end
 
+--- The same answer, taken off a row the caller has already read.
+--
+-- `isIdentityCollision` is one query. That is the right shape for a caller
+-- holding nothing but an id, and the wrong one for a caller walking every Map
+-- Entity in the world: the F7 snapshot asked it once per entity, so opening F7
+-- over the reference world issued ten thousand queries and spent about half of
+-- its two-second budget on them.
+--
+-- The reads that walk many rows carry the answer as a column, so this is a
+-- lookup rather than a query. A row from a read that does not carry it says so
+-- by having no such key at all -- MTA turns SQL NULL into `false`, never into
+-- nil -- and is asked the slow way rather than being assumed innocent.
+function Store.rowIsIdentityCollision(row)
+    if type(row) ~= "table" or type(row.map_id) ~= "string" then
+        return false
+    end
+    if Store.identityCollisionByMap[row.map_id] == true then
+        return true
+    end
+    if row.identity_collision == nil then
+        return Store.isIdentityCollision(row.map_id, row.entity_id)
+    end
+    return tonumber(row.identity_collision) == 1
+end
+
 function Store.listIdentityCollisions()
     if not Store.ready then
         return false, Store.errorCategory or "storage_unavailable"
@@ -1662,6 +1697,56 @@ function Store.clearEntityMissing(mapId, entityId)
     )
 end
 
+--- How much is stored, against the volume the response times are promised for.
+--
+-- Being over the reference volume changes nothing about how data is stored,
+-- read or written: it is not a cap, and nothing here truncates, refuses or
+-- prunes. It only means the times in ticket 30 are no longer promised, which is
+-- worth saying out loud rather than leaving the player to conclude that a slow
+-- F7 is a broken one.
+function Store.volumeReport()
+    if not Store.ready then
+        return false, Store.errorCategory or "storage_unavailable"
+    end
+    local ok, rows = execute(
+        Store.connection,
+        [[
+            SELECT
+                (SELECT COUNT(*) FROM map_entities) AS map_entities,
+                (SELECT COUNT(*) FROM spatial_links) AS spatial_links
+        ]]
+    )
+    if not ok or not rows[1] then
+        return false, "volume_read_failed"
+    end
+    local mapEntities = tonumber(rows[1].map_entities) or 0
+    local spatialLinks = tonumber(rows[1].spatial_links) or 0
+    local overReference = mapEntities > REFERENCE_MAP_ENTITIES
+        or spatialLinks > REFERENCE_SPATIAL_LINKS
+    if overReference and not Store.volumeWarned then
+        -- Once per crossing: a warning repeated on every F7 open would be
+        -- noise, and the state is readable from the report at any time.
+        Store.volumeWarned = true
+        outputDebugString(
+            "[ANKIGTA] volume_over_reference"
+                .. " mapEntities=" .. tostring(mapEntities)
+                .. "/" .. tostring(REFERENCE_MAP_ENTITIES)
+                .. " spatialLinks=" .. tostring(spatialLinks)
+                .. "/" .. tostring(REFERENCE_SPATIAL_LINKS),
+            2
+        )
+    elseif not overReference then
+        Store.volumeWarned = false
+    end
+    return {
+        mapEntities = mapEntities,
+        spatialLinks = spatialLinks,
+        referenceMapEntities = REFERENCE_MAP_ENTITIES,
+        referenceSpatialLinks = REFERENCE_SPATIAL_LINKS,
+        overReference = overReference,
+    }
+end
+
 function Store.listMapEntities()
     if not Store.ready then
         return false, Store.errorCategory or "storage_unavailable"
@@ -1696,7 +1781,9 @@ function Store.listMapEntities()
                 spatial_links.state AS link_state,
                 spatial_links.verified_map_sha256,
                 COALESCE(map_entity_metadata.presence_state, 'identified')
-                    AS entity_state
+                    AS entity_state,
+                CASE WHEN identity_collisions.entity_id IS NULL THEN 0 ELSE 1 END
+                    AS identity_collision
             FROM map_entities
             INNER JOIN maps ON maps.map_id = map_entities.map_id
             LEFT JOIN spatial_links
@@ -1707,6 +1794,11 @@ function Store.listMapEntities()
                 AND map_entity_metadata.entity_id = map_entities.entity_id
             LEFT JOIN map_preferences
                 ON map_preferences.map_id = map_entities.map_id
+            -- Carried on the row rather than asked per entity: see
+            -- `Store.rowIsIdentityCollision`.
+            LEFT JOIN identity_collisions
+                ON identity_collisions.map_id = map_entities.map_id
+                AND identity_collisions.entity_id = map_entities.entity_id
             ORDER BY maps.map_id, map_entities.entity_id
         ]]
     )
@@ -1808,7 +1900,9 @@ function Store.getMapEntity(mapId, entityId)
                 spatial_links.state AS link_state,
                 spatial_links.verified_map_sha256,
                 COALESCE(map_entity_metadata.presence_state, 'identified')
-                    AS entity_state
+                    AS entity_state,
+                CASE WHEN identity_collisions.entity_id IS NULL THEN 0 ELSE 1 END
+                    AS identity_collision
             FROM map_entities
             INNER JOIN maps ON maps.map_id = map_entities.map_id
             LEFT JOIN spatial_links
@@ -1819,6 +1913,9 @@ function Store.getMapEntity(mapId, entityId)
                 AND map_entity_metadata.entity_id = map_entities.entity_id
             LEFT JOIN map_preferences
                 ON map_preferences.map_id = map_entities.map_id
+            LEFT JOIN identity_collisions
+                ON identity_collisions.map_id = map_entities.map_id
+                AND identity_collisions.entity_id = map_entities.entity_id
             WHERE map_entities.map_id = ? AND map_entities.entity_id = ?
         ]],
         mapId,

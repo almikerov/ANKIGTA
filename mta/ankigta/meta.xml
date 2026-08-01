@@ -9,6 +9,9 @@
     <min_mta_version server="1.6.0-9.24124.0" client="1.6.0-9.24124.0" />
     <script src="shared/settings.lua" type="shared" />
     <script src="shared/locale.lua" type="shared" />
+    <!-- Both the Activation Zone and the Next Card Indicator pick "the nearest
+         one". They share the order so they cannot drift into two answers. -->
+    <script src="shared/nearest.lua" type="shared" />
     <script src="server/connection_config.lua" type="server" />
     <script src="server/companion.lua" type="server" />
     <!-- Before the store: the store asks it for a verified copy before it
@@ -23,6 +26,8 @@
     <!-- First on this side: every window asks it where it goes and how big it
          is, and the settings store hands it the stored scale and placement. -->
     <script src="client/layout.lua" type="client" cache="false" />
+    <!-- Before the surfaces that leave their last outcome in it. -->
+    <script src="client/diagnostics.lua" type="client" cache="false" />
     <script src="client/connection_status.lua" type="client" cache="false" />
     <script src="client/connection_settings.lua" type="client" cache="false" />
     <script src="client/study.lua" type="client" cache="false" />
