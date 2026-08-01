@@ -1,2 +1,4 @@
 mypy>=1.15,<2
 pytest>=9,<10
+# Lua 5.1 interpreter for the executable MTA resource harness (tests/lua).
+lupa>=2.5,<3
