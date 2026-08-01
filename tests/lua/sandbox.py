@@ -131,6 +131,12 @@ class MtaSandbox:
         self.world_sound_enabled = True
         self.damage_proof: dict[str, bool] = {}
         self.occupied_vehicle: Any = False
+        #: seat index -> occupant, exactly as MTA reports it (0 is the driver).
+        self.vehicle_occupants: dict[int, Any] = {}
+        self.moved: list[dict[str, Any]] = []
+        self.world_elements: list[Any] = []
+        self.position_read_fails = False
+        self.vanish_after_position_read: Any = None
         self._install_globals()
 
     # ---------------------------------------------------------------- loading
@@ -581,11 +587,91 @@ class MtaSandbox:
         g.isElementDamageProof = is_damage_proof
         g.localPlayer = "localPlayer"
         g.getPedOccupiedVehicle = lambda _ped=None: self.occupied_vehicle
+        # --- world manipulation ---------------------------------------------
+        def get_element_position(element: Any) -> Any:
+            if self.position_read_fails:
+                return False
+            if (
+                self.vanish_after_position_read is not None
+                and element is not None
+                and lua_type(element) == "table"
+                and element["type"] == self.vanish_after_position_read["type"]
+            ):
+                # Simulate the element being destroyed mid-read.
+                element["__destroyed"] = True
+            if lua_type(element) != "table":
+                return False
+            return element["x"], element["y"], element["z"]
+
+        def set_element_position(element: Any, x: float, y: float, z: float, *_r: Any) -> bool:
+            self._record_move(element, position=(float(x), float(y), float(z)))
+            return True
+
+        def set_element_interior(element: Any, interior: float, *_rest: Any) -> bool:
+            self._record_move(element, interior=int(interior))
+            return True
+
+        def set_element_dimension(element: Any, dimension: float) -> bool:
+            self._record_move(element, dimension=int(dimension))
+            return True
+
+        g.getElementPosition = get_element_position
+        g.getElementInterior = lambda e=None: (
+            e["interior"] if lua_type(e) == "table" else 0
+        )
+        g.getElementDimension = lambda e=None: (
+            e["dimension"] if lua_type(e) == "table" else 0
+        )
+        g.setElementPosition = set_element_position
+        g.setElementInterior = set_element_interior
+        g.setElementDimension = set_element_dimension
+        g.getElementType = lambda e=None: (
+            str(e["type"]) if lua_type(e) == "table" and e["type"] else "unknown"
+        )
+        def get_vehicle_occupants(_vehicle: Any = None) -> Any:
+            # MTA keys this by SEAT, starting at 0 (the driver), and skips
+            # empty seats -- see CLuaVehicleDefs::GetVehicleOccupants, which
+            # loops `for ucSeat = 0; ucSeat <= ucMaxPassengers` and only sets a
+            # key when that seat holds a ped. A dense 1-based table is the one
+            # shape it never returns, so building one here would let `ipairs`
+            # bugs pass.
+            table = self.lua.eval("{}")
+            for seat, occupant in self.vehicle_occupants.items():
+                table[seat] = occupant
+            return table
+
+        g.getVehicleOccupants = get_vehicle_occupants
+        g.getElementsByType = lambda kind, *_rest: self.lua.table_from(
+            [e for e in self.world_elements if str(e["type"]) == str(kind)]
+        )
+        g.getElementData = lambda element, key, *_rest: (
+            element[str(key)] if lua_type(element) == "table" else False
+        )
         g.setBrowserVolume = set_browser_volume
         g.setWorldSoundEnabled = set_world_sound_enabled
         g.focusBrowser = lambda _browser=None: True
         g.isBrowserFocused = lambda _browser=None: True
         g.cancelEvent = lambda *_args: True
+
+    def _record_move(self, element: Any, **fields: Any) -> None:
+        """Collect setElement* calls per element, so tests read one entry."""
+        kind = (
+            str(element["type"])
+            if lua_type(element) == "table" and element["type"]
+            else "unknown"
+        )
+        name = (
+            str(element["name"])
+            if lua_type(element) == "table" and element["name"]
+            else kind
+        )
+        for entry in self.moved:
+            if entry["key"] == (kind, name):
+                entry.update(fields)
+                return
+        entry = {"key": (kind, name), "type": kind, "element": element}
+        entry.update(fields)
+        self.moved.append(entry)
 
     # ------------------------------------------------------------ conversion
 

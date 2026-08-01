@@ -1317,6 +1317,44 @@ function reviewModeOpenCard()
     return openReview and openReview.cardIdentity or false
 end
 
+-- Teleport -------------------------------------------------------------------
+
+local TELEPORT_REQUEST_EVENT = "ankigta:teleportToEntity"
+
+--- Move the requesting player to one of their Map Entities.
+-- The client names a Map Entity; the server resolves which Runtime Instance
+-- that is, so a client cannot ask to be moved to arbitrary coordinates.
+function teleportPlayerToMapEntity(player, mapId, entityId)
+    local authorized = playerAuthorization(player)
+    if not authorized then
+        return false, "forbidden"
+    end
+    if type(mapId) ~= "string" or type(entityId) ~= "string" then
+        return false, "invalid_map_entity"
+    end
+    local record, readError = ANKIGTA.Store.getMapEntity(mapId, entityId)
+    if not record then
+        return false, readError or "entity_missing"
+    end
+    return ANKIGTA.Teleport.toMapEntity(player, {
+        mapId = mapId,
+        entityId = entityId,
+        authoredX = record.authored_x,
+        authoredY = record.authored_y,
+        authoredZ = record.authored_z,
+        interior = record.interior,
+        dimension = record.dimension,
+    })
+end
+
+addEvent(TELEPORT_REQUEST_EVENT, true)
+addEventHandler(TELEPORT_REQUEST_EVENT, resourceRoot, function(mapId, entityId)
+    if not client or source ~= resourceRoot then
+        return
+    end
+    teleportPlayerToMapEntity(client, mapId, entityId)
+end)
+
 addEventHandler("onResourceStop", resourceRoot, function()
     ANKIGTA.Store.close()
 end)

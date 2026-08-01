@@ -11,6 +11,7 @@
     <script src="server/companion.lua" type="server" />
     <script src="server/store.lua" type="server" />
     <script src="server/map_identity.lua" type="server" />
+    <script src="server/teleport.lua" type="server" />
     <script src="server/main.lua" type="server" />
     <script src="client/connection_status.lua" type="client" cache="false" />
     <script src="client/connection_settings.lua" type="client" cache="false" />
@@ -31,4 +32,5 @@
     <export function="preparePedPendingMapSave" type="server" />
     <export function="linkCardToEntity" type="server" />
     <export function="resolveMapCopyDecision" type="server" />
+    <export function="teleportPlayerToMapEntity" type="server" />
 </meta>
