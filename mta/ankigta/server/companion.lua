@@ -11,6 +11,10 @@ local SESSION_REBUILD_PATH = "/v1/session/rebuild"
 local SESSION_PAUSE_PATH = "/v1/session/pause"
 local SESSION_STOP_PATH = "/v1/session/stop"
 local SESSION_CANCEL_PATH = "/v1/session/cancel"
+local SESSION_ADMIT_PATH = "/v1/session/admit"
+local SESSION_RESTORE_PATH = "/v1/session/restore"
+local REVIEW_RATE_PATH = "/v1/review/rate"
+local REVIEW_RESULT_EVENT = "ankigta:reviewResult"
 local CARD_PICKER_SNAPSHOT_EVENT = "ankigta:cardPickerSnapshot"
 local REQUEST_TIMEOUT_MS = 4900
 local SESSION_TIMEOUT_MS = 30000
@@ -32,6 +36,12 @@ local Gateway = {
     cardStatePending = {},
     sessionGeneration = 0,
     sessionPending = {},
+    reviewGeneration = 0,
+    reviewPending = {},
+    -- reviewTransactionId -> last known outcome. A Review Transaction is
+    -- identified independently of the transport request that carries it, so a
+    -- retried request reuses the same id and can never become a second review.
+    reviewOutcomes = {},
     autoReconnectTimer = false,
     status = {
         state = "disconnected",
@@ -512,6 +522,239 @@ end
 
 function Gateway.requestSessionCancel(player)
     return requestSessionWithConfig(player, SESSION_CANCEL_PATH, {})
+end
+
+function Gateway.requestSessionAdmit(player, cardIdentity, allowEarlyReview)
+    return requestSessionWithConfig(
+        player,
+        SESSION_ADMIT_PATH,
+        {
+            cardIdentity = cardIdentity,
+            allowEarlyReview = allowEarlyReview == true,
+        }
+    )
+end
+
+function Gateway.requestSessionRestore(player)
+    return requestSessionWithConfig(player, SESSION_RESTORE_PATH, {})
+end
+
+local function nextReviewTransactionId()
+    Gateway.reviewGeneration = Gateway.reviewGeneration + 1
+    return string.format(
+        "review-%d-%d",
+        getTickCount(),
+        Gateway.reviewGeneration
+    )
+end
+
+local function reviewKeyFor(cardIdentity)
+    return string.format(
+        "%s/%d",
+        tostring(cardIdentity.collectionUuid),
+        tonumber(cardIdentity.cardId) or 0
+    )
+end
+
+local function settleReview(request, state, category, httpStatus)
+    if request.settled then
+        return
+    end
+    request.settled = true
+    Gateway.reviewPending[request.reviewTransactionId] = nil
+    if isTimer(request.timeoutTimer) then
+        killTimer(request.timeoutTimer)
+    end
+    Gateway.reviewOutcomes[request.reviewTransactionId] = {
+        reviewTransactionId = request.reviewTransactionId,
+        cardIdentity = request.cardIdentity,
+        rating = request.rating,
+        state = state,
+        category = category or false,
+        httpStatus = httpStatus or false,
+    }
+    triggerEvent(
+        REVIEW_RESULT_EVENT,
+        resourceRoot,
+        Gateway.reviewOutcomes[request.reviewTransactionId]
+    )
+end
+
+local function reviewTimeout(reviewTransactionId, generation)
+    local request = Gateway.reviewPending[reviewTransactionId]
+    if not request
+        or request.generation ~= generation
+        or request.settled
+    then
+        return
+    end
+    local handle = request.handle
+    -- A timeout proves nothing about whether Anki applied the rating, so the
+    -- outcome stays unknown until a later reconciliation resolves it.
+    settleReview(request, "outcome_unknown", "timeout", false)
+    if handle then
+        abortRemoteRequest(handle)
+    end
+end
+
+local function reviewCallback(body, info, reviewTransactionId, generation)
+    local request = Gateway.reviewPending[reviewTransactionId]
+    if not request
+        or request.generation ~= generation
+        or request.settled
+    then
+        Gateway.quarantinedCallbacks = Gateway.quarantinedCallbacks + 1
+        return
+    end
+    local httpStatus = type(info) == "table"
+        and tonumber(info.statusCode)
+        or false
+    local response = decodeJson(body)
+    if type(info) ~= "table"
+        or httpStatus ~= 200
+        or not isJsonContentType(info.headers)
+        or type(response) ~= "table"
+        or response.protocol ~= PROTOCOL_NAME
+        or response.protocolVersion ~= PROTOCOL_VERSION
+        or response.requestId ~= request.requestId
+        or response.ok ~= true
+        or type(response.payload) ~= "table"
+        or type(response.payload.review) ~= "table"
+    then
+        -- Neither a transport error nor an HTTP status is itself evidence that
+        -- the rating was or was not applied.
+        settleReview(request, "outcome_unknown", "protocol_error", httpStatus)
+        return
+    end
+    local review = response.payload.review
+    if review.reviewTransactionId ~= request.reviewTransactionId
+        or tonumber(review.cardId) ~= tonumber(request.cardIdentity.cardId)
+        or review.collectionUuid ~= request.cardIdentity.collectionUuid
+        or review.rating ~= request.rating
+    then
+        settleReview(request, "outcome_unknown", "identity_mismatch", httpStatus)
+        return
+    end
+    settleReview(request, review.state, false, httpStatus)
+end
+
+function Gateway.requestRating(player, cardIdentity, rating)
+    if type(cardIdentity) ~= "table"
+        or type(cardIdentity.collectionUuid) ~= "string"
+        or cardIdentity.collectionUuid == ""
+        or (tonumber(cardIdentity.cardId) or 0) <= 0
+    then
+        return false, "invalid_card_identity"
+    end
+    if type(rating) ~= "string" or rating == "" then
+        return false, "invalid_rating"
+    end
+
+    -- A second click on the same card while its rating is in flight is the
+    -- same logical request, not a new one; a different card is a conflict.
+    local key = reviewKeyFor(cardIdentity)
+    for _, pending in pairs(Gateway.reviewPending) do
+        if reviewKeyFor(pending.cardIdentity) == key
+            and pending.rating == rating
+        then
+            return true, pending.reviewTransactionId
+        end
+        return false, "review_in_flight"
+    end
+
+    -- A settled transaction for the same card and rating is also a repeat.
+    for _, outcome in pairs(Gateway.reviewOutcomes) do
+        if reviewKeyFor(outcome.cardIdentity) == key
+            and outcome.rating == rating
+        then
+            return true, outcome.reviewTransactionId
+        end
+    end
+
+    local effective, category = ANKIGTA.ConnectionConfig.loadEffective()
+    if not effective then
+        return false, category
+    end
+    if not validPort(tonumber(effective.port)) then
+        return false, "invalid_port"
+    end
+
+    local reviewTransactionId = nextReviewTransactionId()
+    local requestId = nextSessionRequestId()
+    local request = {
+        reviewTransactionId = reviewTransactionId,
+        requestId = requestId,
+        generation = Gateway.reviewGeneration,
+        startedAt = getTickCount(),
+        player = player,
+        cardIdentity = {
+            collectionUuid = cardIdentity.collectionUuid,
+            cardId = tonumber(cardIdentity.cardId),
+        },
+        rating = rating,
+        settled = false,
+        handle = false,
+    }
+    Gateway.reviewPending[reviewTransactionId] = request
+
+    local envelope = encodeJson({
+        protocol = PROTOCOL_NAME,
+        protocolVersion = PROTOCOL_VERSION,
+        requestId = requestId,
+        reviewTransactionId = reviewTransactionId,
+        cardIdentity = request.cardIdentity,
+        rating = rating,
+    })
+    if not envelope then
+        settleReview(request, "outcome_unknown", "json_encode_failed", false)
+        return false, "json_encode_failed"
+    end
+
+    request.timeoutTimer = setTimer(
+        reviewTimeout,
+        SESSION_TIMEOUT_MS,
+        1,
+        reviewTransactionId,
+        request.generation
+    )
+    local headers = {
+        ["Accept"] = "application/json",
+        ["Content-Type"] = "application/json; charset=utf-8",
+    }
+    if type(effective.token) == "string" and effective.token ~= "" then
+        headers["Authorization"] = "Bearer " .. effective.token
+    end
+    request.handle = fetchRemote(
+        string.format(
+            "http://127.0.0.1:%d%s",
+            effective.port,
+            REVIEW_RATE_PATH
+        ),
+        {
+            method = "POST",
+            postData = envelope,
+            postIsBinary = false,
+            headers = headers,
+            queueName = "ankigta-review",
+            connectionAttempts = 1,
+            connectTimeout = SESSION_TIMEOUT_MS,
+            maxRedirects = 0,
+        },
+        reviewCallback,
+        -- A pure array table: MTA forwards callback arguments by iterating this
+        -- table with lua_next, so a mixed array/hash table would hand them over
+        -- in an order Lua does not guarantee.
+        { reviewTransactionId, request.generation }
+    )
+    if not request.handle then
+        settleReview(request, "outcome_unknown", "fetch_rejected", false)
+        return false, "fetch_rejected"
+    end
+    return true, reviewTransactionId
+end
+
+function Gateway.reviewOutcome(reviewTransactionId)
+    return Gateway.reviewOutcomes[reviewTransactionId]
 end
 
 validPort = function(port)

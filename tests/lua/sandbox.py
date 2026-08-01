@@ -194,6 +194,34 @@ class MtaSandbox:
     def handlers(self, event: str) -> list[Any]:
         return list(self._handlers.get(event, []))
 
+    # ----------------------------------------------------------------- http
+
+    def complete_fetch(
+        self,
+        index: int = -1,
+        *,
+        body: str = "",
+        status: int = 200,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        """Deliver a response to a recorded `fetchRemote` call."""
+        fetch = self.recorder.remote_fetches[index]
+        callback = fetch["callback"]
+        if callback is None:
+            raise LuaError("fetchRemote was called without a callback")
+        info = self.lua.table_from(
+            {
+                "statusCode": status,
+                "success": status == 200,
+                "headers": self.lua.table_from(
+                    headers
+                    if headers is not None
+                    else {"Content-Type": "application/json; charset=utf-8"}
+                ),
+            }
+        )
+        callback(body, info, *fetch["args"])
+
     # --------------------------------------------------------------- globals
 
     def _install_globals(self) -> None:
@@ -392,17 +420,32 @@ class MtaSandbox:
         g.getResourceRootElement = lambda _resource=None: resource_root
 
         # --- http -----------------------------------------------------------
-        def fetch_remote(url: str, options: Any = None, *args: Any) -> bool:
+        def fetch_remote(
+            url: str,
+            options: Any = None,
+            callback: Any = None,
+            callback_args: Any = None,
+        ) -> Any:
+            # MTA forwards the callback-arguments table by iterating it with
+            # lua_next, so record the values the same way.
+            forwarded: tuple[Any, ...] = ()
+            if lua_type(callback_args) == "table":
+                forwarded = tuple(callback_args[key] for key in callback_args.keys())
+            handle = object()
+            self._elements.add(id(handle))
             self.recorder.remote_fetches.append(
                 {
                     "url": str(url),
                     "options": self._from_lua(options),
-                    "args": tuple(args),
+                    "callback": callback,
+                    "args": forwarded,
+                    "handle": handle,
                 }
             )
-            return True
+            return handle
 
         g.fetchRemote = fetch_remote
+        g.abortRemoteRequest = lambda _handle=None: True
 
     # ------------------------------------------------------------ conversion
 

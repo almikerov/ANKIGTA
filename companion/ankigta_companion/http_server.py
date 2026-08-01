@@ -20,6 +20,7 @@ from .contract import (
 )
 from .cards import CardPickerError, CardPickerService
 from .collection_identity import AnkiCardIdentity
+from .review import ReviewCoordinator, ReviewError
 from .session import SessionCoordinator, SessionError
 
 HEALTH_PATH = "/v1/health"
@@ -32,6 +33,7 @@ SESSION_STOP_PATH = "/v1/session/stop"
 SESSION_CANCEL_PATH = "/v1/session/cancel"
 SESSION_ADMIT_PATH = "/v1/session/admit"
 SESSION_RESTORE_PATH = "/v1/session/restore"
+REVIEW_RATE_PATH = "/v1/review/rate"
 MAX_CONTROL_BYTES = 2 * 1024 * 1024
 MAX_READ_WORKERS = 4
 MAX_PENDING_READS = 4
@@ -100,6 +102,30 @@ def _parse_identity(request: object) -> AnkiCardIdentity:
     return AnkiCardIdentity(collection_uuid, card_id)
 
 
+def _parse_transaction_id(request: object) -> str:
+    if not isinstance(request, dict):
+        raise SessionError("invalid_session_request", "request body must be an object")
+    value = request.get("reviewTransactionId")
+    if not isinstance(value, str) or not value:
+        raise SessionError(
+            "invalid_session_request",
+            "reviewTransactionId must be a non-empty string",
+        )
+    return value
+
+
+def _parse_rating(request: object) -> str:
+    if not isinstance(request, dict):
+        raise SessionError("invalid_session_request", "request body must be an object")
+    value = request.get("rating")
+    if not isinstance(value, str) or not value:
+        raise SessionError(
+            "invalid_session_request",
+            "rating must be a non-empty string",
+        )
+    return value
+
+
 class BoundedHTTPServer(HTTPServer):
     request_queue_size = LISTEN_BACKLOG
 
@@ -160,11 +186,13 @@ class HealthServer:
         token: str | None = None,
         card_picker: CardPickerService | None = None,
         session_coordinator: SessionCoordinator | None = None,
+        review_coordinator: ReviewCoordinator | None = None,
     ) -> None:
         self._observe = observe
         self._token = token or None
         self._card_picker = card_picker
         self._session = session_coordinator
+        self._review = review_coordinator
         self._server = BoundedHTTPServer(
             (self.host, port),
             self._handler_type(),
@@ -184,6 +212,7 @@ class HealthServer:
         token = self._token
         card_picker = self._card_picker
         session = self._session
+        review = self._review
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self) -> None:
@@ -365,6 +394,58 @@ class HealthServer:
                             ),
                         )
                         return
+                    self._write_json(status, response)
+                    return
+                if self.path == REVIEW_RATE_PATH:
+                    if review is None:
+                        unavailable = ContractError(
+                            "review_unavailable",
+                            "Review Transactions are unavailable",
+                            request_id,
+                        )
+                        self._write_json(503, error_response(unavailable))
+                        return
+                    try:
+                        outcome = review.rate(
+                            _parse_transaction_id(request),
+                            _parse_identity(request),
+                            _parse_rating(request),
+                        )
+                    except (ReviewError, SessionError) as error:
+                        rating_status = {
+                            "invalid_transaction": 400,
+                            "invalid_rating": 400,
+                            "invalid_session_request": 400,
+                        }.get(error.category, 409)
+                        self._write_json(
+                            rating_status,
+                            error_response(
+                                ContractError(
+                                    error.category,
+                                    error.message,
+                                    request_id,
+                                )
+                            ),
+                        )
+                        return
+                    status, response = session_response(
+                        request_id,
+                        {
+                            "review": {
+                                "reviewTransactionId": (
+                                    outcome.review_transaction_id
+                                ),
+                                "collectionUuid": (
+                                    outcome.identity.collection_uuid
+                                ),
+                                "cardId": outcome.identity.card_id,
+                                "rating": outcome.rating,
+                                "state": outcome.state,
+                                "replayed": outcome.replayed,
+                                "reason": outcome.reason,
+                            },
+                        },
+                    )
                     self._write_json(status, response)
                     return
                 if self.path in {

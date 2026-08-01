@@ -435,6 +435,14 @@ class SessionCoordinator:
             self._admitted = identity
         return AdmissionResult(identity=identity, admitted=True)
 
+    def admitted_identity(self) -> AnkiCardIdentity | None:
+        """The card currently admitted as scheduler-top, if any."""
+        with self._lock:
+            return self._admitted
+
+    def scheduler_top(self) -> AnkiCardIdentity | None:
+        return self._backend.scheduler_top()
+
     def restore(self) -> bool:
         """Rebuild the full session membership after an admission finishes."""
         with self._lock:
