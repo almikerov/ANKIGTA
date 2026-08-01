@@ -135,6 +135,7 @@ class MtaSandbox:
         self.vehicle_occupants: dict[int, Any] = {}
         self.moved: list[dict[str, Any]] = []
         self.world_elements: list[Any] = []
+        self.blips: list[Any] = []
         self.position_read_fails = False
         self.vanish_after_position_read: Any = None
         self._install_globals()
@@ -647,6 +648,15 @@ class MtaSandbox:
         g.getElementData = lambda element, key, *_rest: (
             element[str(key)] if lua_type(element) == "table" else False
         )
+        def create_blip(x: float, y: float, z: float, *_rest: Any) -> Any:
+            blip = self.lua.table_from(
+                {"__element": True, "type": "blip", "x": x, "y": y, "z": z}
+            )
+            self.blips.append(blip)
+            return blip
+
+        g.createBlip = create_blip
+        g.dxDrawMaterialLine3D = lambda *_a, **_k: True
         g.setBrowserVolume = set_browser_volume
         g.setWorldSoundEnabled = set_world_sound_enabled
         g.focusBrowser = lambda _browser=None: True

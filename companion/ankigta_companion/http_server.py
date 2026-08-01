@@ -37,6 +37,7 @@ SESSION_RESTORE_PATH = "/v1/session/restore"
 REVIEW_RATE_PATH = "/v1/review/rate"
 RENDER_ISSUE_PATH = "/v1/render/issue"
 RENDER_CLOSE_PATH = "/v1/render/close"
+CARD_STATES_PATH = "/v1/cards/states"
 MAX_CONTROL_BYTES = 2 * 1024 * 1024
 MAX_READ_WORKERS = 4
 MAX_PENDING_READS = 4
@@ -412,6 +413,47 @@ class HealthServer:
                             ),
                         )
                         return
+                    self._write_json(status, response)
+                    return
+                if self.path == CARD_STATES_PATH:
+                    if card_picker is None:
+                        unavailable = ContractError(
+                            "card_picker_unavailable",
+                            "card states are unavailable",
+                            request_id,
+                        )
+                        self._write_json(503, error_response(unavailable))
+                        return
+                    try:
+                        identities = _parse_identities(request)
+                    except SessionError as error:
+                        self._write_json(
+                            400,
+                            error_response(
+                                ContractError(
+                                    error.category,
+                                    error.message,
+                                    request_id,
+                                )
+                            ),
+                        )
+                        return
+                    states: dict[str, str] = {}
+                    for identity in identities:
+                        try:
+                            view = card_picker.read_identity(identity)
+                        except CardPickerError:
+                            # A card ANKIGTA cannot read is simply not
+                            # reported; the counter treats absence as "no
+                            # basis to count" rather than guessing.
+                            continue
+                        states[
+                            f"{identity.collection_uuid}/{identity.card_id}"
+                        ] = view.state.value
+                    status, response = session_response(
+                        request_id,
+                        {"cardStates": states},
+                    )
                     self._write_json(status, response)
                     return
                 if self.path in {RENDER_ISSUE_PATH, RENDER_CLOSE_PATH}:
