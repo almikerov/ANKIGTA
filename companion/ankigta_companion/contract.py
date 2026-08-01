@@ -7,6 +7,7 @@ from .collection_identity import (
     CollectionIdentityObservation,
     CollectionIdentityState,
 )
+from .cards import CardSearchPage, CardView
 
 
 PROTOCOL_NAME = "ankigta-control"
@@ -91,6 +92,7 @@ def error_response(error: ContractError) -> dict[str, object]:
 def health_response(
     request_id: str,
     observation: RuntimeObservation,
+    study: dict[str, object] | None = None,
 ) -> tuple[int, dict[str, object]]:
     compatibility_reasons: list[str] = []
     if observation.anki_version != SUPPORTED_ANKI_VERSION:
@@ -154,15 +156,21 @@ def health_response(
     else:
         status = 409
 
-    study: dict[str, object] = {
-        "sessionActive": False,
-        "ratingEnabled": False,
-    }
+    study_payload: dict[str, object] = (
+        dict(study)
+        if study is not None
+        else {
+            "sessionActive": False,
+            "ratingEnabled": False,
+            "filteredDeckCreated": False,
+            "reviewModeOpened": False,
+        }
+    )
     if (
         identity is not None
         and identity.state is not CollectionIdentityState.BOUND
     ):
-        study.update(
+        study_payload.update(
             {
                 "paused": True,
                 "pausedReason": identity.state.value,
@@ -183,6 +191,71 @@ def health_response(
             },
             "collection": collection,
             "compatibility": compatibility,
-            "study": study,
+            "study": study_payload,
         },
+    }
+
+
+def card_view_payload(card: CardView) -> dict[str, object]:
+    return {
+        "identity": {
+            "collectionUuid": card.identity.collection_uuid,
+            "cardId": card.identity.card_id,
+        },
+        "deck": {
+            "id": card.deck_id,
+            "name": card.deck_name,
+        },
+        "state": card.state.value,
+        "due": card.due,
+        "tags": list(card.tags),
+    }
+
+
+def card_search_response(
+    request_id: str,
+    page: CardSearchPage,
+) -> tuple[int, dict[str, object]]:
+    return 200, {
+        "protocol": PROTOCOL_NAME,
+        "protocolVersion": PROTOCOL_VERSION,
+        "requestId": request_id,
+        "ok": True,
+        "error": None,
+        "payload": {
+            "cards": [card_view_payload(card) for card in page.cards],
+            "page": page.page,
+            "pageSize": page.page_size,
+            "total": page.total,
+            "query": page.query,
+            "deckFilter": page.deck_filter,
+        },
+    }
+
+
+def card_read_response(
+    request_id: str,
+    card: CardView,
+) -> tuple[int, dict[str, object]]:
+    return 200, {
+        "protocol": PROTOCOL_NAME,
+        "protocolVersion": PROTOCOL_VERSION,
+        "requestId": request_id,
+        "ok": True,
+        "error": None,
+        "payload": {"card": card_view_payload(card)},
+    }
+
+
+def session_response(
+    request_id: str,
+    payload: dict[str, object],
+) -> tuple[int, dict[str, object]]:
+    return 200, {
+        "protocol": PROTOCOL_NAME,
+        "protocolVersion": PROTOCOL_VERSION,
+        "requestId": request_id,
+        "ok": True,
+        "error": None,
+        "payload": payload,
     }

@@ -6,7 +6,7 @@
 
 **Status:** resolved
 
-**Environment boundary:** Do not launch or access installed MTA/GTA. Use repository-local tests, keep the manual runtime checklist `not run`, and require separate user authorization for runtime validation.
+**Environment boundary:** Follow `AGENTS.md` and `docs/agents/mta-gta-reference-policy.md`. Verify programmatically — launching disposable copies is allowed, driving a GUI with screenshots or synthetic input is not, and the installed MTA/GTA tree stays unmodified. Acceptance that only a human can observe stays a manual checklist marked `not run`.
 
 ## Acceptance criteria
 

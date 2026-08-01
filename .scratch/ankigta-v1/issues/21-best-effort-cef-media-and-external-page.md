@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**Environment boundary:** Follow `AGENTS.md` and `docs/agents/mta-gta-reference-policy.md`. Verify programmatically — launching disposable copies is allowed, driving a GUI with screenshots or synthetic input is not, and the installed MTA/GTA tree stays unmodified. Acceptance that only a human can observe stays a manual checklist marked `not run`.
+
 ## Acceptance criteria
 
 - [ ] Card HTML/CSS/JavaScript/media references передаются без намеренного удаления/обрезки; pixel/behavioral equivalence с Anki не обещается.
@@ -20,7 +22,7 @@
 
 ## Tests
 
-- [ ] Real-MTA corpus smoke: HTML/CSS/JS, local media, audio, missing/broken media/template.
+- [ ] Repository-local corpus harness plus a manual MTA CEF HTML/CSS/JS/media/audio checklist left `not run`.
 - [ ] External resource/navigation/return and popup tests.
 - [ ] Focus, resource restart and cleanup lifecycle tests.
 - [ ] Negative privileged-dispatch test.
@@ -31,4 +33,3 @@
 - Companion rendering/media.
 - Review Mode warnings and return action.
 - Client audio settings.
-

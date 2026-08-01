@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**Environment boundary:** Follow `AGENTS.md` and `docs/agents/mta-gta-reference-policy.md`. Verify programmatically — launching disposable copies is allowed, driving a GUI with screenshots or synthetic input is not, and the installed MTA/GTA tree stays unmodified. Acceptance that only a human can observe stays a manual checklist marked `not run`.
+
 ## Acceptance criteria
 
 - [ ] Statistics count unique Anki Card Identity, not number of Spatial Link.
@@ -21,11 +23,10 @@
 
 - [ ] Scheduler-state/statistics matrix and duplicate-link tests.
 - [ ] Active Map Set and status refresh tests.
-- [ ] Real-MTA indicator mode, nearest target and overlap visual behavior tests.
+- [ ] Repository-local indicator/state tests plus a manual MTA visual-behavior checklist left `not run`.
 
 ## Components
 
 - Companion statistics query.
 - Server aggregation/next-target selection.
 - MTA Statistics HUD, Minimap Blip and sphere renderer.
-

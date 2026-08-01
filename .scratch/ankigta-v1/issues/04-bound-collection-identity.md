@@ -6,6 +6,8 @@
 
 **Status:** resolved
 
+**Environment boundary:** Follow `AGENTS.md` and `docs/agents/mta-gta-reference-policy.md`. Verify programmatically — launching disposable copies is allowed, driving a GUI with screenshots or synthetic input is not, and the installed MTA/GTA tree stays unmodified. Acceptance that only a human can observe stays a manual checklist marked `not run`.
+
 ## Acceptance criteria
 
 - [x] Collection UUID создаётся атомарно в collection config и переживает restart и profile rename.

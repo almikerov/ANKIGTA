@@ -1,0 +1,10 @@
+<def name="ANKIGTA map identity">
+    <element
+        name="ankigta_map_identity"
+        friendlyname="ANKIGTA map identity"
+        instructions="Persistent ANKIGTA map identity. Save with the stock Map Editor."
+    >
+        <data name="ankigtaMapId" type="string" required="true" default="" />
+        <object editorOnly="true" model="1337" posZ="-1000" />
+    </element>
+</def>

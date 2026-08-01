@@ -1,21 +1,32 @@
-<meta>
+<meta xmlns:edf="urn:mta:edf">
     <info
         author="ANKIGTA"
         name="ANKIGTA"
         version="0.1.0"
         type="script"
+        edf:definition="ankigta.edf"
     />
     <min_mta_version server="1.6.0-9.24124.0" client="1.6.0-9.24124.0" />
     <script src="server/connection_config.lua" type="server" />
     <script src="server/companion.lua" type="server" />
     <script src="server/store.lua" type="server" />
+    <script src="server/map_identity.lua" type="server" />
     <script src="server/main.lua" type="server" />
     <script src="client/connection_status.lua" type="client" cache="false" />
     <script src="client/connection_settings.lua" type="client" cache="false" />
+    <script src="client/study.lua" type="client" cache="false" />
     <script src="client/f7.lua" type="client" cache="false" />
+    <script src="client/pick_entity.lua" type="client" cache="false" />
     <map src="maps/ticket05.map" dimension="0" />
+    <map src="maps/ticket07-matrix.map" dimension="0" />
     <export function="requestCompanionHealth" type="server" />
+    <export function="requestCompanionCardPicker" type="server" />
     <export function="connectCompanion" type="server" />
     <export function="getCompanionConnectionStatus" type="server" />
     <export function="getStoreStatus" type="server" />
+    <export function="prepareObjectPendingMapSave" type="server" />
+    <export function="prepareVehiclePendingMapSave" type="server" />
+    <export function="preparePedPendingMapSave" type="server" />
+    <export function="linkCardToEntity" type="server" />
+    <export function="resolveMapCopyDecision" type="server" />
 </meta>

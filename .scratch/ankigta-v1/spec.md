@@ -61,6 +61,14 @@ operations или постоянный connection token.
 тесты ниже этой границы используются только для детерминированного внедрения
 сбоев, проверки durable recovery и валидации протокола.
 
+Обычные implementation/review chats не имеют права запускать или изменять
+установленный MTA/GTA. Они работают внутри repository, используют отдельное
+read-only дерево MTA source и официальные manuals, создают repository-local
+tests/harnesses и готовят manual runtime checklist. Выполнение настоящего MTA,
+GTA, Map Editor или CEF runtime является отдельной явно разрешённой
+пользователем validation-задачей; без неё соответствующий результат остаётся
+`not run`, а не объявляется passed.
+
 ## User Stories
 
 1. As a Study Player, I want ANKIGTA features to be available only to my
@@ -1025,13 +1033,32 @@ operations или постоянный connection token.
     A ticket may implement the relevant seam, but the dependent production path
     remains disabled until its gate passes.
 
+19. **MTA/GTA implementation boundary**
+
+    Implementation and code-review agents must obey the repository
+    MTA/GTA reference-only policy. Installed MTA/GTA directories, processes,
+    configuration, logs, resources, registry state and user maps are outside
+    their writable and executable scope.
+
+    The provided MTA source tree is a concurrently used read-only reference:
+    only relevant files may be searched/read, with no edits, builds, tests,
+    generated caches or Git/worktree operations. Material source conclusions
+    retain per-file provenance and hashes.
+
+    Every ticket whose final acceptance mentions real MTA, Map Editor, CEF or
+    GTA must split verification into repository-local automated coverage and a
+    manual runtime checklist. Ordinary implementation leaves the latter
+    explicitly `not run`; only a separate user-authorized runtime validation
+    may execute it.
+
 ## Testing Decisions
 
 1. **Primary seam**
 
-   The highest-value suite drives a real Study Player through public UI/actions
-   while using a real supported Anki Desktop, MTA Server and MTA Client. Its
-   canonical tracer scenario is:
+   The final highest-value validation drives a real Study Player through public
+   UI/actions while using a supported Anki Desktop, MTA Server and MTA Client.
+   Implementation agents prepare its harness/checklist but do not execute
+   installed MTA/GTA. Its canonical tracer scenario is:
 
    `Map Entity → Spatial Link → verified Map Editor Save → Activation Zone →
    question → answer → rating → reconciled Anki result → updated next target`.
@@ -1072,21 +1099,23 @@ operations или постоянный connection token.
 
 5. **Map Editor identity suite**
 
-   On disposable maps/resources in real stock Map Editor, cover object, vehicle
-   and ped assignment, Save/read-back, close/reopen, move/model edit, rename,
-   clone, resource copy, Save As, unsaved close, interrupted save, duplicate
-   collision and manual `Проверить ещё раз`. Assert no background XML write and
-   never claim atomic/external-conflict guarantees.
+   Repository-local source-contract/fixture tests cover identity parsing,
+   collision handling and read-back orchestration. A separately authorized
+   manual stock Map Editor checklist covers object, vehicle and ped assignment,
+   Save/read-back, close/reopen, move/model edit, rename, clone, resource copy,
+   Save As, unsaved close, interrupted save, duplicate collision and
+   `Проверить ещё раз`. Until executed, its runtime result remains `not run`.
 
 6. **CEF/content suite**
 
-   Contract tests cover capability entropy/binding/expiry/revocation, GET/HEAD,
-   Range, retry budget, limits, missing media, uniform denial and four-request
-   backpressure. Real MTA smoke tests cover representative HTML/CSS/JavaScript,
-   local/external media, audio, render errors, external navigation, optional
-   return, focus, Esc, resource restart and cleanup. Pixel-perfect comparison is
-   explicitly not a pass criterion; rating controls remain enabled on errors
-   and External Card Page.
+   Repository-local contract/corpus tests cover capability
+   entropy/binding/expiry/revocation, GET/HEAD, Range, retry budget, limits,
+   missing media, uniform denial and four-request backpressure. A separately
+   authorized manual MTA CEF checklist covers representative
+   HTML/CSS/JavaScript, local/external media, audio, render errors, external
+   navigation, optional return, focus, Esc, resource restart and cleanup.
+   Pixel-perfect comparison is not a pass criterion; rating controls remain
+   enabled on errors and External Card Page.
 
 7. **MTA gameplay suite**
 
@@ -1125,8 +1154,10 @@ operations или постоянный connection token.
     No test may convert an unknown outcome into success by retrying a different
     logical rating, writing scheduling SQL, editing `.map` in the background,
     forcing Reviewer cleanup, binding externally or claiming unsupported CEF
-    isolation. A failed release gate disables only its dependent feature where
-    the spec defines a fallback; otherwise it blocks the supported build.
+    isolation. An unexecuted real-runtime checklist remains `not run` and is not
+    equivalent to failure or success. A failed release gate disables only its
+    dependent feature where the spec defines a fallback; otherwise it blocks
+    the supported build.
 
 ## Out of Scope
 

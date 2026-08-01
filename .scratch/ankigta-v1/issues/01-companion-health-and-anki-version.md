@@ -6,6 +6,8 @@
 
 **Status:** resolved
 
+**Environment boundary:** Follow `AGENTS.md` and `docs/agents/mta-gta-reference-policy.md`. Verify programmatically — launching disposable copies is allowed, driving a GUI with screenshots or synthetic input is not, and the installed MTA/GTA tree stays unmodified. Acceptance that only a human can observe stays a manual checklist marked `not run`.
+
 ## Acceptance criteria
 
 - [x] Add-on загружается штатным способом в Anki Desktop 26.05 на Windows и не изменяет коллекцию при запуске.

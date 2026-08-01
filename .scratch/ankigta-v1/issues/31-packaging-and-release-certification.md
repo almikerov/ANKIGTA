@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**Environment boundary:** Follow `AGENTS.md` and `docs/agents/mta-gta-reference-policy.md`. Verify programmatically — launching disposable copies is allowed, driving a GUI with screenshots or synthetic input is not, and the installed MTA/GTA tree stays unmodified. Acceptance that only a human can observe stays a manual checklist marked `not run`.
+
 ## Acceptance criteria
 
 - [ ] Documentation covers MTA resource install/update/remove, manual companion add-on install/update/remove, Bound collection setup, backups/recovery and supported versions.

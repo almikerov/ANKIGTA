@@ -6,6 +6,8 @@
 
 **Status:** resolved
 
+**Environment boundary:** Follow `AGENTS.md` and `docs/agents/mta-gta-reference-policy.md`. Verify programmatically — launching disposable copies is allowed, driving a GUI with screenshots or synthetic input is not, and the installed MTA/GTA tree stays unmodified. Acceptance that only a human can observe stays a manual checklist marked `not run`.
+
 ## Acceptance criteria
 
 - [x] Server SQLite создаётся с versioned schema и хранит одну Map Entity поддерживаемого типа с authored transform/world context.

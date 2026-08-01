@@ -4,13 +4,14 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from threading import Lock
-from typing import Protocol
+from typing import Protocol, cast
 
 from .collection_identity import (
     CollectionCopyDecision,
     CollectionIdentityObservation,
     CollectionIdentityService,
 )
+from .cards import CardPickerService, CollectionLike
 from .connection import CompanionConnectionManager
 from .contract import (
     CollectionObservation,
@@ -18,6 +19,7 @@ from .contract import (
     RuntimeObservation,
 )
 from .http_server import HealthServer
+from .session import SessionCoordinator
 
 
 class DeckConfiguration(Protocol):
@@ -93,12 +95,20 @@ class CompanionAddon:
         identity_service: CollectionIdentityService | None = None,
         connection_settings_path: Path | None = None,
         generate_connection_token: Callable[[], str] | None = None,
+        card_picker: CardPickerService | None = None,
+        session_coordinator: SessionCoordinator | None = None,
     ) -> None:
         self._main_window = main_window
         self._hooks = hooks
         self._anki_version = anki_version
         self._defer = defer
         self._identity_service = identity_service
+        effective_card_picker = card_picker
+        if effective_card_picker is None and identity_service is not None:
+            effective_card_picker = CardPickerService(
+                self.current_collection_identity,
+                lambda: cast(CollectionLike | None, self._main_window.col),
+            )
         self._observations = ObservationStore(
             RuntimeObservation(
                 anki_version=anki_version,
@@ -112,6 +122,8 @@ class CompanionAddon:
                 observe=self._observations.get,
                 settings_path=connection_settings_path,
                 generate_token=generate_connection_token,
+                card_picker=effective_card_picker,
+                session_coordinator=session_coordinator,
             )
             if connection_settings_path is not None
             else None
@@ -122,6 +134,8 @@ class CompanionAddon:
             else HealthServer(
                 self._observations.get,
                 port=port,
+                card_picker=effective_card_picker,
+                session_coordinator=session_coordinator,
             )
         )
         self._started = False

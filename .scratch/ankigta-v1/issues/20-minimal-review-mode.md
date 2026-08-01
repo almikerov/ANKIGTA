@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**Environment boundary:** Follow `AGENTS.md` and `docs/agents/mta-gta-reference-policy.md`. Verify programmatically — launching disposable copies is allowed, driving a GUI with screenshots or synthetic input is not, and the installed MTA/GTA tree stays unmodified. Acceptance that only a human can observe stays a manual checklist marked `not run`.
+
 ## Acceptance criteria
 
 - [ ] Review Mode opens question, explicitly reveals answer and shows Again/Hard/Good/Easy for scheduler-admitted card.
@@ -19,7 +21,7 @@
 
 ## Tests
 
-- [ ] Real-MTA question → answer → rating end-to-end test.
+- [ ] Repository-local Review Mode contract test plus a manual MTA question → answer → rating checklist left `not run`.
 - [ ] Esc, duplicate click, focus loss and Close after rating tests.
 - [ ] CEF/resource failure cleanup test.
 

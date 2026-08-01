@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**Environment boundary:** Follow `AGENTS.md` and `docs/agents/mta-gta-reference-policy.md`. Verify programmatically — launching disposable copies is allowed, driving a GUI with screenshots or synthetic input is not, and the installed MTA/GTA tree stays unmodified. Acceptance that only a human can observe stays a manual checklist marked `not run`.
+
 ## Acceptance criteria
 
 - [ ] Available Runtime Instance uses one consistent current position/interior/dimension snapshot.
@@ -18,7 +20,7 @@
 
 ## Tests
 
-- [ ] Real-MTA object/vehicle/ped available and destroyed teleport tests.
+- [ ] Repository-local runtime-state simulation plus a manual MTA object/vehicle/ped teleport checklist left `not run`.
 - [ ] Driver/passenger and cross-interior/dimension tests.
 - [ ] Destruction/reappearance/state-race tests.
 
@@ -27,4 +29,3 @@
 - Server Map Entity/Runtime Instance registry.
 - MTA teleport command.
 - Vehicle/passenger handling.
-

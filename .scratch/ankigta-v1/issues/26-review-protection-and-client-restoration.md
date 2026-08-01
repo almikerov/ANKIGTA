@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**Environment boundary:** Follow `AGENTS.md` and `docs/agents/mta-gta-reference-policy.md`. Verify programmatically — launching disposable copies is allowed, driving a GUI with screenshots or synthetic input is not, and the installed MTA/GTA tree stays unmodified. Acceptance that only a human can observe stays a manual checklist marked `not run`.
+
 ## Acceptance criteria
 
 - [ ] Review Protection and Disable player controls are independent and default enabled.
@@ -18,7 +20,7 @@
 
 ## Tests
 
-- [ ] Real-MTA damage/event coverage for player and occupied vehicle.
+- [ ] Source-contract/event simulation plus a manual MTA damage-coverage checklist left `not run`.
 - [ ] Pre-disabled controls/muted audio snapshot restoration tests.
 - [ ] CEF/resource/disconnect crash cleanup tests.
 
@@ -27,4 +29,3 @@
 - MTA client Review Mode state restoration.
 - Server/client Review Protection.
 - Input/audio/camera adapters.
-

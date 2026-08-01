@@ -1,0 +1,36 @@
+<map>
+    <object
+        id="ticket07-object"
+        model="1337"
+        posX="10"
+        posY="20"
+        posZ="3"
+        rotX="0"
+        rotY="0"
+        rotZ="0"
+        interior="0"
+        dimension="0"
+    />
+    <vehicle
+        id="ticket07-vehicle"
+        model="411"
+        posX="12"
+        posY="20"
+        posZ="3"
+        rotX="0"
+        rotY="0"
+        rotZ="90"
+        interior="0"
+        dimension="0"
+    />
+    <ped
+        id="ticket07-ped"
+        model="7"
+        posX="14"
+        posY="20"
+        posZ="3"
+        rotZ="180"
+        interior="0"
+        dimension="0"
+    />
+</map>

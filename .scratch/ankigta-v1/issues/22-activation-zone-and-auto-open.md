@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**Environment boundary:** Follow `AGENTS.md` and `docs/agents/mta-gta-reference-policy.md`. Verify programmatically — launching disposable copies is allowed, driving a GUI with screenshots or synthetic input is not, and the installed MTA/GTA tree stays unmodified. Acceptance that only a human can observe stays a manual checklist marked `not run`.
+
 ## Acceptance criteria
 
 - [ ] New Map Entity copies current global radius default 3 m; range 0.5–50 m, step 0.5 m, invalid/zero rejected without clamping.
@@ -19,7 +21,7 @@
 
 ## Tests
 
-- [ ] Real-MTA moving vehicle/ped/object and destruction tests.
+- [ ] Repository-local spatial simulation plus a manual MTA moving vehicle/ped/object/destruction checklist left `not run`.
 - [ ] Radius/delay/speed boundary and nearest-target race tests.
 - [ ] Interior/dimension change and review-in-progress tests.
 
@@ -29,4 +31,3 @@
 - MTA client Activation Zone visualization/detection.
 - Automatic-open coordinator.
 - Review Mode integration.
-

@@ -17,7 +17,9 @@ from .connection_config import (
     ConnectionConfigError,
 )
 from .contract import RuntimeObservation
+from .cards import CardPickerService
 from .http_server import HealthServer
+from .session import SessionCoordinator
 
 
 @dataclass
@@ -39,12 +41,16 @@ class CompanionConnectionManager:
         observe: Callable[[], RuntimeObservation],
         settings_path: Path,
         generate_token: Callable[[], str] | None = None,
+        card_picker: CardPickerService | None = None,
+        session_coordinator: SessionCoordinator | None = None,
     ) -> None:
         self._observe = observe
         self._settings_path = settings_path
         self._generate_token = generate_token or (
             lambda: secrets.token_urlsafe(32)
         )
+        self._card_picker = card_picker
+        self._session_coordinator = session_coordinator
         self._settings: _ConnectionSettings | None = None
         self._server: HealthServer | None = None
         self._started = False
@@ -72,19 +78,11 @@ class CompanionConnectionManager:
         port, token = self._effective_connection(settings)
         port_changed = False
         try:
-            self._server = HealthServer(
-                self._observe,
-                port=port,
-                token=token,
-            )
+            self._server = self._new_server(port, token)
         except OSError:
             if settings.mode is ConnectionMode.MANUAL:
                 raise
-            self._server = HealthServer(
-                self._observe,
-                port=0,
-                token=token,
-            )
+            self._server = self._new_server(0, token)
             settings.automatic_port = self._server.port
             settings.revision += 1
             port_changed = True
@@ -271,11 +269,7 @@ class CompanionConnectionManager:
     def _switch_listener(self, port: int, token: str) -> None:
         old_server = self.server
         if port != old_server.port:
-            new_server = HealthServer(
-                self._observe,
-                port=port,
-                token=token,
-            )
+            new_server = self._new_server(port, token)
             new_server.start()
             self._server = new_server
             old_server.stop()
@@ -283,24 +277,26 @@ class CompanionConnectionManager:
 
         old_server.stop()
         try:
-            new_server = HealthServer(
-                self._observe,
-                port=port,
-                token=token,
-            )
+            new_server = self._new_server(port, token)
         except BaseException:
-            restored = HealthServer(
-                self._observe,
-                port=port,
-                token=self._effective_connection(
-                    self._required_settings()
-                )[1],
+            restored = self._new_server(
+                port,
+                self._effective_connection(self._required_settings())[1],
             )
             restored.start()
             self._server = restored
             raise
         new_server.start()
         self._server = new_server
+
+    def _new_server(self, port: int, token: str) -> HealthServer:
+        return HealthServer(
+            self._observe,
+            port=port,
+            token=token,
+            card_picker=self._card_picker,
+            session_coordinator=self._session_coordinator,
+        )
 
     def _restore_connection(self, settings: _ConnectionSettings) -> None:
         self._settings = settings
