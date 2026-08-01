@@ -7,6 +7,12 @@ from threading import Event, Lock
 from typing import Protocol
 
 from .cards import CardState, CardView
+from .eligibility import (
+    DailyLimitQuery,
+    Eligibility,
+    EligibilitySettings,
+    classify,
+)
 from .collection_identity import AnkiCardIdentity, CollectionIdentityState
 from .contract import RuntimeObservation
 
@@ -184,6 +190,9 @@ class AnkiFilteredDeckBackend:
             return
         self._empty(deck_id)
         self._delete(deck_id)
+        # Drop the ownership marker with the deck. Leaving it behind would make
+        # ANKIGTA claim a future deck that happened to reuse this id.
+        self._set_config(None)
 
     def scheduler_top(self) -> AnkiCardIdentity | None:
         card_id = self._top_card_id()
@@ -191,7 +200,6 @@ class AnkiFilteredDeckBackend:
         if card_id is None or not collection_uuid or card_id <= 0:
             return None
         return AnkiCardIdentity(collection_uuid, card_id)
-        self._set_config(None)
 
     def _find_deck_id(self, name: str) -> int | None:
         decks = getattr(self._collection, "decks", None)
@@ -272,6 +280,9 @@ class AdmissionResult:
     identity: AnkiCardIdentity
     admitted: bool
     reason: str | None = None
+    #: Things true of the card that the player should be told, such as an
+    #: early review or a new card beyond the source deck's daily limit.
+    warnings: tuple[str, ...] = ()
 
     @property
     def preview_only(self) -> bool:
@@ -294,6 +305,8 @@ class SessionCoordinator:
         timeout_seconds: float = REBUILD_TIMEOUT_SECONDS,
         reviewer_guard: Callable[[], bool] | None = None,
         unresolved_transaction: Callable[[], bool] | None = None,
+        beyond_daily_limit: DailyLimitQuery | None = None,
+        early_review_supported: bool = True,
     ) -> None:
         self._observe = observe
         self._read_card = read_card
@@ -301,6 +314,8 @@ class SessionCoordinator:
         self._timeout_seconds = timeout_seconds
         self._reviewer_guard = reviewer_guard or (lambda: False)
         self._unresolved_transaction = unresolved_transaction or (lambda: False)
+        self._beyond_daily_limit = beyond_daily_limit
+        self._early_review_supported = early_review_supported
         self._lock = Lock()
         self._status = SessionStatus(
             session_active=False,
@@ -313,6 +328,7 @@ class SessionCoordinator:
         )
         self._cancel = Event()
         self._admitted: AnkiCardIdentity | None = None
+        self._last_admission_warnings: tuple[str, ...] = ()
         self._full_membership: tuple[int, ...] = ()
 
     def status(self) -> SessionStatus:
@@ -346,10 +362,7 @@ class SessionCoordinator:
             if card is None:
                 skipped.append(identity)
                 continue
-            if card.state in {CardState.SUSPENDED, CardState.BURIED}:
-                skipped.append(identity)
-                continue
-            if card.state is CardState.NOT_DUE and not allow_early_review:
+            if not self._eligibility(card, allow_early_review).automatic:
                 skipped.append(identity)
                 continue
             eligible.append(identity)
@@ -433,7 +446,11 @@ class SessionCoordinator:
 
         with self._lock:
             self._admitted = identity
-        return AdmissionResult(identity=identity, admitted=True)
+        return AdmissionResult(
+            identity=identity,
+            admitted=True,
+            warnings=self._last_admission_warnings,
+        )
 
     def admitted_identity(self) -> AnkiCardIdentity | None:
         """The card currently admitted as scheduler-top, if any."""
@@ -506,18 +523,20 @@ class SessionCoordinator:
         card = self._read_card(identity.card_id)
         if card is None:
             raise SessionError("card_missing", "card no longer exists in Anki")
-        if card.state in {CardState.SUSPENDED, CardState.BURIED}:
-            # Prototype 0002 S7: Anki refuses these even for an exact request,
-            # so refuse before touching the deck rather than after.
-            raise SessionError(
-                "card_unavailable",
-                f"card is {card.state.value} and cannot be rated",
-            )
-        if card.state is CardState.NOT_DUE and not allow_early_review:
+        eligibility = self._eligibility(card, allow_early_review)
+        if not eligibility.rateable:
+            if card.state in {CardState.SUSPENDED, CardState.BURIED}:
+                # Prototype 0002 S7: Anki refuses these even for an exact
+                # request, so refuse before touching the deck rather than after.
+                raise SessionError(
+                    "card_unavailable",
+                    f"card is {card.state.value} and cannot be rated",
+                )
             raise SessionError(
                 "early_review_disabled",
                 "card is not due; enable early review to rate it",
             )
+        self._last_admission_warnings = eligibility.warnings
 
     def pause(self) -> PauseResult:
         current = self.status()
@@ -608,6 +627,17 @@ class SessionCoordinator:
                 },
                 key=lambda value: (value.collection_uuid, value.card_id),
             )
+        )
+
+    def _eligibility(self, card: CardView, allow_early_review: bool) -> Eligibility:
+        """The single rule that decides what may be done with a card."""
+        return classify(
+            card,
+            EligibilitySettings(
+                allow_early_review=allow_early_review,
+                early_review_supported=self._early_review_supported,
+            ),
+            self._beyond_daily_limit,
         )
 
     def _identity_matches_bound_collection(self, identity: AnkiCardIdentity) -> bool:

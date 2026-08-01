@@ -13,6 +13,40 @@ from .collection_identity import (
 )
 
 
+# Anki 26.05 `anki.consts` queue values, restated so the mapping below reads as
+# the source does rather than as bare numbers.
+QUEUE_TYPE_MANUALLY_BURIED = -3
+QUEUE_TYPE_SIBLING_BURIED = -2
+QUEUE_TYPE_SUSPENDED = -1
+QUEUE_TYPE_NEW = 0
+QUEUE_TYPE_LRN = 1
+QUEUE_TYPE_REV = 2
+QUEUE_TYPE_DAY_LEARN_RELEARN = 3
+QUEUE_TYPE_PREVIEW = 4
+
+
+def card_state(queue: int, due: int, today: int) -> CardState:
+    """Map an Anki queue value to the state ANKIGTA reasons about.
+
+    Both buried queues must be recognised. A manually buried card once fell
+    through to REVIEW here, which would have let it into a session and been
+    rated -- exactly what burying is meant to prevent.
+    """
+    if queue == QUEUE_TYPE_SUSPENDED:
+        return CardState.SUSPENDED
+    if queue in {QUEUE_TYPE_SIBLING_BURIED, QUEUE_TYPE_MANUALLY_BURIED}:
+        return CardState.BURIED
+    if queue == QUEUE_TYPE_NEW:
+        return CardState.NEW
+    if queue in {QUEUE_TYPE_LRN, QUEUE_TYPE_DAY_LEARN_RELEARN}:
+        return CardState.LEARNING
+    if queue == QUEUE_TYPE_REV:
+        return CardState.NOT_DUE if due > today else CardState.REVIEW
+    # Anki's own preview queue, and anything this build does not recognise:
+    # not a due review, and never assumed rateable.
+    return CardState.NOT_DUE
+
+
 class CardPickerError(ValueError):
     """A safe, user-visible Card Picker failure."""
 
@@ -280,17 +314,7 @@ class CardPickerService:
         )
 
     def _state(self, queue: int, due: int) -> CardState:
-        if queue == -1:
-            return CardState.SUSPENDED
-        if queue == -2:
-            return CardState.BURIED
-        if queue == 0:
-            return CardState.NEW
-        if queue == 1:
-            return CardState.LEARNING
-        if queue == 2 and due > self._today():
-            return CardState.NOT_DUE
-        return CardState.REVIEW
+        return card_state(queue, due, self._today())
 
     def _deck_name(self, collection: CollectionLike, deck_id: int) -> str | None:
         try:

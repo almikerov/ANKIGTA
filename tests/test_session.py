@@ -222,6 +222,9 @@ def test_anki_backend_uses_owner_marker_and_scheduler_operations() -> None:
             self.names.append((name, 7))
             return 7
 
+        def remove(self, deck_id: int) -> None:
+            self.names = [item for item in self.names if item[1] != deck_id]
+
     class Collection:
         def __init__(self) -> None:
             self.decks = Decks()
@@ -246,13 +249,19 @@ def test_anki_backend_uses_owner_marker_and_scheduler_operations() -> None:
         def rebuild(self, deck_id: int, card_ids: tuple[int, ...]) -> None:
             self.rebuilt.append((deck_id, card_ids))
 
+        def delete_deck(self, deck_id: int) -> None:
+            # A real delete removes the deck, so the fake must too; otherwise
+            # post-cleanup lookups pass for the wrong reason.
+            self.deleted.append(deck_id)
+            self.decks.remove(deck_id)
+
     collection = Collection()
     backend = AnkiFilteredDeckBackend(
         collection,
         create_filtered_deck=collection.decks.create_filtered,
         rebuild_filtered_deck=collection.rebuild,
         empty_filtered_deck=collection.emptied.append,
-        delete_filtered_deck=collection.deleted.append,
+        delete_filtered_deck=collection.delete_deck,
     )
 
     assert backend.inspect(FILTERED_DECK_NAME) is None
@@ -267,6 +276,10 @@ def test_anki_backend_uses_owner_marker_and_scheduler_operations() -> None:
     backend.cleanup(FILTERED_DECK_NAME)
     assert collection.emptied == [7]
     assert collection.deleted == [7]
+    # The ownership marker must go with the deck; a stale one would make
+    # ANKIGTA claim a future deck that reused this id.
+    assert collection.config[AnkiFilteredDeckBackend.OWNER_CONFIG_KEY] is None
+    assert backend.inspect(FILTERED_DECK_NAME) is None
 
 
 def test_session_control_requires_explicit_start_and_reports_health_state() -> None:
