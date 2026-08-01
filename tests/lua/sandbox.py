@@ -320,10 +320,10 @@ class MtaSandbox:
         self._real_time = float(time.time())
         self._connections: list[_Connection] = []
         self._elements: set[int] = set()
-        self._handlers: dict[str, list[Any]] = {}
-        #: Handlers paired with the element they were attached to, so a click
-        #: can be delivered to one control rather than to every listener.
-        self._attachments: dict[str, list[tuple[Any, Any]]] = {}
+        #: event name -> (element it was attached to, handler), in
+        #: registration order. The element is kept so a click can be delivered
+        #: to one control rather than to every listener of the event.
+        self._handlers: dict[str, list[tuple[Any, Any]]] = {}
         self._exports: dict[str, Any] = {}
         # The resource directory. A caller that named a database file gets that
         # file's directory, so `ankigta.sqlite` resolves to the path it passed.
@@ -465,8 +465,27 @@ class MtaSandbox:
         player, and leaves it nil otherwise -- server code checks that global to
         tell a remote request from a local one.
         """
-        for handler in self._handlers.get(event, []):
+        for _attached, handler in self._handlers.get(event, []):
             self._dispatch(handler, source, args, client)
+
+    def click(self, handle: Any, *args: Any) -> bool:
+        """Click a control, as MTA does: only its own handlers run.
+
+        `addEventHandler` attaches a handler to one element, and MTA dispatches
+        a GUI event to that element (`source` is the control clicked). Firing
+        every `onClientGUIClick` handler in the resource instead would make a
+        test pass by pressing every button at once.
+        """
+        return self.trigger_on("onClientGUIClick", handle, *args)
+
+    def trigger_on(self, event: str, element: Any, *args: Any) -> bool:
+        """Invoke only the handlers attached to `element`."""
+        fired = False
+        for attached_to, handler in list(self._handlers.get(event, [])):
+            if self.same_element(attached_to, element):
+                self._dispatch(handler, element, args)
+                fired = True
+        return fired
 
     def _dispatch(
         self,
@@ -486,7 +505,7 @@ class MtaSandbox:
             g.client = previous_client
 
     def handlers(self, event: str) -> list[Any]:
-        return list(self._handlers.get(event, []))
+        return [handler for _attached, handler in self._handlers.get(event, [])]
 
     def same_element(self, left: Any, right: Any) -> bool:
         """Compare two element references the way Lua itself would.
@@ -504,9 +523,7 @@ class MtaSandbox:
         MTA passes the clicked control as the event's `source`, and a resource
         that attached with `propagate` false hears about its own control only.
         """
-        for attached_to, handler in list(self._attachments.get(event, [])):
-            if self.same_element(attached_to, element):
-                self._dispatch(handler, element, ())
+        self.trigger_on(event, element)
 
     def widget_named(self, text: str, kind: str = "button") -> Any:
         """The one live control of this kind showing this text, or `None`.
@@ -776,11 +793,7 @@ class MtaSandbox:
             handler: Any,
             *_rest: Any,
         ) -> bool:
-            self._handlers.setdefault(str(name), []).append(handler)
-            # Kept alongside, not instead: `triggerEvent` still reaches every
-            # handler of an event, while `click_gui` needs to know which control
-            # each one was hung on so a click lands on one button only.
-            self._attachments.setdefault(str(name), []).append(
+            self._handlers.setdefault(str(name), []).append(
                 (attached_to, handler)
             )
             return True
@@ -789,7 +802,7 @@ class MtaSandbox:
             self.recorder.local_events.append(
                 TriggeredEvent(str(name), source, tuple(args))
             )
-            for handler in self._handlers.get(str(name), []):
+            for _attached, handler in self._handlers.get(str(name), []):
                 self._dispatch(handler, source, args)
             return True
 

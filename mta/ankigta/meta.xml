@@ -28,6 +28,7 @@
     <script src="client/review_mode.lua" type="client" cache="false" />
     <script src="client/activation.lua" type="client" cache="false" />
     <script src="client/indicator.lua" type="client" cache="false" />
+    <script src="client/recovery.lua" type="client" cache="false" />
     <!-- Last on this side: it puts the stored settings in force, so the
          modules it applies them to have to exist by then. -->
     <script src="client/settings_store.lua" type="client" cache="false" />

@@ -41,6 +41,9 @@ local RENDER_ISSUED_EVENT = "ankigta:renderIssued"
 local REVIEW_RETURN_REQUEST_EVENT = "ankigta:returnToCard"
 local PICK_ENTITY_REQUEST_EVENT = "ankigta:pickEntity"
 local PICK_ENTITY_RESULT_EVENT = "ankigta:pickEntityResult"
+local RECOVERY_STATE_EVENT = "ankigta:databaseRecovery"
+local RECOVERY_REQUEST_EVENT = "ankigta:requestDatabaseRecovery"
+local RESTORE_REQUEST_EVENT = "ankigta:restoreDatabaseBackup"
 -- Ticket 05 uses this only to observe a disposable map-created element.
 -- Persistent Map Entity identity remains the responsibility of ticket 06.
 local RUNTIME_REFERENCE_ID = "ankigta-ticket05-runtime"
@@ -440,6 +443,26 @@ function validatePickEntity(player, entityElement, mode)
     }
 end
 
+--- Tell one player what there is to recover from, or that there is nothing.
+--
+-- Sent as state rather than as an error, and re-read on every send: a copy can
+-- be deleted or go bad between two glances at the screen, and a copy that is
+-- offered has to be one that verified just now.
+local function sendRecoveryState(player)
+    if not playerAuthorization(player) then
+        -- The state names files on the server's disk. It is the Study Player's
+        -- to act on and nobody else's to see.
+        return false
+    end
+    triggerClientEvent(
+        player,
+        RECOVERY_STATE_EVENT,
+        resourceRoot,
+        ANKIGTA.Store.recovery() or false
+    )
+    return true
+end
+
 local function sendAuthorization(player)
     local authorized = playerAuthorization(player)
     triggerClientEvent(
@@ -457,7 +480,25 @@ local function sendAuthorization(player)
             resourceRoot,
             ANKIGTA.SettingsStore.owned()
         )
+        sendRecoveryState(player)
     end
+end
+
+--- Restore the copy the player chose on the recovery screen.
+--
+-- Guarded on the recovery state, not merely on the request being well formed. A
+-- database that opened cleanly is never replaced from here: doing it on request
+-- would be the silent replacement ADR 0016 forbids, with one extra click in
+-- front of it.
+local function restoreDatabaseBackup(player, backupId)
+    local authorized, authorizationError = playerAuthorization(player)
+    if not authorized then
+        return false, authorizationError.category
+    end
+    if not ANKIGTA.Store.recovery() then
+        return false, "not_in_recovery"
+    end
+    return ANKIGTA.Store.restoreFromBackup(backupId)
 end
 
 local function activeCardIdentities()
@@ -1158,6 +1199,38 @@ addEventHandler(PICK_ENTITY_REQUEST_EVENT, resourceRoot, function(
         target.entityId,
         target.purpose
     )
+end)
+
+addEvent(RECOVERY_REQUEST_EVENT, true)
+addEventHandler(RECOVERY_REQUEST_EVENT, resourceRoot, function()
+    if not client or source ~= resourceRoot then
+        return
+    end
+    sendRecoveryState(client)
+end)
+
+addEvent(RESTORE_REQUEST_EVENT, true)
+addEventHandler(RESTORE_REQUEST_EVENT, resourceRoot, function(backupId)
+    if not client or source ~= resourceRoot then
+        return
+    end
+    if not playerAuthorization(client) then
+        return
+    end
+    local restored, restoreError = restoreDatabaseBackup(client, backupId)
+    triggerClientEvent(
+        client,
+        PENDING_NOTICE_EVENT,
+        resourceRoot,
+        restored and "notice.restored" or "notice.restoreFailed",
+        restored and restored.restored or restoreError
+    )
+    -- Either way the screen is told what is on disk now, so a failed restore
+    -- leaves the choice open rather than an empty window.
+    sendRecoveryState(client)
+    if restored then
+        sendF7Snapshot(client)
+    end
 end)
 
 addEvent(AUTHORIZATION_REQUEST_EVENT, true)
