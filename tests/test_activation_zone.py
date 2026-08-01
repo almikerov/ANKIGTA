@@ -19,6 +19,7 @@ UUID = "11111111-1111-4111-8111-111111111111"
 @pytest.fixture
 def activation() -> Iterator[MtaSandbox]:
     sandbox = MtaSandbox()
+    sandbox.load("shared/nearest.lua")
     sandbox.load("client/activation.lua")
     try:
         yield sandbox
@@ -342,3 +343,68 @@ def test_activation_resumes_after_the_review_closes(
 
     update(activation, 1.0, candidates=candidates)
     assert update(activation, 2.0, candidates=candidates) is not False
+
+
+# --- a total order over candidates -------------------------------------------
+#
+# On a 5,000-link fixture, two entities at exactly the same distance is an
+# ordinary occurrence rather than a corner case. A strict `<` against the
+# running best resolves it by whichever candidate the server's snapshot
+# happened to put first, which makes the resulting report unreproducible.
+
+
+def test_equidistant_candidates_resolve_the_same_way_in_either_order(
+    activation: MtaSandbox,
+) -> None:
+    configure(activation, delay_seconds=0)
+    left = entity("bbb", x=-1.0)
+    right = entity("aaa", x=1.0)
+
+    forwards = update(activation, 0.0, candidates=[left, right])
+    activation.eval("ANKIGTA.Activation.cancel()")
+    backwards = update(activation, 1.0, candidates=[right, left])
+
+    assert forwards is not False
+    assert backwards is not False
+    assert forwards["entityId"] == backwards["entityId"]
+
+
+def test_the_tie_break_is_the_map_entity_identity_not_the_snapshot_order(
+    activation: MtaSandbox,
+) -> None:
+    configure(activation, delay_seconds=0)
+    # Same distance, same map: the smaller Map Entity id is the specified
+    # winner, so the choice can be stated in a bug report and reproduced.
+    first = entity("zzz", x=1.0)
+    second = entity("aaa", y=1.0)
+
+    opened = update(activation, 0.0, candidates=[first, second])
+
+    assert opened["entityId"] == "aaa"
+
+
+def test_entities_from_different_maps_tie_break_on_the_map_id_first(
+    activation: MtaSandbox,
+) -> None:
+    configure(activation, delay_seconds=0)
+    later = entity("aaa", x=1.0)
+    later["mapId"] = "m2"
+    earlier = entity("zzz", y=1.0)
+    earlier["mapId"] = "m1"
+
+    opened = update(activation, 0.0, candidates=[later, earlier])
+
+    assert opened["mapId"] == "m1"
+    assert opened["entityId"] == "zzz"
+
+
+def test_a_strictly_nearer_candidate_still_beats_a_smaller_identity(
+    activation: MtaSandbox,
+) -> None:
+    configure(activation, delay_seconds=0)
+    far = entity("aaa", x=2.0)
+    near = entity("zzz", x=0.5)
+
+    opened = update(activation, 0.0, candidates=[far, near])
+
+    assert opened["entityId"] == "zzz"

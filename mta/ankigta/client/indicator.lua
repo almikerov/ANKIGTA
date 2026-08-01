@@ -56,13 +56,6 @@ function Indicator.setMode(mode)
     return true
 end
 
-local function distanceSquared(a, b)
-    local dx = a.x - b.x
-    local dy = a.y - b.y
-    local dz = a.z - b.z
-    return dx * dx + dy * dy + dz * dz
-end
-
 local function sameCard(candidate, cardIdentity)
     return type(candidate.cardIdentity) == "table"
         and type(cardIdentity) == "table"
@@ -79,21 +72,16 @@ function Indicator.selectTarget(player, candidates, cardIdentity)
     if type(player) ~= "table" or type(cardIdentity) ~= "table" then
         return false
     end
-    local best, bestDistance = false, nil
-    for _, candidate in ipairs(candidates or {}) do
-        if sameCard(candidate, cardIdentity)
+    -- Same order as the Activation Zone uses (`shared/nearest.lua`): two
+    -- entities carrying the same card at the same distance resolve on their
+    -- Map Entity identity, not on where the snapshot happened to put them.
+    return (ANKIGTA.Nearest.select(player, candidates, function(candidate)
+        return sameCard(candidate, cardIdentity)
             and candidate.eligible == true
             and candidate.present ~= false
             and candidate.interior == player.interior
             and candidate.dimension == player.dimension
-        then
-            local distance = distanceSquared(player, candidate)
-            if bestDistance == nil or distance < bestDistance then
-                best, bestDistance = candidate, distance
-            end
-        end
-    end
-    return best
+    end))
 end
 
 --- What to draw for the next card, given the mode and the world.

@@ -125,10 +125,7 @@ function Activation.radiusForNewEntity()
 end
 
 local function distanceSquared(a, b)
-    local dx = a.x - b.x
-    local dy = a.y - b.y
-    local dz = a.z - b.z
-    return dx * dx + dy * dy + dz * dz
+    return ANKIGTA.Nearest.distanceSquared(a, b)
 end
 
 local function candidateKey(candidate)
@@ -156,15 +153,11 @@ local function eligibleCandidates(player, candidates)
     return inside
 end
 
+-- Ties are broken on the Map Entity's identity rather than on snapshot order;
+-- see `shared/nearest.lua` for why that is the difference between a choice and
+-- an accident.
 local function nearest(player, candidates)
-    local best, bestDistance = false, nil
-    for _, candidate in ipairs(candidates) do
-        local distance = distanceSquared(player, candidate)
-        if bestDistance == nil or distance < bestDistance then
-            best, bestDistance = candidate, distance
-        end
-    end
-    return best
+    return ANKIGTA.Nearest.select(player, candidates)
 end
 
 function Activation.cancel(reason)

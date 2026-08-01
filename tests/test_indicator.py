@@ -24,6 +24,7 @@ def indicator() -> Iterator[MtaSandbox]:
     # The HUD asks the layout manager where it goes (ticket 28), so the modules
     # it is declared after in meta.xml load with it.
     sandbox.load("shared/settings.lua")
+    sandbox.load("shared/nearest.lua")
     sandbox.load("client/layout.lua")
     sandbox.load("client/indicator.lua")
     try:
@@ -237,6 +238,7 @@ def test_the_indicator_leaves_the_activation_zone_untouched() -> None:
     searching the indicator's source for a list of function names."""
     sandbox = MtaSandbox()
     try:
+        sandbox.load("shared/nearest.lua")
         sandbox.load("client/activation.lua")
         sandbox.load("client/indicator.lua")
         sandbox.eval(
@@ -421,3 +423,43 @@ def test_the_blip_is_removed_when_the_resource_stops(indicator: MtaSandbox) -> N
     assert indicator.eval(
         "function() return ANKIGTA.Indicator.hudState() end"
     )()["hasBlip"] is False
+
+
+# --- a total order over candidates -------------------------------------------
+#
+# One card may be linked to several Map Entity, and two of them may sit at
+# exactly the same distance. Which one carries the marker has to be a property
+# of the world rather than of the order the snapshot arrived in.
+
+
+def test_equidistant_targets_resolve_the_same_way_in_either_order(
+    indicator: MtaSandbox,
+) -> None:
+    set_mode(indicator, "minimap_only")
+    left = candidate("bbb", x=-4.0)
+    right = candidate("aaa", x=4.0)
+
+    forwards = plan(indicator, [left, right])
+    backwards = plan(indicator, [right, left])
+
+    assert forwards["entityId"] == backwards["entityId"]
+
+
+def test_the_indicator_tie_break_is_the_map_entity_identity(
+    indicator: MtaSandbox,
+) -> None:
+    set_mode(indicator, "minimap_only")
+
+    result = plan(indicator, [candidate("zzz", x=4.0), candidate("aaa", x=-4.0)])
+
+    assert result["entityId"] == "aaa"
+
+
+def test_a_nearer_target_still_wins_against_a_smaller_identity(
+    indicator: MtaSandbox,
+) -> None:
+    set_mode(indicator, "minimap_only")
+
+    result = plan(indicator, [candidate("aaa", x=9.0), candidate("zzz", x=1.0)])
+
+    assert result["entityId"] == "zzz"
