@@ -20,7 +20,6 @@ from .contract import (
 )
 from .cards import CardPickerError, CardPickerService
 from .collection_identity import AnkiCardIdentity
-from .collection_identity import AnkiCardIdentity
 from .session import SessionCoordinator, SessionError
 
 HEALTH_PATH = "/v1/health"
@@ -31,6 +30,8 @@ SESSION_REBUILD_PATH = "/v1/session/rebuild"
 SESSION_PAUSE_PATH = "/v1/session/pause"
 SESSION_STOP_PATH = "/v1/session/stop"
 SESSION_CANCEL_PATH = "/v1/session/cancel"
+SESSION_ADMIT_PATH = "/v1/session/admit"
+SESSION_RESTORE_PATH = "/v1/session/restore"
 MAX_CONTROL_BYTES = 2 * 1024 * 1024
 MAX_READ_WORKERS = 4
 MAX_PENDING_READS = 4
@@ -71,6 +72,32 @@ def _parse_identities(request: object) -> list[AnkiCardIdentity]:
             )
         identities.append(AnkiCardIdentity(collection_uuid, card_id))
     return identities
+
+
+def _parse_identity(request: object) -> AnkiCardIdentity:
+    """Read the single `cardIdentity` an admission request targets."""
+    if not isinstance(request, dict):
+        raise SessionError("invalid_session_request", "request body must be an object")
+    raw = request.get("cardIdentity")
+    if not isinstance(raw, dict):
+        raise SessionError(
+            "invalid_session_request",
+            "cardIdentity must be an object",
+        )
+    collection_uuid = raw.get("collectionUuid")
+    card_id = raw.get("cardId")
+    if (
+        not isinstance(collection_uuid, str)
+        or not collection_uuid
+        or not isinstance(card_id, int)
+        or isinstance(card_id, bool)
+        or card_id <= 0
+    ):
+        raise SessionError(
+            "invalid_session_request",
+            "cardIdentity must contain collectionUuid and positive cardId",
+        )
+    return AnkiCardIdentity(collection_uuid, card_id)
 
 
 class BoundedHTTPServer(HTTPServer):
@@ -346,6 +373,8 @@ class HealthServer:
                     SESSION_PAUSE_PATH,
                     SESSION_STOP_PATH,
                     SESSION_CANCEL_PATH,
+                    SESSION_ADMIT_PATH,
+                    SESSION_RESTORE_PATH,
                 }:
                     if session is None:
                         unavailable = ContractError(
@@ -392,6 +421,49 @@ class HealthServer:
                                     ],
                                 },
                             )
+                        elif self.path == SESSION_ADMIT_PATH:
+                            allow_early = request.get("allowEarlyReview", False)
+                            if not isinstance(allow_early, bool):
+                                raise SessionError(
+                                    "invalid_session_request",
+                                    "allowEarlyReview must be a boolean",
+                                )
+                            admission = session.admit(
+                                _parse_identity(request),
+                                allow_early_review=allow_early,
+                            )
+                            study_payload = session.status().payload()
+                            # Rating is authorized by admission alone; a
+                            # Preview-only card must never look ratable.
+                            study_payload["ratingEnabled"] = admission.admitted
+                            study_payload["reviewModeOpened"] = False
+                            status, response = session_response(
+                                request_id,
+                                {
+                                    "session": study_payload,
+                                    "admission": {
+                                        "collectionUuid": (
+                                            admission.identity.collection_uuid
+                                        ),
+                                        "cardId": admission.identity.card_id,
+                                        "admitted": admission.admitted,
+                                        "previewOnly": admission.preview_only,
+                                        "reason": admission.reason,
+                                    },
+                                },
+                            )
+                        elif self.path == SESSION_RESTORE_PATH:
+                            restored = session.restore()
+                            study_payload = session.status().payload()
+                            study_payload["ratingEnabled"] = False
+                            study_payload["reviewModeOpened"] = False
+                            status, response = session_response(
+                                request_id,
+                                {
+                                    "session": study_payload,
+                                    "restored": restored,
+                                },
+                            )
                         elif self.path == SESSION_CANCEL_PATH:
                             cancelled = session.cancel_rebuild()
                             if not cancelled:
@@ -435,6 +507,11 @@ class HealthServer:
                             "rebuild_timeout": 408,
                             "rebuild_cancelled": 409,
                             "session_not_rebuilding": 409,
+                            "wrong_collection": 409,
+                            "card_missing": 404,
+                            "card_unavailable": 409,
+                            "early_review_disabled": 409,
+                            "admission_open": 409,
                         }.get(error.category, 409)
                         self._write_json(
                             category_status,

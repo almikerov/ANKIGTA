@@ -44,6 +44,10 @@ class FilteredDeckBackend(Protocol):
 
     def cleanup(self, name: str) -> None: ...
 
+    def scheduler_top(self) -> AnkiCardIdentity | None:
+        """The card Anki currently considers next, without advancing it."""
+        ...
+
 
 class AnkiFilteredDeckBackend:
     """Small adapter around Anki's supported filtered-deck operations.
@@ -63,15 +67,24 @@ class AnkiFilteredDeckBackend:
         rebuild_filtered_deck: Callable[[int, tuple[int, ...]], None],
         empty_filtered_deck: Callable[[int], None],
         delete_filtered_deck: Callable[[int], None],
+        top_card_id: Callable[[], int | None] | None = None,
+        collection_uuid: Callable[[], str | None] | None = None,
     ) -> None:
         self._collection = collection
         self._create = create_filtered_deck
         self._rebuild = rebuild_filtered_deck
         self._empty = empty_filtered_deck
         self._delete = delete_filtered_deck
+        self._top_card_id = top_card_id or (lambda: None)
+        self._collection_uuid = collection_uuid or (lambda: None)
 
     @classmethod
-    def from_collection(cls, collection: object) -> AnkiFilteredDeckBackend:
+    def from_collection(
+        cls,
+        collection: object,
+        *,
+        collection_uuid: Callable[[], str | None] | None = None,
+    ) -> AnkiFilteredDeckBackend:
         """Create the pinned Anki 26.05 adapter using non-private scheduler APIs."""
 
         def create(name: str) -> int:
@@ -113,12 +126,24 @@ class AnkiFilteredDeckBackend:
 
             getattr(collection, "decks").remove([DeckId(deck_id)])
 
+        def top_card_id() -> int | None:
+            # get_queued_cards observes the next card without advancing the
+            # scheduler, which is what makes the check safe to repeat.
+            scheduler = getattr(collection, "sched")
+            queued = scheduler.get_queued_cards(fetch_limit=1)
+            entries = getattr(queued, "cards", ())
+            if not entries:
+                return None
+            return int(entries[0].card.id)
+
         return cls(
             collection,
             create_filtered_deck=create,
             rebuild_filtered_deck=rebuild,
             empty_filtered_deck=empty,
             delete_filtered_deck=delete,
+            top_card_id=top_card_id,
+            collection_uuid=collection_uuid,
         )
 
     def inspect(self, name: str) -> FilteredDeckInfo | None:
@@ -159,6 +184,13 @@ class AnkiFilteredDeckBackend:
             return
         self._empty(deck_id)
         self._delete(deck_id)
+
+    def scheduler_top(self) -> AnkiCardIdentity | None:
+        card_id = self._top_card_id()
+        collection_uuid = self._collection_uuid()
+        if card_id is None or not collection_uuid or card_id <= 0:
+            return None
+        return AnkiCardIdentity(collection_uuid, card_id)
         self._set_config(None)
 
     def _find_deck_id(self, name: str) -> int | None:
@@ -228,6 +260,24 @@ class PauseResult:
     cleaned: bool
 
 
+@dataclass(frozen=True)
+class AdmissionResult:
+    """The outcome of trying to make one exact card scheduler-top.
+
+    `admitted` is the only thing that authorizes a rating. When it is false the
+    card may still be shown, but strictly as Preview: Anki did not put it on
+    top, so answering it would fail the scheduler's own check anyway.
+    """
+
+    identity: AnkiCardIdentity
+    admitted: bool
+    reason: str | None = None
+
+    @property
+    def preview_only(self) -> bool:
+        return not self.admitted
+
+
 CardReader = Callable[[int], CardView | None]
 Observer = Callable[[], RuntimeObservation]
 
@@ -262,6 +312,8 @@ class SessionCoordinator:
             total=0,
         )
         self._cancel = Event()
+        self._admitted: AnkiCardIdentity | None = None
+        self._full_membership: tuple[int, ...] = ()
 
     def status(self) -> SessionStatus:
         with self._lock:
@@ -342,6 +394,122 @@ class SessionCoordinator:
             cancel=cancel,
             progress=progress,
         )
+
+    def admit(
+        self,
+        identity: AnkiCardIdentity,
+        *,
+        allow_early_review: bool = False,
+    ) -> AdmissionResult:
+        """Try to make one exact card scheduler-top through an X-only rebuild.
+
+        Prototype 0001 proved that answering a non-top card fails in Anki, and
+        prototype 0002 proved this rebuild is the supported way to change which
+        card is top. Anki still decides: this only asks, then checks.
+        """
+        self._validate_admission(identity, allow_early_review=allow_early_review)
+
+        full_membership = self.status().card_ids
+        self._run_build((identity.card_id,), None)
+        with self._lock:
+            self._status = SessionStatus(
+                session_active=True,
+                paused=False,
+                paused_reason=None,
+                filtered_deck_created=True,
+                card_ids=(identity.card_id,),
+                progress=0,
+                total=1,
+            )
+            self._full_membership = full_membership
+
+        top = self._backend.scheduler_top()
+        if top is None:
+            return self._refuse(identity, "no_scheduler_top")
+        # Comparing the full identity, not just the number: the same card id in
+        # another collection is a different card (ADR 0009).
+        if top != identity:
+            return self._refuse(identity, "not_scheduler_top")
+
+        with self._lock:
+            self._admitted = identity
+        return AdmissionResult(identity=identity, admitted=True)
+
+    def restore(self) -> bool:
+        """Rebuild the full session membership after an admission finishes."""
+        with self._lock:
+            admitted = self._admitted
+            membership = self._full_membership
+        if admitted is None:
+            return False
+        self._restore_membership(membership)
+        return True
+
+    def _refuse(self, identity: AnkiCardIdentity, reason: str) -> AdmissionResult:
+        """Return to the full session rather than stranding an X-only deck."""
+        with self._lock:
+            membership = self._full_membership
+        self._restore_membership(membership)
+        return AdmissionResult(identity=identity, admitted=False, reason=reason)
+
+    def _restore_membership(self, membership: tuple[int, ...]) -> None:
+        if membership:
+            self._run_build(membership, None)
+        with self._lock:
+            self._admitted = None
+            self._full_membership = ()
+            self._status = SessionStatus(
+                session_active=True,
+                paused=False,
+                paused_reason=None,
+                filtered_deck_created=bool(membership),
+                card_ids=membership,
+                progress=len(membership),
+                total=len(membership),
+            )
+
+    def _validate_admission(
+        self,
+        identity: AnkiCardIdentity,
+        *,
+        allow_early_review: bool,
+    ) -> None:
+        if not self.status().session_active:
+            raise SessionError("session_inactive", "ANKIGTA Session is not active")
+        with self._lock:
+            open_admission = self._admitted
+        if open_admission is not None:
+            raise SessionError(
+                "admission_open",
+                "another card is already admitted; finish it first",
+            )
+        if self._unresolved_transaction():
+            raise SessionError(
+                "outcome_unknown",
+                "Unresolved Review Transaction blocks admission",
+            )
+        if self._reviewer_guard():
+            raise SessionError("reviewer_active", "Anki Reviewer must be closed first")
+        if not self._identity_matches_bound_collection(identity):
+            raise SessionError(
+                "wrong_collection",
+                "card belongs to a different Anki collection",
+            )
+        card = self._read_card(identity.card_id)
+        if card is None:
+            raise SessionError("card_missing", "card no longer exists in Anki")
+        if card.state in {CardState.SUSPENDED, CardState.BURIED}:
+            # Prototype 0002 S7: Anki refuses these even for an exact request,
+            # so refuse before touching the deck rather than after.
+            raise SessionError(
+                "card_unavailable",
+                f"card is {card.state.value} and cannot be rated",
+            )
+        if card.state is CardState.NOT_DUE and not allow_early_review:
+            raise SessionError(
+                "early_review_disabled",
+                "card is not due; enable early review to rate it",
+            )
 
     def pause(self) -> PauseResult:
         current = self.status()
