@@ -166,6 +166,30 @@ Locale.strings = {
         ["cardPicker.alreadyLinked"] = "%s — already linked to %s",
         ["cardPicker.link"] = "Link selected card",
         ["cardPicker.previewReplacement"] = "Preview replacement",
+        ["recovery.title"] = "ANKIGTA — Database recovery",
+        ["recovery.reason.database_corrupt"] =
+            "The ANKIGTA database could not be read.",
+        ["recovery.reason.restore_interrupted"] =
+            "A restore did not finish. Both files are still on disk.",
+        ["recovery.damaged"] = "Database: %s (%s)",
+        ["recovery.explanation"] =
+            "Nothing has been changed. Choose a verified backup to restore; "
+            .. "the damaged file is kept for diagnosis rather than deleted.",
+        ["recovery.column.created"] = "Created",
+        ["recovery.column.kind"] = "Kind",
+        ["recovery.column.schema"] = "Schema",
+        ["recovery.column.state"] = "State",
+        ["recovery.column.file"] = "File",
+        ["recovery.column.reason"] = "Reason",
+        ["recovery.kind.daily"] = "daily",
+        ["recovery.kind.premigration"] = "pre-migration",
+        ["recovery.usable"] = "Verified",
+        ["recovery.unusable"] = "Cannot be used: %s",
+        ["recovery.restore"] = "Restore selected backup",
+        ["recovery.quarantineTitle"] = "Kept for diagnosis",
+        ["recovery.noVerifiedBackup"] =
+            "No backup passed verification. Nothing will be replaced; "
+            .. "the files below are kept for diagnosis.",
         ["connection.title"] = "ANKIGTA — Companion Connection",
         ["connection.disconnected"] = "Connection is down: %s",
         ["connection.connect"] = "Connect",
@@ -238,6 +262,10 @@ Locale.strings = {
             "Relink entity completed; Spatial Link and metadata moved.",
         ["notice.relinkFailed"] = "Relink entity was not applied: %s",
         ["notice.pickEntityFailed"] = "Pick Entity: %s",
+        ["notice.restored"] =
+            "Database restored from %s; the damaged file is kept for diagnosis.",
+        ["notice.restoreFailed"] =
+            "Nothing was restored and nothing was replaced: %s",
     },
     ru = {
         ["common.confirm"] = "Подтвердить",
@@ -355,6 +383,30 @@ Locale.strings = {
         ["cardPicker.alreadyLinked"] = "%s — уже связана с %s",
         ["cardPicker.link"] = "Связать выбранную карточку",
         ["cardPicker.previewReplacement"] = "Предпросмотр замены",
+        ["recovery.title"] = "ANKIGTA — Восстановление базы данных",
+        ["recovery.reason.database_corrupt"] =
+            "Базу данных ANKIGTA не удалось прочитать.",
+        ["recovery.reason.restore_interrupted"] =
+            "Восстановление не завершилось. Оба файла остались на диске.",
+        ["recovery.damaged"] = "База данных: %s (%s)",
+        ["recovery.explanation"] =
+            "Ничего не изменено. Выберите проверенную копию для восстановления; "
+            .. "повреждённый файл сохраняется для диагностики, а не удаляется.",
+        ["recovery.column.created"] = "Создана",
+        ["recovery.column.kind"] = "Тип",
+        ["recovery.column.schema"] = "Схема",
+        ["recovery.column.state"] = "Состояние",
+        ["recovery.column.file"] = "Файл",
+        ["recovery.column.reason"] = "Причина",
+        ["recovery.kind.daily"] = "ежедневная",
+        ["recovery.kind.premigration"] = "предмиграционная",
+        ["recovery.usable"] = "Проверена",
+        ["recovery.unusable"] = "Нельзя использовать: %s",
+        ["recovery.restore"] = "Восстановить выбранную копию",
+        ["recovery.quarantineTitle"] = "Сохранено для диагностики",
+        ["recovery.noVerifiedBackup"] =
+            "Ни одна копия не прошла проверку. Ничего не будет заменено; "
+            .. "файлы ниже сохранены для диагностики.",
         ["connection.title"] = "ANKIGTA — Companion Connection",
         ["connection.disconnected"] = "Соединение отключено: %s",
         ["connection.connect"] = "Подключиться",
@@ -430,6 +482,11 @@ Locale.strings = {
             "Relink entity выполнен; Spatial Link и metadata перенесены.",
         ["notice.relinkFailed"] = "Relink entity не выполнен: %s",
         ["notice.pickEntityFailed"] = "Pick Entity: %s",
+        ["notice.restored"] =
+            "База данных восстановлена из %s; "
+            .. "повреждённый файл сохранён для диагностики.",
+        ["notice.restoreFailed"] =
+            "Ничего не восстановлено и ничего не заменено: %s",
     },
 }
 

@@ -312,7 +312,8 @@ class MtaSandbox:
         self._real_time = float(time.time())
         self._connections: list[_Connection] = []
         self._elements: set[int] = set()
-        self._handlers: dict[str, list[Any]] = {}
+        #: event name -> (attached-element key, handler), in registration order.
+        self._handlers: dict[str, list[tuple[Any, Any]]] = {}
         self._exports: dict[str, Any] = {}
         # The resource directory. A caller that named a database file gets that
         # file's directory, so `ankigta.sqlite` resolves to the path it passed.
@@ -454,8 +455,42 @@ class MtaSandbox:
         player, and leaves it nil otherwise -- server code checks that global to
         tell a remote request from a local one.
         """
-        for handler in self._handlers.get(event, []):
+        for _attached, handler in self._handlers.get(event, []):
             self._dispatch(handler, source, args, client)
+
+    def element_key(self, value: Any) -> Any:
+        """A stable identity for an element handle.
+
+        Lupa hands out a fresh wrapper per crossing, so the Python identity of a
+        Lua table is not something to key on; a control is identified by the
+        index it was registered under and anything else by its element type.
+        """
+        if lua_type(value) == "table":
+            index = value["__widget"]
+            if index is not None:
+                return ("widget", int(index))
+            return ("table", str(value["type"]))
+        return ("id", id(value))
+
+    def click(self, handle: Any, *args: Any) -> bool:
+        """Click a control, as MTA does: only its own handlers run.
+
+        `addEventHandler` attaches a handler to one element, and MTA dispatches
+        a GUI event to that element (`source` is the control clicked). Firing
+        every `onClientGUIClick` handler in the resource instead would make a
+        test pass by pressing every button at once.
+        """
+        return self.trigger_on("onClientGUIClick", handle, *args)
+
+    def trigger_on(self, event: str, element: Any, *args: Any) -> bool:
+        """Invoke only the handlers attached to `element`."""
+        wanted = self.element_key(element)
+        fired = False
+        for attached, handler in self._handlers.get(event, []):
+            if attached == wanted:
+                self._dispatch(handler, element, args)
+                fired = True
+        return fired
 
     def _dispatch(
         self,
@@ -475,7 +510,7 @@ class MtaSandbox:
             g.client = previous_client
 
     def handlers(self, event: str) -> list[Any]:
-        return list(self._handlers.get(event, []))
+        return [handler for _attached, handler in self._handlers.get(event, [])]
 
     # ----------------------------------------------------------------- http
 
@@ -724,18 +759,20 @@ class MtaSandbox:
 
         def add_event_handler(
             name: str,
-            _attached_to: Any,
+            attached_to: Any,
             handler: Any,
             *_rest: Any,
         ) -> bool:
-            self._handlers.setdefault(str(name), []).append(handler)
+            self._handlers.setdefault(str(name), []).append(
+                (self.element_key(attached_to), handler)
+            )
             return True
 
         def trigger_event(name: str, source: Any = None, *args: Any) -> bool:
             self.recorder.local_events.append(
                 TriggeredEvent(str(name), source, tuple(args))
             )
-            for handler in self._handlers.get(str(name), []):
+            for _attached, handler in self._handlers.get(str(name), []):
                 self._dispatch(handler, source, args)
             return True
 
