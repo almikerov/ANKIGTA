@@ -28,6 +28,10 @@ from tests.lua import MtaSandbox
 CLIENT_SCRIPTS = (
     "shared/settings.lua",
     "shared/locale.lua",
+    # Every window asks the layout manager where it goes and how big it is
+    # (ticket 28), so it is part of the client baseline the way the schema and
+    # the string table are.
+    "client/layout.lua",
     "client/settings_store.lua",
     "client/settings_ui.lua",
 )
@@ -479,12 +483,19 @@ def test_a_stored_value_the_schema_no_longer_accepts_falls_back_to_the_default()
 
 
 def test_the_panel_placement_is_remembered_without_entering_change_history() -> None:
+    """Dragged, not positioned by hand.
+
+    Ticket 28 made placement the layout manager's business: it hears the drag,
+    stores it as a fraction of the screen, and puts the window back there. A
+    `guiSetPosition` behind the manager's back would prove nothing about what a
+    player does.
+    """
     first = open_client()
     open_panel(first)
-    call(
-        first,
-        "function() guiSetPosition(ANKIGTA.SettingsUI.window, 120, 240, false) end",
-    )
+    title = call(first, "function() return ANKIGTA.Locale.text('settings.title') end")
+    first.drag_window(first.find_widget(str(title)), 120, 240)
+    # The write is debounced, so a drag is one write rather than one per frame.
+    first.fire_timers()
     call(first, "function() closeSettings() end")
     disk = dict(first.files)
     first.close()
@@ -657,6 +668,7 @@ def test_an_accepted_client_setting_reaches_the_module_that_uses_it() -> None:
         scripts=(
             "shared/settings.lua",
             "shared/locale.lua",
+            "client/layout.lua",
             "client/indicator.lua",
             "client/review_mode.lua",
             "client/settings_store.lua",
@@ -684,6 +696,7 @@ def test_f7_offers_a_way_into_the_settings_panel() -> None:
         scripts=(
             "shared/settings.lua",
             "shared/locale.lua",
+            "client/layout.lua",
             "client/settings_store.lua",
             "client/settings_ui.lua",
             "client/f7.lua",
@@ -713,6 +726,7 @@ def test_review_mode_offers_a_way_into_the_settings_panel() -> None:
         scripts=(
             "shared/settings.lua",
             "shared/locale.lua",
+            "client/layout.lua",
             "client/review_mode.lua",
             "client/settings_store.lua",
             "client/settings_ui.lua",
@@ -736,7 +750,7 @@ def test_review_mode_offers_a_way_into_the_settings_panel() -> None:
 
     call(
         sandbox,
-        "function(x, y) handleReviewClick('left', 'down', 0, 0, x, y) end",
+        "function(x, y) handleReviewClick('left', 'down', x, y) end",
         bounds[1] + bounds[3] / 2,
         bounds[2] + bounds[4] / 2,
     )

@@ -774,8 +774,26 @@ CLIENT_VALUES = {
     "muteGameWorld": True,
     "uiScale": 1.25,
     "language": "ru",
-    "uiPlacement": "compact",
+    # Normalized coordinates, which is what the schema accepts: a fraction of
+    # the screen describes the same corner at every resolution.
+    "uiPlacement": {"f7": {"x": 0.25, "y": 0.4}},
 }
+
+
+def lua_value(sandbox: MtaSandbox, value: Any) -> Any:
+    """A nested mapping as a Lua table, since Lua is where it is going."""
+    if isinstance(value, dict):
+        return sandbox.table(
+            {key: lua_value(sandbox, item) for key, item in value.items()}
+        )
+    return value
+
+
+def plain(value: Any) -> Any:
+    """A value read back out of Lua, as plain Python."""
+    if hasattr(value, "keys"):
+        return {str(key): plain(value[key]) for key in value.keys()}
+    return value
 
 
 def test_every_setting_the_client_owns_survives_a_restart_and_is_reapplied(
@@ -784,12 +802,12 @@ def test_every_setting_the_client_owns_survives_a_restart_and_is_reapplied(
     written = CLIENT_VALUES
     assert keys_owned_by(player, "client") == set(written)
     for key, value in written.items():
-        assert client_put(player, key, value) is True, key
+        assert client_put(player, key, lua_value(player, value)) is True, key
 
     restarted = open_client(player.files)
     try:
         for key, value in written.items():
-            assert client_get(restarted, key) == value, key
+            assert plain(client_get(restarted, key)) == value, key
         assert restarted.eval("ANKIGTA.Indicator.mode") == "sphere_and_minimap"
         assert restarted.eval("ANKIGTA.Locale.language") == "ru"
         assert restarted.eval("function() return reviewModeState() end")()[
@@ -802,12 +820,12 @@ def test_every_setting_the_client_owns_survives_a_restart_and_is_reapplied(
 def test_a_stored_client_value_the_schema_rejects_falls_back_to_default(
     player: MtaSandbox,
 ) -> None:
-    client_put(player, "uiScale", 2.5)
+    client_put(player, "uiScale", 1.8)
 
     restarted = load_client(player.files)
     try:
         restarted.eval(
-            "function() ANKIGTA.Settings.schema.uiScale.rule.maximum = 2 end"
+            "function() ANKIGTA.Settings.schema.uiScale.rule.maximum = 1.5 end"
         )()
         restarted.trigger("onClientResourceStart")
 
@@ -1006,7 +1024,7 @@ def test_a_setting_that_cannot_be_written_does_not_change_in_memory_either(
     assert client_put(player, "uiScale", 1.5) is True
     player.file_writes_fail = True
 
-    rejected, reason = client_put(player, "uiScale", 2.5)
+    rejected, reason = client_put(player, "uiScale", 1.75)
 
     assert rejected is False
     assert reason == "settings_write_failed"

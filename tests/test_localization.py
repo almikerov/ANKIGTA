@@ -41,6 +41,9 @@ def client(language: str) -> MtaSandbox:
     sandbox = MtaSandbox()
     sandbox.load("shared/settings.lua")
     sandbox.load("shared/locale.lua")
+    # Every window asks the layout manager where it goes (ticket 28), so it is
+    # part of the client baseline the way the schema and the string table are.
+    sandbox.load("client/layout.lua")
     sandbox.eval("function(l) ANKIGTA.Locale.setLanguage(l) end")(language)
     return sandbox
 

@@ -306,6 +306,17 @@ class Widget:
     rows: list[dict[int, str]] = field(default_factory=list)
     selected_row: int = -1
     selected_column: int = -1
+    #: Absolute geometry, as the resource passed it. A control created inside a
+    #: window carries the coordinates relative to that window, the way CEGUI
+    #: reads them back.
+    x: float = 0.0
+    y: float = 0.0
+    width: float = 0.0
+    height: float = 0.0
+    #: `guiWindowSetMovable` / `guiWindowSetSizable`. CEGUI's FrameWindow ships
+    #: with both enabled (`CGUIWindow_Impl`), so that is what they start as.
+    movable: bool = True
+    sizable: bool = True
 
 
 class MtaSandbox:
@@ -320,10 +331,9 @@ class MtaSandbox:
         self._real_time = float(time.time())
         self._connections: list[_Connection] = []
         self._elements: set[int] = set()
-        #: event name -> (element it was attached to, handler), in
-        #: registration order. The element is kept so a click can be delivered
-        #: to one control rather than to every listener of the event.
-        self._handlers: dict[str, list[tuple[Any, Any]]] = {}
+        self._handlers: dict[str, list[Any]] = {}
+        #: Handlers attached to one control, as `(widget index, handler)`.
+        self._gui_handlers: dict[str, list[tuple[int, Any]]] = {}
         self._exports: dict[str, Any] = {}
         # The resource directory. A caller that named a database file gets that
         # file's directory, so `ankigta.sqlite` resolves to the path it passed.
@@ -367,6 +377,15 @@ class MtaSandbox:
         self.localization = {"code": "en-US", "name": "English"}
         #: Every string handed to `dxDrawText`, in draw order.
         self.drawn_text: list[str] = []
+        #: The same strings with the box they were drawn into, for the surfaces
+        #: that have no CEGUI control to read geometry off.
+        self.drawn_text_boxes: list[dict[str, Any]] = []
+        self.drawn_rectangles: list[dict[str, float]] = []
+        self.drawn_images: list[dict[str, float]] = []
+        #: What `guiGetScreenSize()` reports. Tests move it to run the same
+        #: layout at 1280x720, 1920x1080 and 3840x2160.
+        self.screen_width = 1920.0
+        self.screen_height = 1080.0
         self.position_read_fails = False
         self.vanish_after_position_read: Any = None
         self._install_globals()
@@ -465,27 +484,8 @@ class MtaSandbox:
         player, and leaves it nil otherwise -- server code checks that global to
         tell a remote request from a local one.
         """
-        for _attached, handler in self._handlers.get(event, []):
+        for handler in self._handlers.get(event, []):
             self._dispatch(handler, source, args, client)
-
-    def click(self, handle: Any, *args: Any) -> bool:
-        """Click a control, as MTA does: only its own handlers run.
-
-        `addEventHandler` attaches a handler to one element, and MTA dispatches
-        a GUI event to that element (`source` is the control clicked). Firing
-        every `onClientGUIClick` handler in the resource instead would make a
-        test pass by pressing every button at once.
-        """
-        return self.trigger_on("onClientGUIClick", handle, *args)
-
-    def trigger_on(self, event: str, element: Any, *args: Any) -> bool:
-        """Invoke only the handlers attached to `element`."""
-        fired = False
-        for attached_to, handler in list(self._handlers.get(event, [])):
-            if self.same_element(attached_to, element):
-                self._dispatch(handler, element, args)
-                fired = True
-        return fired
 
     def _dispatch(
         self,
@@ -505,25 +505,12 @@ class MtaSandbox:
             g.client = previous_client
 
     def handlers(self, event: str) -> list[Any]:
-        return [handler for _attached, handler in self._handlers.get(event, [])]
+        """Handlers attached to something other than one control.
 
-    def same_element(self, left: Any, right: Any) -> bool:
-        """Compare two element references the way Lua itself would.
-
-        Lupa hands out a fresh Python wrapper per crossing, so `is` would call
-        two references to one Lua table different objects. Ask Lua instead.
+        A handler hung on a control is not here: MTA calls it only for that
+        control, so it is dispatched through `click_widget` instead.
         """
-        if left is None or right is None:
-            return False
-        return bool(self.lua.eval("function(a, b) return a == b end")(left, right))
-
-    def click_gui(self, element: Any, event: str = "onClientGUIClick") -> None:
-        """Click one control, reaching only the handlers hung on it.
-
-        MTA passes the clicked control as the event's `source`, and a resource
-        that attached with `propagate` false hears about its own control only.
-        """
-        self.trigger_on(event, element)
+        return list(self._handlers.get(event, []))
 
     def widget_named(self, text: str, kind: str = "button") -> Any:
         """The one live control of this kind showing this text, or `None`.
@@ -793,16 +780,28 @@ class MtaSandbox:
             handler: Any,
             *_rest: Any,
         ) -> bool:
-            self._handlers.setdefault(str(name), []).append(
-                (attached_to, handler)
+            # A handler attached to a control is kept apart from the rest.
+            # MTA calls it only for that control (`CClientGUIElement::
+            # CallEvent`), so putting it in the by-name list would have every
+            # window's buttons answer another window's click.
+            index = (
+                attached_to["__widget"]
+                if lua_type(attached_to) == "table"
+                else None
             )
+            if index is not None:
+                self._gui_handlers.setdefault(str(name), []).append(
+                    (int(index), handler)
+                )
+                return True
+            self._handlers.setdefault(str(name), []).append(handler)
             return True
 
         def trigger_event(name: str, source: Any = None, *args: Any) -> bool:
             self.recorder.local_events.append(
                 TriggeredEvent(str(name), source, tuple(args))
             )
-            for _attached, handler in self._handlers.get(str(name), []):
+            for handler in self._handlers.get(str(name), []):
                 self._dispatch(handler, source, args)
             return True
 
@@ -1072,15 +1071,76 @@ class MtaSandbox:
         )
 
         # --- drawing ---------------------------------------------------------
-        g.guiGetScreenSize = lambda: (1920.0, 1080.0)
-        g.dxDrawRectangle = lambda *_args, **_kwargs: True
+        g.guiGetScreenSize = lambda: (
+            float(self.screen_width),
+            float(self.screen_height),
+        )
 
-        def dx_draw_text(text: Any = "", *_args: Any, **_kwargs: Any) -> bool:
+        def dx_draw_rectangle(
+            x: float = 0,
+            y: float = 0,
+            width: float = 0,
+            height: float = 0,
+            *_rest: Any,
+            **_kwargs: Any,
+        ) -> bool:
+            self.drawn_rectangles.append(
+                {
+                    "x": float(x),
+                    "y": float(y),
+                    "width": float(width),
+                    "height": float(height),
+                }
+            )
+            return True
+
+        g.dxDrawRectangle = dx_draw_rectangle
+
+        def dx_draw_text(
+            text: Any = "",
+            left: float = 0,
+            top: float = 0,
+            right: float = 0,
+            bottom: float = 0,
+            _color: Any = None,
+            scale: float = 1,
+            *_rest: Any,
+            **_kwargs: Any,
+        ) -> bool:
             self.drawn_text.append(str(text))
+            self.drawn_text_boxes.append(
+                {
+                    "text": str(text),
+                    "left": float(left),
+                    "top": float(top),
+                    "right": float(right),
+                    "bottom": float(bottom),
+                    "scale": float(scale),
+                }
+            )
             return True
 
         g.dxDrawText = dx_draw_text
-        g.dxDrawImage = lambda *_args, **_kwargs: True
+
+        def dx_draw_image(
+            x: float = 0,
+            y: float = 0,
+            width: float = 0,
+            height: float = 0,
+            *_rest: Any,
+            **_kwargs: Any,
+        ) -> bool:
+            self.drawn_images.append(
+                {
+                    "x": float(x),
+                    "y": float(y),
+                    "width": float(width),
+                    "height": float(height),
+                }
+            )
+            return True
+
+        g.dxDrawImage = dx_draw_image
         g.getLocalization = lambda: self.lua.table_from(self.localization)
         self._install_gui_globals(g)
         g.tocolor = lambda r=0, gr=0, b=0, a=255: (
@@ -1237,15 +1297,16 @@ class MtaSandbox:
             kind: str,
             text: Any = "",
             parent: Any = None,
-            x: float = 0.0,
-            y: float = 0.0,
+            geometry: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0),
         ) -> Any:
             widget = Widget(
                 kind=kind,
                 text=str(text),
                 parent=parent_index(parent),
-                x=float(x),
-                y=float(y),
+                x=float(geometry[0]),
+                y=float(geometry[1]),
+                width=float(geometry[2]),
+                height=float(geometry[3]),
             )
             self.widgets.append(widget)
             handle = self.lua.table_from(
@@ -1267,45 +1328,95 @@ class MtaSandbox:
             return self.widgets[int(index)]
 
         def create_window(
-            x: float, y: float, _w: float, _h: float,
+            x: float, y: float, w: float, h: float,
             title: Any = "", _relative: Any = False, parent: Any = None,
         ) -> Any:
-            return register("window", title, parent, x, y)
+            return register("window", title, parent, (x, y, w, h))
 
         def create_label(
-            x: float, y: float, _w: float, _h: float,
+            x: float, y: float, w: float, h: float,
             text: Any = "", _relative: Any = False, parent: Any = None,
         ) -> Any:
-            return register("label", text, parent, x, y)
+            return register("label", text, parent, (x, y, w, h))
 
         def create_button(
-            x: float, y: float, _w: float, _h: float,
+            x: float, y: float, w: float, h: float,
             text: Any = "", _relative: Any = False, parent: Any = None,
         ) -> Any:
-            return register("button", text, parent, x, y)
+            return register("button", text, parent, (x, y, w, h))
 
         def create_edit(
-            x: float, y: float, _w: float, _h: float,
+            x: float, y: float, w: float, h: float,
             text: Any = "", _relative: Any = False, parent: Any = None,
         ) -> Any:
-            return register("edit", text, parent, x, y)
+            return register("edit", text, parent, (x, y, w, h))
 
         def create_check_box(
-            x: float, y: float, _w: float, _h: float,
+            x: float, y: float, w: float, h: float,
             text: Any = "", selected: Any = False,
             _relative: Any = False, parent: Any = None,
         ) -> Any:
-            handle = register("checkbox", text, parent, x, y)
+            handle = register("checkbox", text, parent, (x, y, w, h))
             widget = widget_of(handle)
             if widget is not None:
                 widget.selected = selected is True
             return handle
 
         def create_grid_list(
-            _x: float, _y: float, _w: float, _h: float,
+            x: float, y: float, w: float, h: float,
             _relative: Any = False, parent: Any = None,
         ) -> Any:
-            return register("gridlist", "", parent)
+            return register("gridlist", "", parent, (x, y, w, h))
+
+        def set_position(
+            handle: Any, x: float, y: float, _relative: Any = False
+        ) -> bool:
+            widget = widget_of(handle)
+            if widget is None:
+                return False
+            widget.x, widget.y = float(x), float(y)
+            # CEGUI raises its Moved event whether the move came from a drag or
+            # from a script, and MTA turns that into `onClientGUIMove`
+            # (`CClientGame::OnMove`). A resource that guards against its own
+            # repositioning has to be given something to guard against.
+            self._dispatch_gui_event("onClientGUIMove", handle)
+            return True
+
+        def get_position(handle: Any, _relative: Any = False) -> Any:
+            widget = widget_of(handle)
+            if widget is None:
+                return False
+            return widget.x, widget.y
+
+        def set_size(
+            handle: Any, width: float, height: float, _relative: Any = False
+        ) -> bool:
+            widget = widget_of(handle)
+            if widget is None:
+                return False
+            widget.width, widget.height = float(width), float(height)
+            self._dispatch_gui_event("onClientGUISize", handle)
+            return True
+
+        def get_size(handle: Any, _relative: Any = False) -> Any:
+            widget = widget_of(handle)
+            if widget is None:
+                return False
+            return widget.width, widget.height
+
+        def set_movable(handle: Any, movable: Any = True) -> bool:
+            widget = widget_of(handle)
+            if widget is None:
+                return False
+            widget.movable = movable is True
+            return True
+
+        def set_sizable(handle: Any, sizable: Any = True) -> bool:
+            widget = widget_of(handle)
+            if widget is None:
+                return False
+            widget.sizable = sizable is True
+            return True
 
         def set_text(handle: Any, text: Any) -> bool:
             widget = widget_of(handle)
@@ -1444,6 +1555,13 @@ class MtaSandbox:
         g.guiGridListGetSelectedItem = get_selected_item
         g.guiGridListSetSelectedItem = set_selected_item
         g.guiGridListGetRowCount = row_count
+        g.guiSetPosition = set_position
+        g.guiGetPosition = get_position
+        g.guiSetSize = set_size
+        g.guiGetSize = get_size
+        g.guiWindowSetMovable = set_movable
+        g.guiWindowSetSizable = set_sizable
+        g.guiBringToFront = lambda *_args: True
 
     def _destroy_widget(self, index: int) -> None:
         """Destroy a control and everything parented to it, as CEGUI does."""
@@ -1459,6 +1577,99 @@ class MtaSandbox:
             for widget in self.widgets
             if not widget.destroyed and (kind is None or widget.kind == kind)
         ]
+
+    # ------------------------------------------------------------- controls
+
+    def _dispatch_gui_event(self, name: str, handle: Any, *args: Any) -> bool:
+        """Call the handlers attached to exactly this control.
+
+        Returns whether any handler ran, so a test can tell "the control has no
+        handler for this" from "the handler ran and did nothing".
+        """
+        if lua_type(handle) != "table":
+            return False
+        index = handle["__widget"]
+        if index is None:
+            return False
+        index = int(index)
+        if self.widgets[index].destroyed:
+            return False
+        fired = False
+        for attached, handler in list(self._gui_handlers.get(name, [])):
+            if attached == index:
+                self._dispatch(handler, handle, args)
+                fired = True
+        return fired
+
+    def widget_handle(self, index: int) -> Any:
+        """A handle for a recorded control, the shape the resource holds."""
+        widget = self.widgets[index]
+        handle = {
+            "__element": True,
+            "type": "gui-" + widget.kind,
+            "__widget": index,
+        }
+        if widget.destroyed:
+            handle["__destroyed"] = True
+        return self.lua.table_from(handle)
+
+    def find_widget(self, text: str, kind: str | None = None) -> int:
+        """Index of the live control reading exactly this, newest first.
+
+        Newest first because a window is rebuilt rather than relabelled: after
+        a language or scale change the older control with the same text is
+        still recorded, and it is the destroyed one.
+        """
+        for index in reversed(range(len(self.widgets))):
+            widget = self.widgets[index]
+            if widget.destroyed or widget.text != text:
+                continue
+            if kind is not None and widget.kind != kind:
+                continue
+            return index
+        raise LuaError(f"no live control reading {text!r}")
+
+    def live_widgets(self, kind: str) -> list[int]:
+        """Indices of every control of this kind that still exists."""
+        return [
+            index
+            for index, widget in enumerate(self.widgets)
+            if widget.kind == kind and not widget.destroyed
+        ]
+
+    def click(self, handle: Any, *args: Any) -> bool:
+        """Click a control by the handle the resource holds."""
+        return self.trigger_on("onClientGUIClick", handle, *args)
+
+    def click_gui(self, element: Any, event: str = "onClientGUIClick") -> None:
+        """Click one control, reaching only the handlers hung on it."""
+        self.trigger_on(event, element)
+
+    def trigger_on(self, event: str, element: Any, *args: Any) -> bool:
+        """Invoke only the handlers attached to `element`."""
+        return self._dispatch_gui_event(event, element, *args)
+
+    def click_widget(self, target: str | int, kind: str | None = None) -> None:
+        """Click a control by its text or its index, as `onClientGUIClick`
+        does."""
+        index = target if isinstance(target, int) else self.find_widget(target, kind)
+        self._dispatch_gui_event(
+            "onClientGUIClick", self.widget_handle(index), "left", "up"
+        )
+
+    def drag_window(self, index: int, x: float, y: float) -> None:
+        """Move a window the way the player dragging its title bar does.
+
+        CEGUI moves the window itself and then raises the event, so the
+        resource reads the new position back rather than being handed it.
+        """
+        widget = self.widgets[index]
+        widget.x, widget.y = float(x), float(y)
+        self._dispatch_gui_event("onClientGUIMove", self.widget_handle(index))
+
+    def widget_rect(self, index: int) -> tuple[float, float, float, float]:
+        widget = self.widgets[index]
+        return widget.x, widget.y, widget.width, widget.height
 
     def grid_texts(self) -> list[str]:
         """Every grid column heading and cell, in the order they were written."""

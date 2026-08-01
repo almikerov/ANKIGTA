@@ -32,6 +32,7 @@ local function closeStudyUi()
     if isElement(window) then
         destroyElement(window)
     end
+    ANKIGTA.Layout.detach("study")
     window = nil
     statusLabel = nil
     startButton = nil
@@ -61,55 +62,31 @@ local function ensureStudyUi()
     if isElement(window) then
         return
     end
-    local screenWidth, screenHeight = guiGetScreenSize()
-    local width, height = 420, 240
-    window = guiCreateWindow(
-        (screenWidth - width) / 2,
-        (screenHeight - height) / 2,
-        width,
-        height,
-        text("study.title"),
-        false
-    )
-    statusLabel = guiCreateLabel(
-        18,
-        30,
-        width - 36,
-        24,
-        text("study.paused"),
-        false,
-        window
-    )
-    earlyReview = guiCreateCheckBox(
+    local surface = ANKIGTA.Layout.open("study", text("study.title"))
+    if not surface then
+        return
+    end
+    window = surface.window
+    local width = surface.width
+    statusLabel = surface.label(18, 30, width - 36, 24, text("study.paused"))
+    earlyReview = surface.checkBox(
         18,
         60,
         width - 36,
         24,
         text("settings.allowEarlyReview"),
-        false,
-        false,
-        window
+        false
     )
-    startButton = guiCreateButton(
-        18, 96, 92, 30, text("study.start"), false, window
-    )
-    pauseButton = guiCreateButton(
-        118, 96, 76, 30, text("study.pause"), false, window
-    )
-    rebuildButton = guiCreateButton(
-        202, 96, 92, 30, text("study.rebuild"), false, window
-    )
-    stopButton = guiCreateButton(
-        302, 96, 76, 30, text("study.stop"), false, window
-    )
-    cancelButton = guiCreateButton(
+    startButton = surface.button(18, 96, 92, 30, text("study.start"))
+    pauseButton = surface.button(118, 96, 76, 30, text("study.pause"))
+    rebuildButton = surface.button(202, 96, 92, 30, text("study.rebuild"))
+    stopButton = surface.button(302, 96, 76, 30, text("study.stop"))
+    cancelButton = surface.button(
         18,
         136,
         140,
         30,
-        text("study.cancelRebuild"),
-        false,
-        window
+        text("study.cancelRebuild")
     )
     addEventHandler("onClientGUIClick", startButton, function()
         triggerServerEvent(
@@ -170,16 +147,22 @@ addEventHandler(STATUS_EVENT, resourceRoot, function(status)
     updateStudyUi(status)
 end)
 
+-- Labels and control geometry are both written once, when the control is
+-- built, so the window is rebuilt rather than edited in place.
+local function rebuildStudyUi()
+    if not isElement(window) then
+        return
+    end
+    closeStudyUi()
+    updateStudyUi(lastStatus)
+end
+
 if ANKIGTA.Locale then
-    ANKIGTA.Locale.onChange(function()
-        if not isElement(window) then
-            return
-        end
-        -- Labels are written once, when the control is built, so the window is
-        -- rebuilt rather than relabelled control by control.
-        closeStudyUi()
-        updateStudyUi(lastStatus)
-    end)
+    ANKIGTA.Locale.onChange(rebuildStudyUi)
+end
+
+if ANKIGTA.Layout then
+    ANKIGTA.Layout.onChange(rebuildStudyUi)
 end
 
 addEventHandler("onClientResourceStop", resourceRoot, closeStudyUi)

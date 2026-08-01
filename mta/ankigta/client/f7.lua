@@ -88,6 +88,9 @@ local function closeF7()
     if isElement(window) then
         destroyElement(window)
     end
+    ANKIGTA.Layout.detach("f7")
+    ANKIGTA.Layout.detach("cardPicker")
+    ANKIGTA.Layout.detach("f7Modal")
     window = nil
     grid = nil
     recheckButton = nil
@@ -182,18 +185,17 @@ local function renderRelinkPreview()
     if isElement(relinkPreviewWindow) then
         destroyElement(relinkPreviewWindow)
     end
-    local width = 700
-    local height = 230
-    local screenWidth, screenHeight = guiGetScreenSize()
-    relinkPreviewWindow = guiCreateWindow(
-        (screenWidth - width) / 2,
-        (screenHeight - height) / 2,
-        width,
-        height,
-        text("f7.relink.title"),
-        false
+    -- A modal warning belongs to the window that raised it: the layout manager
+    -- centres it on F7 and keeps it there when F7 is dragged.
+    local modal = ANKIGTA.Layout.openChild(
+        "f7Modal", "f7", text("f7.relink.title"), 700, 230
     )
-    guiCreateLabel(
+    if not modal then
+        return
+    end
+    relinkPreviewWindow = modal.window
+    local width, height = modal.width, modal.height
+    modal.label(
         16,
         32,
         width - 32,
@@ -202,11 +204,9 @@ local function renderRelinkPreview()
             "f7.relink.missing",
             relinkSource.mapEntity.mapId .. "/"
                 .. relinkSource.mapEntity.entityId
-        ),
-        false,
-        relinkPreviewWindow
+        )
     )
-    guiCreateLabel(
+    modal.label(
         16,
         76,
         width - 32,
@@ -217,46 +217,36 @@ local function renderRelinkPreview()
                 and relinkTarget.mapEntity.mapId .. "/"
                     .. relinkTarget.mapEntity.entityId
                 or text("f7.relink.chooseTarget")
-        ),
-        false,
-        relinkPreviewWindow
+        )
     )
-    guiCreateLabel(
+    modal.label(
         16,
         120,
         width - 32,
         42,
-        text("f7.relink.metadataMoved", metadataSummary(relinkSource)),
-        false,
-        relinkPreviewWindow
+        text("f7.relink.metadataMoved", metadataSummary(relinkSource))
     )
-    local confirmButton = guiCreateButton(
+    local confirmButton = modal.button(
         width - 270,
         height - 38,
         116,
         26,
-        text("common.confirm"),
-        false,
-        relinkPreviewWindow
+        text("common.confirm")
     )
-    local cancelButton = guiCreateButton(
+    local cancelButton = modal.button(
         width - 140,
         height - 38,
         116,
         26,
-        text("common.cancel"),
-        false,
-        relinkPreviewWindow
+        text("common.cancel")
     )
     guiSetEnabled(confirmButton, relinkTarget ~= nil)
-    local pickTargetButton = guiCreateButton(
+    local pickTargetButton = modal.button(
         16,
         height - 38,
         116,
         26,
-        text("f7.relink.pickTarget"),
-        false,
-        relinkPreviewWindow
+        text("f7.relink.pickTarget")
     )
     addEventHandler("onClientGUIClick", pickTargetButton, function()
         pendingRelinkSourceMapId = relinkSource.mapEntity.mapId
@@ -316,18 +306,15 @@ local function renderUnlinkConfirmation(entry)
     if isElement(linkConfirmationWindow) then
         destroyElement(linkConfirmationWindow)
     end
-    local width = 620
-    local height = 190
-    local screenWidth, screenHeight = guiGetScreenSize()
-    linkConfirmationWindow = guiCreateWindow(
-        (screenWidth - width) / 2,
-        (screenHeight - height) / 2,
-        width,
-        height,
-        text("f7.unlink.title"),
-        false
+    local modal = ANKIGTA.Layout.openChild(
+        "f7Modal", "f7", text("f7.unlink.title"), 620, 190
     )
-    guiCreateLabel(
+    if not modal then
+        return
+    end
+    linkConfirmationWindow = modal.window
+    local width, height = modal.width, modal.height
+    modal.label(
         16,
         32,
         width - 32,
@@ -335,45 +322,29 @@ local function renderUnlinkConfirmation(entry)
         text(
             "f7.entityLabel",
             entry.mapEntity.mapId .. "/" .. entry.mapEntity.entityId
-        ),
-        false,
-        linkConfirmationWindow
+        )
     )
-    guiCreateLabel(
+    modal.label(
         16,
         72,
         width - 32,
         40,
-        text("f7.cardLabel", linkIdentityText(entry.link.cardIdentity)),
-        false,
-        linkConfirmationWindow
+        text("f7.cardLabel", linkIdentityText(entry.link.cardIdentity))
     )
-    guiCreateLabel(
-        16,
-        112,
-        width - 32,
-        28,
-        text("f7.unlink.explanation"),
-        false,
-        linkConfirmationWindow
-    )
-    local confirmButton = guiCreateButton(
+    modal.label(16, 112, width - 32, 28, text("f7.unlink.explanation"))
+    local confirmButton = modal.button(
         width - 270,
         height - 38,
         116,
         26,
-        text("f7.unlink.confirm"),
-        false,
-        linkConfirmationWindow
+        text("f7.unlink.confirm")
     )
-    local cancelButton = guiCreateButton(
+    local cancelButton = modal.button(
         width - 140,
         height - 38,
         116,
         26,
-        text("common.cancel"),
-        false,
-        linkConfirmationWindow
+        text("common.cancel")
     )
     addEventHandler("onClientGUIClick", confirmButton, function()
         triggerServerEvent(
@@ -399,18 +370,15 @@ local function renderReplaceConfirmation(entry, oldIdentity, newIdentity)
     if isElement(linkConfirmationWindow) then
         destroyElement(linkConfirmationWindow)
     end
-    local width = 650
-    local height = 210
-    local screenWidth, screenHeight = guiGetScreenSize()
-    linkConfirmationWindow = guiCreateWindow(
-        (screenWidth - width) / 2,
-        (screenHeight - height) / 2,
-        width,
-        height,
-        text("f7.replace.title"),
-        false
+    local modal = ANKIGTA.Layout.openChild(
+        "f7Modal", "f7", text("f7.replace.title"), 650, 210
     )
-    guiCreateLabel(
+    if not modal then
+        return
+    end
+    linkConfirmationWindow = modal.window
+    local width, height = modal.width, modal.height
+    modal.label(
         16,
         32,
         width - 32,
@@ -418,54 +386,36 @@ local function renderReplaceConfirmation(entry, oldIdentity, newIdentity)
         text(
             "f7.entityLabel",
             entry.mapEntity.mapId .. "/" .. entry.mapEntity.entityId
-        ),
-        false,
-        linkConfirmationWindow
+        )
     )
-    guiCreateLabel(
+    modal.label(
         16,
         68,
         width - 32,
         32,
-        text("f7.replace.oldCard", linkIdentityText(oldIdentity)),
-        false,
-        linkConfirmationWindow
+        text("f7.replace.oldCard", linkIdentityText(oldIdentity))
     )
-    guiCreateLabel(
+    modal.label(
         16,
         104,
         width - 32,
         32,
-        text("f7.replace.newCard", linkIdentityText(newIdentity)),
-        false,
-        linkConfirmationWindow
+        text("f7.replace.newCard", linkIdentityText(newIdentity))
     )
-    guiCreateLabel(
-        16,
-        140,
-        width - 32,
-        28,
-        text("f7.replace.explanation"),
-        false,
-        linkConfirmationWindow
-    )
-    local confirmButton = guiCreateButton(
+    modal.label(16, 140, width - 32, 28, text("f7.replace.explanation"))
+    local confirmButton = modal.button(
         width - 270,
         height - 38,
         116,
         26,
-        text("f7.replace.confirm"),
-        false,
-        linkConfirmationWindow
+        text("f7.replace.confirm")
     )
-    local cancelButton = guiCreateButton(
+    local cancelButton = modal.button(
         width - 140,
         height - 38,
         116,
         26,
-        text("common.cancel"),
-        false,
-        linkConfirmationWindow
+        text("common.cancel")
     )
     addEventHandler("onClientGUIClick", confirmButton, function()
         triggerServerEvent(
@@ -488,18 +438,15 @@ end
 local function renderSnapshot(snapshot)
     closeF7()
 
-    local width = 900
-    local height = 360
-    local screenWidth, screenHeight = guiGetScreenSize()
-    window = guiCreateWindow(
-        (screenWidth - width) / 2,
-        (screenHeight - height) / 2,
-        width,
-        height,
-        text("f7.title"),
-        false
-    )
-    grid = guiCreateGridList(16, 32, width - 32, height - 84, false, window)
+    local surface = ANKIGTA.Layout.open("f7", text("f7.title"))
+    if not surface then
+        return
+    end
+    window = surface.window
+    -- Design pixels: the coordinates below say where a control goes in the
+    -- window as drawn, and the layout manager decides how big that is.
+    local width, height = surface.width, surface.height
+    grid = surface.gridList(16, 32, width - 32, height - 84)
     guiGridListAddColumn(grid, text("f7.column.mapEntity"), 0.17)
     guiGridListAddColumn(grid, text("f7.column.type"), 0.08)
     guiGridListAddColumn(grid, text("f7.column.authored"), 0.29)
@@ -628,14 +575,12 @@ local function renderSnapshot(snapshot)
         end
     end
 
-    recheckButton = guiCreateButton(
+    recheckButton = surface.button(
         width - 190,
         height - 42,
         174,
         26,
-        text("f7.recheck"),
-        false,
-        window
+        text("f7.recheck")
     )
     guiSetEnabled(recheckButton, hasPending)
     addEventHandler("onClientGUIClick", recheckButton, function()
@@ -649,23 +594,19 @@ local function renderSnapshot(snapshot)
         end
     end, false)
 
-    copyOriginalButton = guiCreateButton(
+    copyOriginalButton = surface.button(
         16,
         height - 74,
         180,
         26,
-        text("f7.copyOriginal"),
-        false,
-        window
+        text("f7.copyOriginal")
     )
-    copyNewButton = guiCreateButton(
+    copyNewButton = surface.button(
         204,
         height - 74,
         140,
         26,
-        text("f7.copyNew"),
-        false,
-        window
+        text("f7.copyNew")
     )
     guiSetEnabled(copyOriginalButton, copyMapId ~= nil)
     guiSetEnabled(copyNewButton, copyMapId ~= nil)
@@ -692,14 +633,12 @@ local function renderSnapshot(snapshot)
         end
     end, false)
 
-    relinkButton = guiCreateButton(
+    relinkButton = surface.button(
         292,
         height - 42,
         150,
         26,
-        text("f7.relink"),
-        false,
-        window
+        text("f7.relink")
     )
     guiSetEnabled(
         relinkButton,
@@ -709,23 +648,19 @@ local function renderSnapshot(snapshot)
         renderRelinkPreview()
     end, false)
 
-    unlinkButton = guiCreateButton(
+    unlinkButton = surface.button(
         16,
         height - 42,
         120,
         26,
-        text("f7.unlink"),
-        false,
-        window
+        text("f7.unlink")
     )
-    replaceButton = guiCreateButton(
+    replaceButton = surface.button(
         144,
         height - 42,
         140,
         26,
-        text("f7.replaceCard"),
-        false,
-        window
+        text("f7.replaceCard")
     )
     guiSetEnabled(unlinkButton, false)
     guiSetEnabled(replaceButton, false)
@@ -741,14 +676,12 @@ local function renderSnapshot(snapshot)
         end
     end, false)
 
-    cardPickerButton = guiCreateButton(
+    cardPickerButton = surface.button(
         532,
         height - 74,
         150,
         26,
-        text("f7.cardPicker"),
-        false,
-        window
+        text("f7.cardPicker")
     )
     local hasUnlinkedEntity = false
     for _, entry in ipairs(snapshot.entities) do
@@ -773,14 +706,12 @@ local function renderSnapshot(snapshot)
         end
     end, false)
 
-    local pickEntityButton = guiCreateButton(
+    local pickEntityButton = surface.button(
         700,
         height - 74,
         174,
         26,
-        text("f7.pickEntity"),
-        false,
-        window
+        text("f7.pickEntity")
     )
     guiSetEnabled(pickEntityButton, #snapshot.entities > 0)
     addEventHandler("onClientGUIClick", pickEntityButton, function()
@@ -788,36 +719,33 @@ local function renderSnapshot(snapshot)
         triggerEvent(PICK_ENTITY_START_EVENT, resourceRoot, "pick")
     end, false)
 
-    local settingsButton = guiCreateButton(
+    -- One entry, because there is one panel. UI scale and the way back from a
+    -- layout the player cannot use are rows in it, not a second window
+    -- offering the same value from somewhere else.
+    local settingsButton = surface.button(
         360,
         height - 74,
         150,
         26,
-        text("settings.title"),
-        false,
-        window
+        text("settings.title")
     )
     addEventHandler("onClientGUIClick", settingsButton, function()
         triggerEvent(OPEN_SETTINGS_EVENT, resourceRoot)
     end, false)
 
-    undoButton = guiCreateButton(
+    undoButton = surface.button(
         512,
         height - 42,
         88,
         26,
-        text("f7.undo"),
-        false,
-        window
+        text("f7.undo")
     )
-    redoButton = guiCreateButton(
+    redoButton = surface.button(
         606,
         height - 42,
         88,
         26,
-        text("f7.redo"),
-        false,
-        window
+        text("f7.redo")
     )
     local history = snapshot.history or {}
     guiSetEnabled(undoButton, history.canUndo == true)
@@ -875,35 +803,27 @@ local function renderCardPicker(snapshot)
         destroyElement(cardPickerWindow)
     end
     selectedCardIdentity = nil
-    local width = 620
-    local height = 320
-    local screenWidth, screenHeight = guiGetScreenSize()
-    cardPickerWindow = guiCreateWindow(
-        (screenWidth - width) / 2,
-        (screenHeight - height) / 2,
-        width,
-        height,
+    local picker = ANKIGTA.Layout.open(
+        "cardPicker",
         cardPickerMode == "replace"
             and text("cardPicker.replaceTitle")
-            or text("cardPicker.title"),
-        false
+            or text("cardPicker.title")
     )
-    deckFilterEdit = guiCreateEdit(
-        16, 32, width - 220, 26, "", false, cardPickerWindow
-    )
+    if not picker then
+        return
+    end
+    cardPickerWindow = picker.window
+    local width, height = picker.width, picker.height
+    deckFilterEdit = picker.edit(16, 32, width - 220, 26, "")
     guiSetProperty(deckFilterEdit, "NormalTextColour", "FF000000")
-    cardSearchButton = guiCreateButton(
+    cardSearchButton = picker.button(
         width - 190,
         32,
         174,
         26,
-        text("cardPicker.search"),
-        false,
-        cardPickerWindow
+        text("cardPicker.search")
     )
-    cardGrid = guiCreateGridList(
-        16, 66, width - 32, height - 110, false, cardPickerWindow
-    )
+    cardGrid = picker.gridList(16, 66, width - 32, height - 110)
     guiGridListAddColumn(cardGrid, text("cardPicker.column.card"), 0.22)
     guiGridListAddColumn(cardGrid, text("cardPicker.column.deck"), 0.28)
     guiGridListAddColumn(cardGrid, text("cardPicker.column.state"), 0.22)
@@ -952,16 +872,14 @@ local function renderCardPicker(snapshot)
         end
         cardRows[row] = identity
     end
-    local linkButton = guiCreateButton(
+    local linkButton = picker.button(
         width - 210,
         height - 36,
         194,
         26,
         cardPickerMode == "replace"
             and text("cardPicker.previewReplacement")
-            or text("cardPicker.link"),
-        false,
-        cardPickerWindow
+            or text("cardPicker.link")
     )
     guiSetEnabled(linkButton, false)
     addEventHandler("onClientGUIClick", cardGrid, function()
@@ -1039,31 +957,41 @@ addEventHandler(F7_SNAPSHOT_EVENT, resourceRoot, function(snapshot)
     end
 end)
 
--- Rebuilt from the snapshot already in hand rather than re-asked for: the
--- language is a client-side setting, and a window open while the player changes
--- it has no business waiting on the server to read differently.
+--- Rebuild whatever is open, from the snapshots already in hand.
+--
+-- Rebuilt rather than re-asked for: both the language and UI Scale are
+-- client-side settings, and a window open while the player changes one has no
+-- business waiting on the server to read or measure differently.
+local function rebuildOpenWindows()
+    -- Read before rebuilding: rebuilding the main window closes the Card
+    -- Picker and resets the mode it was opened in.
+    local hadWindow = isElement(window)
+    local hadPicker = isElement(cardPickerWindow)
+    local pickerMode = cardPickerMode
+    local pickerOldIdentity = oldCardIdentity
+    -- What the player typed is theirs; a relabel must not throw it away.
+    local deckFilter = hadPicker and guiGetText(deckFilterEdit) or nil
+    if hadWindow and lastSnapshot then
+        renderSnapshot(lastSnapshot)
+    end
+    if hadPicker and lastCardPickerSnapshot then
+        cardPickerMode = pickerMode
+        oldCardIdentity = pickerOldIdentity
+        renderCardPicker(lastCardPickerSnapshot)
+        if deckFilter then
+            guiSetText(deckFilterEdit, deckFilter)
+        end
+    end
+end
+
 if ANKIGTA.Locale then
-    ANKIGTA.Locale.onChange(function()
-        -- Read before rebuilding: rebuilding the main window closes the Card
-        -- Picker and resets the mode it was opened in.
-        local hadWindow = isElement(window)
-        local hadPicker = isElement(cardPickerWindow)
-        local pickerMode = cardPickerMode
-        local pickerOldIdentity = oldCardIdentity
-        -- What the player typed is theirs; a relabel must not throw it away.
-        local deckFilter = hadPicker and guiGetText(deckFilterEdit) or nil
-        if hadWindow and lastSnapshot then
-            renderSnapshot(lastSnapshot)
-        end
-        if hadPicker and lastCardPickerSnapshot then
-            cardPickerMode = pickerMode
-            oldCardIdentity = pickerOldIdentity
-            renderCardPicker(lastCardPickerSnapshot)
-            if deckFilter then
-                guiSetText(deckFilterEdit, deckFilter)
-            end
-        end
-    end)
+    ANKIGTA.Locale.onChange(rebuildOpenWindows)
+end
+
+if ANKIGTA.Layout then
+    -- A window writes its control geometry once, when it is built, so a new
+    -- scale reaches it only by rebuilding it.
+    ANKIGTA.Layout.onChange(rebuildOpenWindows)
 end
 
 addEvent(F7_DENIED_EVENT, true)

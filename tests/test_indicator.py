@@ -21,6 +21,10 @@ OTHER_UUID = "22222222-2222-4222-8222-222222222222"
 @pytest.fixture
 def indicator() -> Iterator[MtaSandbox]:
     sandbox = MtaSandbox()
+    # The HUD asks the layout manager where it goes (ticket 28), so the modules
+    # it is declared after in meta.xml load with it.
+    sandbox.load("shared/settings.lua")
+    sandbox.load("client/layout.lua")
     sandbox.load("client/indicator.lua")
     try:
         yield sandbox

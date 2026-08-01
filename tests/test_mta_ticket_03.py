@@ -137,7 +137,10 @@ def test_mta_connection_ui_masks_replacement_token_and_offers_connect() -> None:
 
     sandbox = MtaSandbox()
     try:
+        sandbox.load("shared/settings.lua")
         sandbox.load("shared/locale.lua")
+        # Both windows ask the layout manager where they go (ticket 28).
+        sandbox.load("client/layout.lua")
         sandbox.load("client/connection_settings.lua")
         label = sandbox.eval("function(key) return ANKIGTA.Locale.text(key) end")
 

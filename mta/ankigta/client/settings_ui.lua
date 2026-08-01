@@ -45,6 +45,10 @@ local function label(key)
     return key
 end
 
+local function layout()
+    return ANKIGTA.Layout
+end
+
 local function schema()
     return ANKIGTA.Settings
 end
@@ -162,49 +166,35 @@ local function nextChoice(key, value)
     return values[1]
 end
 
-local function addRow(parent, y, key)
+local function addRow(panel, y, key)
     local entry = {labelKey = "settings." .. key}
-    entry.label = guiCreateLabel(
+    entry.label = panel.label(
         LABEL_X,
         y,
         LABEL_WIDTH,
         24,
-        label(entry.labelKey),
-        false,
-        parent
+        label(entry.labelKey)
     )
-    entry.errorLabel = guiCreateLabel(
-        ERROR_X,
-        y,
-        ERROR_WIDTH,
-        24,
-        "",
-        false,
-        parent
-    )
+    entry.errorLabel = panel.label(ERROR_X, y, ERROR_WIDTH, 24, "")
     return entry
 end
 
-local function buildNumberRow(parent, y, key)
-    local entry = addRow(parent, y, key)
+local function buildNumberRow(panel, y, key)
+    local entry = addRow(panel, y, key)
     entry.kind = "number"
-    entry.element = guiCreateEdit(
+    entry.element = panel.edit(
         CONTROL_X,
         y - 4,
         CONTROL_WIDTH,
         26,
-        tostring(currentValue(key)),
-        false,
-        parent
+        tostring(currentValue(key))
     )
-    entry.applyButton = guiCreateButton(
+    entry.applyButton = panel.button(
         APPLY_X,
         y - 4,
         APPLY_WIDTH,
         26,
-        label("settings.apply"),
-        false,
-        parent
+        label("settings.apply")
     )
     addEventHandler("onClientGUIClick", entry.applyButton, function()
         SettingsUI.applyNumber(key)
@@ -212,18 +202,16 @@ local function buildNumberRow(parent, y, key)
     return entry
 end
 
-local function buildBooleanRow(parent, y, key)
-    local entry = addRow(parent, y, key)
+local function buildBooleanRow(panel, y, key)
+    local entry = addRow(panel, y, key)
     entry.kind = "boolean"
-    entry.element = guiCreateCheckBox(
+    entry.element = panel.checkBox(
         CONTROL_X,
         y,
         CONTROL_WIDTH,
         24,
         "",
-        currentValue(key) == true,
-        false,
-        parent
+        currentValue(key) == true
     )
     addEventHandler("onClientGUIClick", entry.element, function()
         SettingsUI.toggle(key, guiCheckBoxGetSelected(entry.element))
@@ -231,17 +219,15 @@ local function buildBooleanRow(parent, y, key)
     return entry
 end
 
-local function buildChoiceRow(parent, y, key)
-    local entry = addRow(parent, y, key)
+local function buildChoiceRow(panel, y, key)
+    local entry = addRow(panel, y, key)
     entry.kind = "choice"
-    entry.element = guiCreateButton(
+    entry.element = panel.button(
         CONTROL_X,
         y - 4,
         CONTROL_WIDTH,
         26,
-        valueLabel(currentValue(key)),
-        false,
-        parent
+        valueLabel(currentValue(key))
     )
     addEventHandler("onClientGUIClick", entry.element, function()
         SettingsUI.chooseValue(key, nextChoice(key, currentValue(key)))
@@ -249,19 +235,17 @@ local function buildChoiceRow(parent, y, key)
     return entry
 end
 
-local function buildDelegatedRow(parent, y, key)
+local function buildDelegatedRow(panel, y, key)
     -- The add-on owns the connection and publishes it; the panel only points at
     -- the window that already knows how to edit an override.
-    local entry = addRow(parent, y, key)
+    local entry = addRow(panel, y, key)
     entry.kind = "delegated"
-    entry.element = guiCreateButton(
+    entry.element = panel.button(
         CONTROL_X,
         y - 4,
         CONTROL_WIDTH,
         26,
-        label("settings.connectionSettings"),
-        false,
-        parent
+        label("settings.connectionSettings")
     )
     addEventHandler("onClientGUIClick", entry.element, function()
         triggerServerEvent(CONNECTION_SETTINGS_REQUEST_EVENT, resourceRoot)
@@ -269,47 +253,36 @@ local function buildDelegatedRow(parent, y, key)
     return entry
 end
 
-local function buildMapsRow(parent, y, key)
+local function buildMapsRow(panel, y, key)
     -- Per map, not global: one checkbox below per map the server knows about.
-    local entry = addRow(parent, y, key)
+    local entry = addRow(panel, y, key)
     entry.kind = "maps"
     entry.element = false
     return entry
 end
 
-local function buildMapRows(parent, y)
+local function buildMapRows(panel, y)
     SettingsUI.mapControls = {}
     if #SettingsUI.maps == 0 then
-        guiCreateLabel(
-            LABEL_X,
-            y,
-            WIDTH - 32,
-            24,
-            label("settings.noMaps"),
-            false,
-            parent
-        )
+        panel.label(LABEL_X, y, WIDTH - 32, 24, label("settings.noMaps"))
         return y + ROW_HEIGHT
     end
     for _, map in ipairs(SettingsUI.maps) do
-        guiCreateLabel(
+        -- The map's own name, shown as the user typed it.
+        panel.label(
             LABEL_X + 16,
             y,
             LABEL_WIDTH,
             24,
-            tostring(map.mapName or map.mapId),
-            false,
-            parent
+            tostring(map.mapName or map.mapId)
         )
-        local checkBox = guiCreateCheckBox(
+        local checkBox = panel.checkBox(
             CONTROL_X,
             y,
             CONTROL_WIDTH,
             24,
             "",
-            map.includeInStudy ~= false,
-            false,
-            parent
+            map.includeInStudy ~= false
         )
         SettingsUI.mapControls[map.mapId] = checkBox
         local mapId = map.mapId
@@ -339,20 +312,55 @@ local function builderFor(definition)
     return BUILDERS[definition.rule.kind] or buildDelegatedRow
 end
 
-local function placement(height)
-    local stored = ANKIGTA.ClientSettings
-        and ANKIGTA.ClientSettings.get("uiPlacement")
-    if type(stored) == "table"
-        and tonumber(stored.x)
-        and tonumber(stored.y)
-    then
-        return tonumber(stored.x), tonumber(stored.y)
-    end
-    local screenWidth, screenHeight = guiGetScreenSize()
-    return (screenWidth - WIDTH) / 2, (screenHeight - height) / 2
+--- The block that is not a setting.
+--
+-- Stepping the scale, entering HUD edit mode and `Reset UI layout` are actions
+-- on the layout rather than values in the schema, which is why they sit under
+-- the `uiScale` row instead of pretending to be rows of their own. They live
+-- here rather than in a window of their own because a second window offering
+-- the same scale is two places to change one thing.
+local function buildLayoutActions(panel, y)
+    local smaller = panel.button(LABEL_X, y, 118, 26, label("ui.smaller"))
+    local larger = panel.button(LABEL_X + 126, y, 118, 26, label("ui.larger"))
+    local editHud = panel.checkBox(
+        CONTROL_X,
+        y,
+        CONTROL_WIDTH,
+        24,
+        label("ui.editHud"),
+        layout() and layout().hudEditMode() == true
+    )
+    local reset = panel.button(APPLY_X, y - 2, 192, 28, label("ui.reset"))
+    addEventHandler("onClientGUIClick", smaller, function()
+        SettingsUI.stepScale(-1)
+    end, false)
+    addEventHandler("onClientGUIClick", larger, function()
+        SettingsUI.stepScale(1)
+    end, false)
+    addEventHandler("onClientGUIClick", editHud, function()
+        if layout() then
+            layout().setHudEditMode(guiCheckBoxGetSelected(editHud))
+        end
+    end, false)
+    addEventHandler("onClientGUIClick", reset, function()
+        SettingsUI.resetLayout()
+    end, false)
+    -- What each of the two does, next to the control that does it.
+    panel.label(
+        CONTROL_X,
+        y + 24,
+        CONTROL_WIDTH,
+        22,
+        label("ui.editHudExplanation")
+    )
+    panel.label(APPLY_X, y + 24, 192, 22, label("ui.resetExplanation"))
+    return y + ROW_HEIGHT + 22
 end
 
 local function render()
+    if not layout() then
+        return
+    end
     if isElement(SettingsUI.window) then
         destroyElement(SettingsUI.window)
     end
@@ -367,16 +375,16 @@ local function render()
             SettingsUI.serverValues[key] = schema().default(key)
         end
     end
-    local height = 76 + (#keys + math.max(#SettingsUI.maps, 1)) * ROW_HEIGHT
-    local x, y = placement(height)
-    SettingsUI.window = guiCreateWindow(
-        x,
-        y,
-        WIDTH,
-        height,
-        label("settings.title"),
-        false
-    )
+    -- The panel grows with the schema and with the maps that are loaded, so it
+    -- tells the layout manager its size rather than being told one.
+    local height =
+        76 + (#keys + 1 + math.max(#SettingsUI.maps, 1)) * ROW_HEIGHT
+    layout().define("settings", {width = WIDTH, height = height})
+    local panel = layout().open("settings", label("settings.title"))
+    if not panel then
+        return
+    end
+    SettingsUI.window = panel.window
 
     local row = 32
     for _, key in ipairs(keys) do
@@ -390,23 +398,24 @@ local function render()
                 labelKey = false,
             }
         elseif key == "includeInStudy" then
-            SettingsUI.controls[key] = buildMapsRow(SettingsUI.window, row, key)
-            row = buildMapRows(SettingsUI.window, row + ROW_HEIGHT)
+            SettingsUI.controls[key] = buildMapsRow(panel, row, key)
+            row = buildMapRows(panel, row + ROW_HEIGHT)
         else
             SettingsUI.controls[key] =
-                builderFor(definition)(SettingsUI.window, row, key)
+                builderFor(definition)(panel, row, key)
             row = row + ROW_HEIGHT
+            if key == "uiScale" then
+                row = buildLayoutActions(panel, row)
+            end
         end
     end
 
-    local closeButton = guiCreateButton(
+    local closeButton = panel.button(
         WIDTH - 122,
         height - 40,
         106,
         28,
-        label("settings.close"),
-        false,
-        SettingsUI.window
+        label("settings.close")
     )
     addEventHandler("onClientGUIClick", closeButton, function()
         closeSettings()
@@ -449,17 +458,38 @@ function SettingsUI.refresh()
     return true
 end
 
+--- Move UI scale by one step, saying why if the schema refuses.
+--
+-- Refused, never clamped, and said in the player's language: the refusal
+-- carries a localization key, and this is the side that turns it into a
+-- sentence.
+function SettingsUI.stepScale(direction)
+    if not layout() then
+        return false
+    end
+    local accepted, reason = layout().stepScale(direction)
+    if not accepted then
+        showRejection("uiScale", tostring(reason or "settings.error.unknown"))
+    end
+    return accepted
+end
+
+--- Put UI scale and every window back where they shipped.
+function SettingsUI.resetLayout()
+    if not layout() then
+        return false
+    end
+    layout().reset()
+    outputChatBox(label("ui.resetDone"), 235, 235, 235)
+    return true
+end
+
 function closeSettings()
     if not isElement(SettingsUI.window) then
         return false
     end
-    -- Where the user dragged the panel is a setting like any other, minus the
-    -- part where anyone would want to undo it.
-    if ANKIGTA.ClientSettings then
-        local x, y = guiGetPosition(SettingsUI.window, false)
-        ANKIGTA.ClientSettings.set("uiPlacement", {x = x, y = y})
-    end
     destroyElement(SettingsUI.window)
+    layout().detach("settings")
     SettingsUI.window = false
     SettingsUI.controls = {}
     SettingsUI.mapControls = {}
@@ -513,6 +543,41 @@ end)
 addCommandHandler("ankigta-settings", function()
     openSettings()
 end)
+
+--- Kept from ticket 28: the name a player already knows for the size controls.
+-- They are rows in this panel now rather than a window of their own, so both
+-- names open the same one.
+function openUiSettings()
+    return openSettings()
+end
+
+function isUiSettingsOpen()
+    return isElement(SettingsUI.window) == true
+end
+
+addCommandHandler("ankigta-ui", function()
+    openSettings()
+end)
+
+--- The way back, needing no window at all.
+--
+-- `Reset UI layout` is also a row in the panel, but the panel is laid out by
+-- the very thing being reset. A command cannot be too big for the screen, so
+-- this is the one path that cannot be closed off by the state it undoes.
+addCommandHandler("ankigta-ui-reset", function()
+    if layout() then
+        layout().reset()
+        outputChatBox(label("ui.resetDone"), 235, 235, 235)
+    end
+end)
+
+if ANKIGTA.Layout then
+    ANKIGTA.Layout.onChange(function()
+        if isElement(SettingsUI.window) then
+            render()
+        end
+    end)
+end
 
 addEventHandler("onClientResourceStop", resourceRoot, closeSettings)
 

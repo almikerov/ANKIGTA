@@ -247,6 +247,15 @@ both the constant guard and the render test. Restoring the old history rule
 (`excludedFromHistory ~= true`) fails six tests, five of them naming the setting
 that would start lying again.
 
+### Merged with ticket 28
+
+Панель переехала на менеджер раскладки тикета 28: она больше не зовёт
+`guiGetScreenSize()` и не пишет `uiPlacement` сама — размещение хранит
+менеджер, долей экрана. Оттуда же в неё пришёл блок под строкой `uiScale`:
+шаги ±0.05, `Edit HUD layout` и `Reset UI layout` — действия над раскладкой, а
+не значения схемы, поэтому они строки этой панели, а не второе окно с тем же
+масштабом.
+
 ## Manual runtime checklist
 
 See `docs/checklists/ticket27-settings-localization.md` (`Status: not run`).
