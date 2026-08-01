@@ -17,6 +17,29 @@ They must not:
 - copy an ANKIGTA build into an installed MTA resource directory;
 - modify GTA saves/settings or use a real user map as a test fixture.
 
+### Deployment for a human pass is not verification
+
+The owner may ask for an ANKIGTA build to be installed into their own MTA
+server so that *they* can run the manual checklist. That is a deployment, not a
+check, and it is allowed on request. It does not relax anything above: a
+deployed build produces no automated evidence, every automated check still runs
+against a disposable copy, and GUI automation stays prohibited whatever is
+installed where.
+
+A deployment on request must:
+
+- write only the named resource directory and, where the resource cannot work
+  without it, the ACL — backing up each installed file it edits alongside the
+  original;
+- leave the server's startup list alone, so nothing begins running that the
+  owner did not start;
+- be reported file by file, so it can be undone.
+
+Installing the companion add-on into a real Anki profile is a separate decision
+and needs its own request: the add-on builds and rebuilds a filtered deck in the
+bound collection and applies ratings through the scheduler, so it changes the
+owner's review history rather than only their game.
+
 ## Launching programs
 
 Launching processes is allowed, including MTA Server. A run must:
