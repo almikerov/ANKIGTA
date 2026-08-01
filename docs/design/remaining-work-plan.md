@@ -74,6 +74,12 @@ prompt above points at the docs:
 - **Mutation-check the load-bearing tests.** Break the constant or the predicate
   and confirm a test fails. Two tests written during ticket 16 passed under
   mutation until they were strengthened.
+- **Make test doubles match the producer's real shape.** This has now caused
+  two shipped bugs in a row: ticket 25 iterated vehicle occupants with `ipairs`
+  because the stub returned a dense 1-based table where MTA returns a sparse
+  seat-keyed one, and ticket 23 read camelCase fields where `Store` hands back
+  raw snake_case SQLite rows. Both looked green. Before writing a double, read
+  what actually produces that value.
 - **Never claim coverage you do not have.** Where a criterion can only be
   observed by a human, mark it `[~]` with the reason and write the checklist.
 - **`fetchRemote` callback arguments must be a pure array table.** MTA forwards
