@@ -183,7 +183,12 @@ For each unblocked ticket, open a fresh chat in the ANKIGTA folder, attach or re
 /implement
 
 Реализуй только приложенный тикет ANKIGTA и соблюдай его blocking edges.
-Перед работой прочитай CONTEXT.md, релевантные ADR, спецификацию и сам тикет.
+Перед работой прочитай AGENTS.md, CONTEXT.md, релевантные ADR, спецификацию и
+сам тикет. Обязательно соблюдай `docs/agents/mta-gta-reference-policy.md`:
+проверяй программно, запускать одноразовые копии можно, управлять GUI через
+скриншоты и синтетический ввод нельзя, установленный MTA/GTA не изменяй.
+Проверки, которые может увидеть только человек, оставляй `not run` с точным
+ручным checklist.
 Работай test-first небольшими red-green-refactor шагами. Не реализуй соседние
 тикеты и не меняй подтверждённые продуктовые решения.
 
@@ -237,6 +242,9 @@ Open a new chat in the same folder, attach both the ticket and handoff, then sen
 /implement
 
 Продолжи только приложенный тикет ANKIGTA из приложенного handoff.
-Сначала проверь текущее состояние файлов и тестов; не повторяй уже завершённые
-шаги. Доведи acceptance criteria до выполнения и закончи code review.
+Сначала прочитай AGENTS.md и `docs/agents/mta-gta-reference-policy.md`, затем
+проверь текущее состояние файлов и тестов; не повторяй уже завершённые шаги.
+Проверяй программно и не изменяй установленный MTA/GTA. Доведи
+программно проверяемые acceptance criteria до выполнения, явно оставь
+наблюдаемые человеком checks `not run` с ручным checklist и закончи code review.
 ```
