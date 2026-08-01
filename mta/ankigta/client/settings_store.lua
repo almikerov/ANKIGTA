@@ -132,6 +132,11 @@ end
 -- nothing acts on is a setting the player did not really change.
 function ClientSettings.apply()
     local values = ClientSettings.values
+    if ANKIGTA.Layout then
+        -- Before the rest: the modules below draw at whatever scale the layout
+        -- manager is holding, so it has to be holding the stored one first.
+        ANKIGTA.Layout.applySettings(values.uiScale, values.uiPlacement)
+    end
     if ANKIGTA.Indicator then
         ANKIGTA.Indicator.setMode(values.indicatorMode)
     end

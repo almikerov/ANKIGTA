@@ -20,6 +20,10 @@
     <script src="server/teleport.lua" type="server" />
     <script src="server/statistics.lua" type="server" />
     <script src="server/main.lua" type="server" />
+    <!-- First on this side: every window asks it where it goes and how big it
+         is, and the settings store hands it the stored scale and placement. -->
+    <script src="client/layout.lua" type="client" cache="false" />
+    <script src="client/ui_settings.lua" type="client" cache="false" />
     <script src="client/connection_status.lua" type="client" cache="false" />
     <script src="client/connection_settings.lua" type="client" cache="false" />
     <script src="client/study.lua" type="client" cache="false" />

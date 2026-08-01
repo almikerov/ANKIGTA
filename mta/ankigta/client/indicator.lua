@@ -187,27 +187,52 @@ function Indicator.refresh()
     return current
 end
 
-function Indicator.render()
+--- What the counters read, as one line.
+function Indicator.hudText()
     local counts = hud.counts
-    if type(counts) == "table" then
-        local screenWidth = guiGetScreenSize()
-        local parts = {}
-        for index, counter in ipairs(COUNTER_KEYS) do
-            parts[index] = string.format(
-                "%s %d",
-                text(counter[1]),
-                tonumber(counts[counter[2]]) or 0
+    if type(counts) ~= "table" then
+        return false
+    end
+    local parts = {}
+    for index, counter in ipairs(COUNTER_KEYS) do
+        parts[index] = string.format(
+            "%s %d",
+            text(counter[1]),
+            tonumber(counts[counter[2]]) or 0
+        )
+    end
+    -- The product name is not a word to translate.
+    return "ANKIGTA  " .. table.concat(parts, "   ")
+end
+
+function Indicator.render()
+    local line = Indicator.hudText()
+    if line then
+        local x, y, width, height, scale = ANKIGTA.Layout.rect("hud")
+        if ANKIGTA.Layout.hudEditMode() then
+            -- The HUD has no title bar, so Edit HUD layout says so by showing
+            -- the box the player is about to grab.
+            dxDrawRectangle(x, y, width, height, tocolor(60, 90, 130, 140))
+            dxDrawText(
+                text("ui.hudHandle"),
+                x,
+                y - math.floor(20 * scale),
+                x + width,
+                y,
+                tocolor(160, 200, 255, 235),
+                scale,
+                "default-bold",
+                "right"
             )
         end
         dxDrawText(
-            -- The product name is not a word to translate.
-            "ANKIGTA  " .. table.concat(parts, "   "),
-            screenWidth - 520,
-            12,
-            screenWidth - 12,
-            34,
+            line,
+            x,
+            y,
+            x + width,
+            y + height,
             tocolor(235, 235, 235, 220),
-            1,
+            scale,
             "default-bold",
             "right"
         )
@@ -249,6 +274,48 @@ end)
 addEventHandler("onClientRender", root, function()
     if Indicator.mode ~= MODE_NONE or hud.counts then
         Indicator.render()
+    end
+end)
+
+-- Moving the HUD -------------------------------------------------------------
+--
+-- Only in Edit HUD layout. The HUD is drawn over the game rather than in a
+-- window, so without a mode of its own every click near the counters would be
+-- a click that could drag them.
+
+local function reviewModeHoldsTheMouse()
+    -- Review Mode is modal (story 48). A click meant for a card is not a click
+    -- that also drags the HUD out from behind it.
+    return type(isReviewModeActive) == "function" and isReviewModeActive()
+end
+
+addEventHandler("onClientClick", root, function(button, state, cursorX, cursorY)
+    if button ~= "left" or not ANKIGTA.Layout.hudEditMode() then
+        return
+    end
+    if reviewModeHoldsTheMouse() then
+        return
+    end
+    if state == "down" then
+        if ANKIGTA.Layout.beginDrag("hud", cursorX, cursorY) then
+            cancelEvent()
+        end
+        return
+    end
+    if state == "up" and ANKIGTA.Layout.dragging("hud") then
+        ANKIGTA.Layout.endDrag()
+        cancelEvent()
+    end
+end)
+
+addEventHandler("onClientCursorMove", root, function(
+    _relativeX,
+    _relativeY,
+    absoluteX,
+    absoluteY
+)
+    if ANKIGTA.Layout.dragging("hud") then
+        ANKIGTA.Layout.dragTo(absoluteX, absoluteY)
     end
 end)
 

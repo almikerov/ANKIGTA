@@ -10,7 +10,7 @@
 
 ## Acceptance criteria
 
-- [~] Server owns world/study settings and Change History; client owns presentation/input/audio; add-on owns listener/token/Anki internals. Каждая сторона теперь пишет только своё: `Store.setUserSetting` и `SettingsStore` отказывают в `wrong_authority`, клиентское хранилище не принимает серверную настройку ни из файла, ни из события, сервер больше не досылает `closeAfterRating`. Не хватает одного: клиентские настройки, которые схема помечает как undoable (`indicatorMode`, `reviewProtection`, `closeAfterRating`, …), никуда в Change History не попадают, потому что история серверная. Нужно решение: либо журналировать их на сервер, либо пометить `excludedFromHistory`.
+- [x] Server owns world/study settings and Change History; client owns presentation/input/audio; add-on owns listener/token/Anki internals. Каждая сторона теперь пишет только своё: `Store.setUserSetting` и `SettingsStore` отказывают в `wrong_authority`, клиентское хранилище не принимает серверную настройку ни из файла, ни из события, сервер больше не досылает `closeAfterRating`. Открытый вопрос про клиентские настройки в Change History закрыт тикетом 28: ADR 0028 выводит принадлежность истории из authority, `Settings.inChangeHistory` отвечает `false` всему, чем сервер не владеет, и помечать ничего вручную не нужно.
 - [x] Manual connection overrides remain side-local and excluded from Change History. Override штампуется стороной (`Settings.overrideBy`), чужой и неподписанный override отклоняются (`foreign_manual_connection_override`), а база отказывается его хранить (`not_a_stored_setting`).
 - [~] Radius, delay, speed, early-review policy, indicator, pause, protection and Close after rating use confirmed defaults/ranges. Семь из восьми читаются, пишутся, переживают restart и берут default/диапазон из схемы: radius/delay/speed доезжают до клиентского `Activation`, indicator/protection/close-after-rating применяются клиентским хранилищем, early-review policy теперь принадлежит серверу и переживает перезапуск. `pauseOnReviewerOpen` хранится и валидируется, но арбитраж (тикет 17/18) его пока не спрашивает.
 - [~] Invalid numeric input is rejected with localized reason, not silently clamped. Отказ с ключом локализации теперь возвращает каждый производственный путь записи (порт, БД, клиентский файл, серверный push). Пути *пользовательского ввода* всё ещё нет — он появится вместе с UI.
@@ -40,8 +40,9 @@ review showed the claim did not survive contact with the code, so the status
 was corrected rather than defended. A second pass built the stores, so the
 schema now has production call sites. A third pass translated the interface, so
 the string table now has them too. What is still missing is the settings UI
-itself, a decision about client-owned settings in Change History, and consumers
-for two settings — which is why the status is still `in-progress`.
+itself and consumers for two settings — which is why the status is still
+`in-progress`. The Change History question is settled: ticket 28 wrote ADR
+0028 and derived it from authority.
 
 ### What exists and works
 

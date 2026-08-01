@@ -9,9 +9,10 @@ ANKIGTA = ANKIGTA or {}
 -- companion add-on owns the connection because it is the side that publishes
 -- it. A side that does not own a setting may read it, never write it.
 --
--- Two kinds of setting stay out of Change History: connection settings, which
--- are a local override rather than shared state, and UI placement, which is
--- nobody's idea of a decision worth undoing.
+-- Change History follows from authority rather than from a per-setting flag
+-- (ADR 0028): the history is the server's, and the server can only put back a
+-- value it holds. A setting owned by the client or the add-on is therefore
+-- never recorded, and nothing has to remember to say so.
 
 local SERVER = "server"
 local CLIENT = "client"
@@ -39,6 +40,15 @@ end
 
 local function toggle()
     return {kind = "boolean"}
+end
+
+--- Where the movable surfaces sit, as a fraction of the screen.
+--
+-- Normalized rather than absolute so the same file describes the same corner
+-- on 1280x720 and on 3840x2160. Pixels would put a window off screen the first
+-- time the player changed resolution.
+local function placement()
+    return {kind = "placement"}
 end
 
 --- Every user-facing setting, its owner, its default and its rules.
@@ -74,18 +84,16 @@ Settings.schema = {
     closeAfterRating = {authority = CLIENT, default = true, rule = toggle()},
     cardAudioEnabled = {authority = CLIENT, default = true, rule = toggle()},
     muteGameWorld = {authority = CLIENT, default = false, rule = toggle()},
-    uiScale = {authority = CLIENT, default = 1, rule = numeric(0.5, 3, nil, 2)},
+    -- No `step`: the buttons move UI Scale in 0.05, but a value typed by hand
+    -- only has to be a two-decimal number in range. Making the button's step a
+    -- validation rule would reject 1.23, which the user is entitled to type.
+    uiScale = {authority = CLIENT, default = 1, rule = numeric(0.5, 2, nil, 2)},
     language = {
         authority = CLIENT,
         default = "auto",
         rule = choice({"auto", "ru", "en"}),
     },
-    uiPlacement = {
-        authority = CLIENT,
-        default = "default",
-        rule = {kind = "opaque"},
-        excludedFromHistory = true,
-    },
+    uiPlacement = {authority = CLIENT, default = {}, rule = placement()},
 
     -- The connection: owned by the add-on, overridable locally on each side,
     -- and never part of shared history.
@@ -96,14 +104,12 @@ Settings.schema = {
         optional = true,
         rule = numeric(1, 65535, 1),
         localOverride = true,
-        excludedFromHistory = true,
     },
     connectionToken = {
         authority = ADDON,
         optional = true,
         rule = {kind = "secret"},
         localOverride = true,
-        excludedFromHistory = true,
     },
 }
 
@@ -179,12 +185,32 @@ function Settings.overrideAppliesTo(side, record)
     return type(record) == "table" and record.side == side
 end
 
+--- Is this setting the kind of change Undo can put back?
+--
+-- ADR 0028: Change History is the server's, and Undo works by having the
+-- server rewrite what it holds. A value that lives on the player's machine or
+-- inside the add-on is not something it holds, so it is never recorded. That
+-- follows from authority; only a *server*-owned setting has to say so itself.
 function Settings.inChangeHistory(key)
     local definition = Settings.schema[key]
     if not definition then
         return false
     end
+    if definition.authority ~= SERVER then
+        return false
+    end
     return definition.excludedFromHistory ~= true
+end
+
+local function copied(value)
+    if type(value) ~= "table" then
+        return value
+    end
+    local result = {}
+    for key, item in pairs(value) do
+        result[key] = copied(item)
+    end
+    return result
 end
 
 function Settings.default(key)
@@ -192,7 +218,10 @@ function Settings.default(key)
     if not definition then
         return nil
     end
-    return definition.default
+    -- A table default is handed out as a copy. Sharing the schema's own table
+    -- would let whoever stores into it edit the default for everyone else --
+    -- and the first window that remembers where it sits does exactly that.
+    return copied(definition.default)
 end
 
 local function roundTo(value, decimals)
@@ -252,6 +281,26 @@ function Settings.validate(key, value)
         return true
     end
 
+    if rule.kind == "placement" then
+        if type(value) ~= "table" then
+            return false, "settings.error.not_a_placement"
+        end
+        for surface, spot in pairs(value) do
+            if type(surface) ~= "string" or type(spot) ~= "table" then
+                return false, "settings.error.not_a_placement"
+            end
+            local x, y = tonumber(spot.x), tonumber(spot.y)
+            -- Outside 0..1 is not a spot on any screen, so it is an edited or
+            -- corrupted file rather than a place a window was ever dragged to.
+            if x == nil or y == nil
+                or x < 0 or x > 1 or y < 0 or y > 1
+            then
+                return false, "settings.error.not_a_placement"
+            end
+        end
+        return true
+    end
+
     return true
 end
 
@@ -263,6 +312,16 @@ function Settings.normalize(key, value)
     local definition = Settings.schema[key]
     if definition and definition.rule.kind == "number" then
         return tonumber(value)
+    end
+    if definition and definition.rule.kind == "placement" then
+        -- Rebuilt rather than passed through: a placement read back out of
+        -- JSON may carry its coordinates as text, and anything else the file
+        -- happened to contain is not part of a placement.
+        local result = {}
+        for surface, spot in pairs(value) do
+            result[surface] = {x = tonumber(spot.x), y = tonumber(spot.y)}
+        end
+        return result
     end
     return value
 end

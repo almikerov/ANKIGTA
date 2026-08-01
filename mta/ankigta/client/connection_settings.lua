@@ -45,6 +45,7 @@ local function closeStatusWindow()
     if isElement(statusWindow) then
         destroyElement(statusWindow)
     end
+    ANKIGTA.Layout.detach("connection")
     statusWindow = nil
     if not isElement(settingsWindow) then
         releaseCursor()
@@ -55,6 +56,7 @@ local function closeSettingsWindow()
     if isElement(settingsWindow) then
         destroyElement(settingsWindow)
     end
+    ANKIGTA.Layout.detach("connectionSettings")
     settingsWindow = nil
     if not isElement(statusWindow) then
         releaseCursor()
@@ -63,18 +65,13 @@ end
 
 local function openDisconnectedWindow(status)
     closeStatusWindow()
-    local width = 430
-    local height = 150
-    local screenWidth, screenHeight = guiGetScreenSize()
-    statusWindow = guiCreateWindow(
-        (screenWidth - width) / 2,
-        (screenHeight - height) / 2,
-        width,
-        height,
-        text("connection.title"),
-        false
-    )
-    guiCreateLabel(
+    local surface = ANKIGTA.Layout.open("connection", text("connection.title"))
+    if not surface then
+        return
+    end
+    statusWindow = surface.window
+    local width = surface.width
+    surface.label(
         18,
         34,
         width - 36,
@@ -82,27 +79,21 @@ local function openDisconnectedWindow(status)
         text(
             "connection.disconnected",
             tostring(status.category or "disconnected")
-        ),
-        false,
-        statusWindow
+        )
     )
-    local connectButton = guiCreateButton(
+    local connectButton = surface.button(
         18,
         88,
         190,
         36,
-        text("connection.connect"),
-        false,
-        statusWindow
+        text("connection.connect")
     )
-    local advancedButton = guiCreateButton(
+    local advancedButton = surface.button(
         220,
         88,
         190,
         36,
-        text("connection.advanced"),
-        false,
-        statusWindow
+        text("connection.advanced")
     )
     addEventHandler("onClientGUIClick", connectButton, function()
         triggerServerEvent(CONNECT_EVENT, resourceRoot)
@@ -115,18 +106,15 @@ end
 
 local function openSettingsWindow(snapshot)
     closeSettingsWindow()
-    local width = 470
-    local height = 330
-    local screenWidth, screenHeight = guiGetScreenSize()
-    settingsWindow = guiCreateWindow(
-        (screenWidth - width) / 2,
-        (screenHeight - height) / 2,
-        width,
-        height,
-        text("connection.settingsTitle"),
-        false
+    local surface = ANKIGTA.Layout.open(
+        "connectionSettings", text("connection.settingsTitle")
     )
-    guiCreateLabel(
+    if not surface then
+        return
+    end
+    settingsWindow = surface.window
+    local width = surface.width
+    surface.label(
         18,
         34,
         width - 36,
@@ -138,92 +126,54 @@ local function openSettingsWindow(snapshot)
             snapshot.tokenConfigured
                 and text("connection.tokenProtected")
                 or text("connection.tokenDisabled")
-        ),
-        false,
-        settingsWindow
+        )
     )
-    guiCreateLabel(
-        18, 72, 120, 24, text("connection.manualPort"), false, settingsWindow
-    )
-    local portEdit = guiCreateEdit(
+    surface.label(18, 72, 120, 24, text("connection.manualPort"))
+    local portEdit = surface.edit(
         150,
         68,
         280,
         30,
-        tostring(snapshot.port or ""),
-        false,
-        settingsWindow
+        tostring(snapshot.port or "")
     )
-    guiCreateLabel(
-        18,
-        112,
-        120,
-        24,
-        text("connection.replacementToken"),
-        false,
-        settingsWindow
-    )
-    local tokenEdit = guiCreateEdit(
-        150,
-        108,
-        280,
-        30,
-        "",
-        false,
-        settingsWindow
-    )
+    surface.label(18, 112, 120, 24, text("connection.replacementToken"))
+    local tokenEdit = surface.edit(150, 108, 280, 30, "")
     guiEditSetMasked(tokenEdit, true)
-    local disableToken = guiCreateCheckBox(
+    local disableToken = surface.checkBox(
         150,
         146,
         280,
         26,
         text("connection.disableToken"),
-        false,
-        false,
-        settingsWindow
+        false
     )
     local dismissWarningButton = false
     if snapshot.tokenDisabled
         and not ANKIGTA.ConnectionWarning.emptyTokenDismissed
     then
-        dismissWarningButton = guiCreateButton(
+        dismissWarningButton = surface.button(
             150,
             180,
             280,
             28,
-            text("connection.dismissWarning"),
-            false,
-            settingsWindow
+            text("connection.dismissWarning")
         )
     end
-    local manualButton = guiCreateButton(
+    local manualButton = surface.button(
         18,
         220,
         205,
         34,
-        text("connection.manualMode"),
-        false,
-        settingsWindow
+        text("connection.manualMode")
     )
-    local automaticButton = guiCreateButton(
+    local automaticButton = surface.button(
         235,
         220,
         205,
         34,
-        text("connection.automaticMode"),
-        false,
-        settingsWindow
+        text("connection.automaticMode")
     )
-    local closeButton = guiCreateButton(
-        18,
-        264,
-        422,
-        30,
-        text("common.close"),
-        false,
-        settingsWindow
-    )
+    local closeButton = surface.button(18, 264, 422, 30, text("common.close"))
     addEventHandler("onClientGUIClick", manualButton, function()
         local token = guiGetText(tokenEdit)
         local disableTokenSelected = guiCheckBoxGetSelected(disableToken)
@@ -297,15 +247,23 @@ addEventHandler(SETTINGS_SNAPSHOT_EVENT, resourceRoot, function(snapshot)
     end
 end)
 
+-- Both windows write their labels and their control geometry when they are
+-- built, so a language change and a scale change are the same rebuild.
+local function rebuildOpenWindows()
+    if isElement(statusWindow) and lastStatus then
+        openDisconnectedWindow(lastStatus)
+    end
+    if isElement(settingsWindow) and lastSettingsSnapshot then
+        openSettingsWindow(lastSettingsSnapshot)
+    end
+end
+
 if ANKIGTA.Locale then
-    ANKIGTA.Locale.onChange(function()
-        if isElement(statusWindow) and lastStatus then
-            openDisconnectedWindow(lastStatus)
-        end
-        if isElement(settingsWindow) and lastSettingsSnapshot then
-            openSettingsWindow(lastSettingsSnapshot)
-        end
-    end)
+    ANKIGTA.Locale.onChange(rebuildOpenWindows)
+end
+
+if ANKIGTA.Layout then
+    ANKIGTA.Layout.onChange(rebuildOpenWindows)
 end
 
 addCommandHandler("ankigta-connect", function()

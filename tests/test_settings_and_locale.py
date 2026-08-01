@@ -183,6 +183,12 @@ def test_only_a_valid_local_override_can_be_stamped(
     assert why == reason
 
 
+def in_history(sandbox: MtaSandbox, key: str) -> Any:
+    return sandbox.eval(
+        "function(k) return ANKIGTA.Settings.inChangeHistory(k) end"
+    )(key)
+
+
 @pytest.mark.parametrize(
     "key",
     ["connectionPort", "connectionToken", "uiPlacement"],
@@ -191,19 +197,39 @@ def test_connection_and_ui_placement_stay_out_of_change_history(
     settings: MtaSandbox,
     key: str,
 ) -> None:
-    assert settings.eval(
-        "function(k) return ANKIGTA.Settings.inChangeHistory(k) end"
-    )(key) is False
+    assert in_history(settings, key) is False
+
+
+def test_no_setting_another_side_owns_is_in_change_history(
+    settings: MtaSandbox,
+) -> None:
+    """ADR 0028, derived rather than listed.
+
+    Undo works by having the server rewrite what it holds, so a value that
+    lives on the player's machine or in the add-on is not something it can put
+    back. Reading it off authority is what stops a new client setting from
+    silently arriving in the history because nobody remembered to exclude it.
+    """
+    schema = settings.eval("ANKIGTA.Settings.schema")
+
+    for name in schema.keys():
+        authority = settings.eval(
+            "function(k) return ANKIGTA.Settings.authorityOf(k) end"
+        )(str(name))
+        if authority == "server":
+            continue
+        assert in_history(settings, str(name)) is False, name
 
 
 @pytest.mark.parametrize(
     "key",
-    ["activationRadius", "allowEarlyReview", "indicatorMode", "closeAfterRating"],
+    ["activationRadius", "allowEarlyReview", "includeInStudy"],
 )
-def test_ordinary_settings_are_undoable(settings: MtaSandbox, key: str) -> None:
-    assert settings.eval(
-        "function(k) return ANKIGTA.Settings.inChangeHistory(k) end"
-    )(key) is True
+def test_settings_the_server_owns_are_undoable(
+    settings: MtaSandbox,
+    key: str,
+) -> None:
+    assert in_history(settings, key) is True
 
 
 # --- defaults ----------------------------------------------------------------
@@ -326,7 +352,10 @@ def test_invalid_input_is_rejected_with_a_reason_never_clamped(
         ("indicatorMode", "minimap_only"),
         ("allowEarlyReview", True),
         ("uiScale", 0.5),
-        ("uiScale", 3),
+        ("uiScale", 2),
+        # Story 54 allows two decimal places by hand; only the buttons move in
+        # 0.05, and a validation step would reject this.
+        ("uiScale", 1.23),
     ],
 )
 def test_values_at_the_boundaries_are_accepted(

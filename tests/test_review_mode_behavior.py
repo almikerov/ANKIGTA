@@ -19,10 +19,21 @@ UUID = "11111111-1111-4111-8111-111111111111"
 URL = "http://127.0.0.1:51234/render/token/index.html"
 
 
+def load_review_mode(sandbox: MtaSandbox) -> MtaSandbox:
+    """Review Mode and what it stands on.
+
+    Since ticket 28 the card surface asks the layout manager where it goes, so
+    the modules meta.xml declares before it load with it.
+    """
+    sandbox.load("shared/settings.lua")
+    sandbox.load("client/layout.lua")
+    sandbox.load("client/review_mode.lua")
+    return sandbox
+
+
 @pytest.fixture
 def client() -> Iterator[MtaSandbox]:
-    sandbox = MtaSandbox()
-    sandbox.load("client/review_mode.lua")
+    sandbox = load_review_mode(MtaSandbox())
     try:
         yield sandbox
     finally:
@@ -73,8 +84,15 @@ def reveal(sandbox: MtaSandbox, url: str = URL) -> None:
 
 
 def click(sandbox: MtaSandbox, x: float, y: float) -> None:
+    """Click where the cursor is.
+
+    `onClientClick` passes the cursor position as arguments three and four and
+    the world point after it -- `button, state, screenX, screenY, worldX,
+    worldY, worldZ, element` (`CClientGame::ProcessMessage` pushes
+    `vecCursorPosition` before `vecCollision`).
+    """
     sandbox.eval(
-        "function(x, y) handleReviewClick('left', 'down', 0, 0, x, y) end"
+        "function(x, y) handleReviewClick('left', 'down', x, y, 0, 0, 0) end"
     )(x, y)
 
 
@@ -211,8 +229,7 @@ def test_close_after_rating_closes_on_every_accepted_rating(
     client: MtaSandbox,
 ) -> None:
     for rating in ("again", "hard", "good", "easy"):
-        sandbox = MtaSandbox()
-        sandbox.load("client/review_mode.lua")
+        sandbox = load_review_mode(MtaSandbox())
         try:
             open_card(sandbox)
             reveal(sandbox)
@@ -833,7 +850,7 @@ def test_review_labels_come_from_the_locale_in_both_languages() -> None:
         sandbox = MtaSandbox()
         try:
             sandbox.load("shared/locale.lua")
-            sandbox.load("client/review_mode.lua")
+            load_review_mode(sandbox)
             sandbox.eval("function(l) ANKIGTA.Locale.setLanguage(l) end")(language)
 
             open_card(sandbox)
@@ -856,7 +873,7 @@ def test_switching_language_needs_no_resource_restart() -> None:
     sandbox = MtaSandbox()
     try:
         sandbox.load("shared/locale.lua")
-        sandbox.load("client/review_mode.lua")
+        load_review_mode(sandbox)
         open_card(sandbox)
         reveal(sandbox)
 

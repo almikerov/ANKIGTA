@@ -61,8 +61,10 @@ local BLOCKED_CONTROLS = {
     "radio_previous",
 }
 
+-- Design pixels at UI Scale 1. The layout manager turns them into whatever the
+-- current scale and resolution make of them.
 local RATING_BAR_HEIGHT = 56
-local SURFACE_MARGIN = 48
+local TITLE_BAR_HEIGHT = 26
 
 -- Defaults come from the shared schema where it is loaded, so this module and
 -- the settings store cannot drift into disagreeing about what "default" means.
@@ -101,13 +103,20 @@ local Review = {
     captured = false,
 }
 
+--- Where the card sits, asked of the layout manager rather than worked out
+--- here.
+--
+-- It is what applies UI Scale, keeps the surface on screen after a resolution
+-- change and remembers where the player dragged it. A second copy of that
+-- arithmetic in this file would be a second copy to get wrong.
 local function surfaceRect()
-    local screenWidth, screenHeight = guiGetScreenSize()
-    local width = math.floor(screenWidth * 0.7)
-    local height = math.floor(screenHeight * 0.7)
-    local x = math.floor((screenWidth - width) / 2)
-    local y = math.floor((screenHeight - height) / 2)
-    return x, y, width, height
+    return ANKIGTA.Layout.rect("review")
+end
+
+--- The heights the surface is divided into, at the current scale.
+local function surfaceBands(scale)
+    return math.floor(TITLE_BAR_HEIGHT * scale),
+        math.floor(RATING_BAR_HEIGHT * scale)
 end
 
 local function occupiedVehicle()
@@ -238,6 +247,10 @@ local function closeReviewMode(reason)
     end
     Review.active = false
     Review.awaitingResult = false
+    if ANKIGTA.Layout.dragging("review") then
+        -- Closing mid-drag still ends where the player left it.
+        ANKIGTA.Layout.endDrag()
+    end
     unbindKey("escape", "down", requestCloseReviewMode)
     removeEventHandler("onClientRender", root, renderReviewMode)
     destroyBrowser()
@@ -274,62 +287,81 @@ function renderReviewMode()
     if not Review.active then
         return
     end
-    local x, y, width, height = surfaceRect()
+    local x, y, width, height, scale = surfaceRect()
+    local titleHeight, ratingHeight = surfaceBands(scale)
     dxDrawRectangle(0, 0, guiGetScreenSize(), tocolor(0, 0, 0, 180))
     dxDrawRectangle(x, y, width, height, tocolor(16, 16, 16, 235))
 
+    Review.ratingBounds = {}
+
+    -- The title bar is the drag handle, the same way a CEGUI window's is. It
+    -- is drawn rather than owned by CEGUI because the card is a dx surface;
+    -- what counts as the handle is the layout manager's to say, so nothing is
+    -- recorded here for the click handler to test against.
+    dxDrawRectangle(x, y, width, titleHeight, tocolor(38, 38, 38, 245))
+    dxDrawText(
+        label("review.title"),
+        x + math.floor(8 * scale),
+        y,
+        x + width - math.floor(8 * scale),
+        y + titleHeight,
+        tocolor(235, 235, 235, 255),
+        scale,
+        "default-bold",
+        "left",
+        "center"
+    )
+
+    local cardY = y + titleHeight
+    local cardHeight = height - titleHeight - ratingHeight
     if isElement(Review.browser) then
-        dxDrawImage(
-            x,
-            y,
-            width,
-            height - RATING_BAR_HEIGHT,
-            Review.browser
-        )
+        dxDrawImage(x, cardY, width, cardHeight, Review.browser)
     end
 
     local warningText = message(Review.warning)
     if warningText then
         dxDrawText(
             warningText,
-            x + 8,
-            y + 8,
-            x + width - 8,
-            y + 28,
+            x + math.floor(8 * scale),
+            cardY + math.floor(8 * scale),
+            x + width - math.floor(8 * scale),
+            cardY + math.floor(28 * scale),
             tocolor(255, 190, 60, 255),
-            1,
+            scale,
             "default-bold"
         )
     end
 
-    Review.ratingBounds = {}
-    local barY = y + height - RATING_BAR_HEIGHT
+    local barY = y + height - ratingHeight
 
     if Review.externalPage then
         -- Optional, and never automatic: the card may have navigated somewhere
         -- the player actually wanted to read.
-        local returnWidth = 220
+        local returnWidth = math.floor(220 * scale)
+        local returnX = x + width - returnWidth - math.floor(8 * scale)
+        local returnY = cardY + math.floor(8 * scale)
+        local returnHeight = math.floor(28 * scale)
         Review.ratingBounds.returnToCard = {
-            x + width - returnWidth - 8,
-            y + 8,
+            returnX,
+            returnY,
             returnWidth,
-            28,
+            returnHeight,
         }
         dxDrawRectangle(
-            x + width - returnWidth - 8,
-            y + 8,
+            returnX,
+            returnY,
             returnWidth,
-            28,
+            returnHeight,
             tocolor(48, 48, 48, 235)
         )
         dxDrawText(
             label("review.returnToCard"),
-            x + width - returnWidth - 8,
-            y + 8,
-            x + width - 8,
-            y + 36,
+            returnX,
+            returnY,
+            returnX + returnWidth,
+            returnY + returnHeight,
             tocolor(235, 235, 235, 255),
-            1,
+            scale,
             "default-bold",
             "center",
             "center"
@@ -337,16 +369,16 @@ function renderReviewMode()
     end
     if Review.side ~= "answer" then
         local revealLabel = label("review.showAnswer")
-        Review.ratingBounds.reveal = {x, barY, width, RATING_BAR_HEIGHT}
-        dxDrawRectangle(x, barY, width, RATING_BAR_HEIGHT, tocolor(40, 40, 40, 235))
+        Review.ratingBounds.reveal = {x, barY, width, ratingHeight}
+        dxDrawRectangle(x, barY, width, ratingHeight, tocolor(40, 40, 40, 235))
         dxDrawText(
             revealLabel,
             x,
             barY,
             x + width,
-            barY + RATING_BAR_HEIGHT,
+            barY + ratingHeight,
             tocolor(235, 235, 235, 255),
-            1,
+            scale,
             "default-bold",
             "center",
             "center"
@@ -361,14 +393,14 @@ function renderReviewMode()
             buttonX,
             barY,
             buttonWidth,
-            RATING_BAR_HEIGHT,
+            ratingHeight,
         }
         local enabled = not Review.submitted and not Review.awaitingResult
         dxDrawRectangle(
             buttonX,
             barY,
             buttonWidth - 2,
-            RATING_BAR_HEIGHT,
+            ratingHeight,
             enabled and tocolor(48, 48, 48, 235) or tocolor(28, 28, 28, 235)
         )
         dxDrawText(
@@ -376,9 +408,9 @@ function renderReviewMode()
             buttonX,
             barY,
             buttonX + buttonWidth,
-            barY + RATING_BAR_HEIGHT,
+            barY + ratingHeight,
             enabled and tocolor(235, 235, 235, 255) or tocolor(120, 120, 120, 255),
-            1,
+            scale,
             "default-bold",
             "center",
             "center"
@@ -390,11 +422,11 @@ function renderReviewMode()
         dxDrawText(
             resultText,
             x,
-            barY - 24,
+            barY - math.floor(24 * scale),
             x + width,
             barY,
             tocolor(150, 220, 150, 255),
-            1,
+            scale,
             "default-bold",
             "center",
             "center"
@@ -412,8 +444,23 @@ local function withinBounds(bounds, cursorX, cursorY)
         and cursorY <= bounds[2] + bounds[4]
 end
 
-function handleReviewClick(button, state, _absoluteX, _absoluteY, cursorX, cursorY)
-    if not Review.active or button ~= "left" or state ~= "down" then
+--- `onClientClick` hands over the cursor position first and the world point
+--- after it: `button, state, screenX, screenY, worldX, worldY, worldZ, element`
+--- (`CClientGame::ProcessMessage`, which pushes `vecCursorPosition` before
+--- `vecCollision`). Hit-testing against the world point instead would put every
+--- button somewhere the player is not clicking.
+function handleReviewClick(button, state, cursorX, cursorY)
+    if not Review.active or button ~= "left" then
+        return
+    end
+    if state == "up" then
+        if ANKIGTA.Layout.dragging("review") then
+            ANKIGTA.Layout.endDrag()
+            cancelEvent()
+        end
+        return
+    end
+    if state ~= "down" then
         return
     end
     cancelEvent()
@@ -421,6 +468,10 @@ function handleReviewClick(button, state, _absoluteX, _absoluteY, cursorX, curso
         -- Regaining focus after Alt+Tab must cost a click, so the click that
         -- brings the window back cannot also rate the card.
         Review.focused = true
+        return
+    end
+    if ANKIGTA.Layout.beginDrag("review", cursorX, cursorY) then
+        -- The title bar moves the card; it never answers it.
         return
     end
     if withinBounds(Review.ratingBounds.returnToCard, cursorX, cursorY) then
@@ -479,10 +530,11 @@ local function openReviewMode(payload)
 
     captureClientState()
 
-    local _x, _y, width, height = surfaceRect()
+    local _x, _y, width, height, scale = surfaceRect()
+    local titleHeight, ratingHeight = surfaceBands(scale)
     Review.browser = createBrowser(
         width,
-        height - RATING_BAR_HEIGHT,
+        height - titleHeight - ratingHeight,
         false,
         false
     )
@@ -612,6 +664,20 @@ addEvent(AUTHORIZATION_EVENT, true)
 addEventHandler(AUTHORIZATION_EVENT, resourceRoot, function(authorized)
     if authorized ~= true and Review.active then
         closeReviewMode("authorization_revoked")
+    end
+end)
+
+-- `onClientCursorMove` reports the relative position first and the absolute
+-- one after it (`button`-free: `relativeX, relativeY, absoluteX, absoluteY,
+-- worldX, worldY, worldZ`), so the drag follows arguments three and four.
+addEventHandler("onClientCursorMove", root, function(
+    _relativeX,
+    _relativeY,
+    absoluteX,
+    absoluteY
+)
+    if Review.active and ANKIGTA.Layout.dragging("review") then
+        ANKIGTA.Layout.dragTo(absoluteX, absoluteY)
     end
 end)
 
