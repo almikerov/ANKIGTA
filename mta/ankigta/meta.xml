@@ -18,6 +18,7 @@
     <script src="client/f7.lua" type="client" cache="false" />
     <script src="client/pick_entity.lua" type="client" cache="false" />
     <script src="client/review_mode.lua" type="client" cache="false" />
+    <script src="client/activation.lua" type="client" cache="false" />
     <map src="maps/ticket05.map" dimension="0" />
     <map src="maps/ticket07-matrix.map" dimension="0" />
     <export function="requestCompanionHealth" type="server" />
