@@ -19,6 +19,7 @@ from .contract import (
     RuntimeObservation,
 )
 from .http_server import HealthServer
+from .lifecycle_study import StudyLifecycle
 from .session import SessionCoordinator
 
 
@@ -97,12 +98,14 @@ class CompanionAddon:
         generate_connection_token: Callable[[], str] | None = None,
         card_picker: CardPickerService | None = None,
         session_coordinator: SessionCoordinator | None = None,
+        study_lifecycle: StudyLifecycle | None = None,
     ) -> None:
         self._main_window = main_window
         self._hooks = hooks
         self._anki_version = anki_version
         self._defer = defer
         self._identity_service = identity_service
+        self._study_lifecycle = study_lifecycle
         effective_card_picker = card_picker
         if effective_card_picker is None and identity_service is not None:
             effective_card_picker = CardPickerService(
@@ -163,6 +166,9 @@ class CompanionAddon:
     def stop(self) -> None:
         if not self._started:
             return
+        # Normal stop, exit or add-on removal: return every card first.
+        if self._study_lifecycle is not None:
+            self._study_lifecycle.on_shutdown()
         if self._connection_manager is not None:
             self._connection_manager.stop()
         else:
@@ -206,6 +212,8 @@ class CompanionAddon:
         )
 
     def _on_profile_will_close(self) -> None:
+        if self._study_lifecycle is not None:
+            self._study_lifecycle.on_collection_closing()
         closing_generation = self._mark_collection_closing()
         self._defer(
             0,
@@ -216,6 +224,9 @@ class CompanionAddon:
         self,
         _collection: Collection,
     ) -> None:
+        # A user-started AnkiWeb sync reaches the add-on as a temporary close.
+        if self._study_lifecycle is not None:
+            self._study_lifecycle.on_anki_sync_starting()
         self._mark_collection_closing()
 
     def _mark_collection_closing(self) -> int:
