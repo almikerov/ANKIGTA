@@ -65,9 +65,18 @@ ADVERSE_CASES: dict[str, dict[str, object]] = {
 
 
 def _set_required_text(root: ET.Element[str], tag: str, value: str) -> None:
+    """Pin one setting in the disposable copy's configuration.
+
+    The tag is created when the source configuration lacks it. A server the
+    owner has edited is a legitimate source to copy from, and MTA falls back to
+    its own default for an absent tag — so refusing to run would make the check
+    depend on how one machine's config happens to be laid out, while leaving the
+    tag absent would let the copy listen or broadcast where the test says it
+    must not.
+    """
     element = root.find(tag)
     if element is None:
-        raise AssertionError(f"MTA server configuration is missing <{tag}>")
+        element = ET.SubElement(root, tag)
     element.text = value
 
 
@@ -269,7 +278,19 @@ def _prepare_runtime(
     temp_root = Path(tempfile.mkdtemp(prefix="ankigta-ticket02-"))
     server_root = temp_root / "server"
     shutil.copytree(mta_server_root, server_root)
-    resources = server_root / "mods" / "deathmatch" / "resources"
+    deathmatch = server_root / "mods" / "deathmatch"
+    resources = deathmatch / "resources"
+    # The disposable copy carries only ANKIGTA fixtures, whatever the server it
+    # was copied from happened to hold. The owner may have deployed an ANKIGTA
+    # build for their own manual pass, and their install carries maps, editors
+    # and logs of their own; inheriting any of it would make the evidence a
+    # property of one machine rather than of the branch under test — and the
+    # scan of a full resource directory is most of this run's start-up time.
+    if resources.exists():
+        shutil.rmtree(resources)
+    resources.mkdir(parents=True)
+    for inherited in ("logs", "dumps", "resource-cache"):
+        shutil.rmtree(deathmatch / inherited, ignore_errors=True)
     target_resource = resources / "ankigta"
     driver_resource = resources / "ankigta_ticket02_tests"
     shutil.copytree(PRODUCTION_RESOURCE, target_resource)
