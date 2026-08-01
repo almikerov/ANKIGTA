@@ -5,6 +5,8 @@ import sqlite3
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from tests.lua.constants import string_constants
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RESOURCE = REPO_ROOT / "mta" / "ankigta"
@@ -325,8 +327,13 @@ def test_current_schema_create_and_restart_preserve_the_record(
         "hasSchema(Store.connection)"
     )
     assert "createCurrentSchema(Store.connection)" in store_open
-    assert "migrateVersionOne()" in store_open
-    assert store_open.index("migrateVersionOne()") < store_open.index(
+    # The ordering that matters -- migrate, then seed, then declare ready -- is
+    # asserted on the phases rather than on the name of whichever step happens
+    # to run first. Naming one broke the moment ticket 29 replaced the
+    # hand-written `if version == N` chain with a floor-pinned ladder; that the
+    # migrations actually run, from every shipped version and on real data, is
+    # what `tests/test_migrations.py` proves.
+    assert store_open.index("runMigrations(version)") < store_open.index(
         "ensureTracerEntity()"
     )
     assert store_open.index("ensureTracerEntity()") < store_open.index(
@@ -426,8 +433,12 @@ def test_client_source_keeps_map_entity_visible_without_runtime_instance() -> No
     assert "runtimeInstance = nil" in server
     assert "getElementByID(runtime.referenceId)" in client
     assert "isElementStreamedIn(element)" in client
-    assert "Runtime Instance destroyed" in client
-    assert "Runtime Instance not streamed" in client
+    # The two states are looked up, not spelled out: ticket 27 moved every
+    # user-facing string into the shared table. Read the keys the compiled
+    # chunk holds rather than the file's text.
+    f7_keys = string_constants(CLIENT_F7)
+    assert "f7.runtime.destroyed" in f7_keys
+    assert "f7.runtime.notStreamed" in f7_keys
     assert "mapEntity.mapId .." in client
     assert 'id="ankigta-ticket05-runtime"' in map_source
 

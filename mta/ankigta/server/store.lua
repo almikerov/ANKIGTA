@@ -64,6 +64,9 @@ local Store = {
     schemaVersion = nil,
     identityCollisionByMap = {},
     historyReady = false,
+    -- Set only when the database cannot be opened and the user has to choose
+    -- what happens next. Nothing here ever resolves it on its own.
+    recoveryState = nil,
 }
 
 local function execute(connection, statement, ...)
@@ -193,6 +196,15 @@ local function historySteps(operation, target, before, after)
     }
 end
 
+--- Tell the backup module the data moved.
+-- It only marks the store dirty; the copying happens on a timer, because F7 has
+-- a two-second envelope and copying a database is not what to spend it on.
+local function noteDataChange()
+    if ANKIGTA.Backup and ANKIGTA.Backup.noteDataChange then
+        ANKIGTA.Backup.noteDataChange()
+    end
+end
+
 local function historyTransaction(operation, target, before, after, steps)
     local allSteps = {}
     for _, step in ipairs(steps or {}) do
@@ -201,7 +213,12 @@ local function historyTransaction(operation, target, before, after, steps)
     for _, step in ipairs(historySteps(operation, target, before, after)) do
         table.insert(allSteps, step)
     end
-    return transaction(Store.connection, allSteps)
+    local committed, errorMessage = transaction(Store.connection, allSteps)
+    if not committed then
+        return false, errorMessage
+    end
+    noteDataChange()
+    return true
 end
 
 local function ensureChangeHistorySchema()
@@ -468,6 +485,76 @@ local function needsEntityTypeMigration()
     return rows[1].sql:find("entity_type = 'object'", 1, true) ~= nil
 end
 
+--- Rebuild `map_entities` without taking its dependants with it.
+--
+-- `spatial_links`, `map_entity_metadata` and `identity_collisions` all cascade
+-- on delete from `map_entities`. Renaming it out of the way is the obvious
+-- move and the wrong one: SQLite rewrites their `REFERENCES` clauses to follow
+-- the renamed table, and dropping it afterwards then cascades their rows into
+-- nothing -- Spatial Links and Map Entity metadata gone, quietly, inside a
+-- migration that reported success.
+--
+-- So this follows the procedure SQLite documents for altering a table other
+-- tables point at: foreign keys off, build the replacement under a temporary
+-- name, drop the original, rename the replacement into its place, and check the
+-- constraints before trusting the result.
+local function rebuildMapEntities()
+    local disabled = execute(Store.connection, "PRAGMA foreign_keys = OFF")
+    if not disabled then
+        return false, "foreign_keys_disable_failed"
+    end
+    local rebuilt, rebuildError = transaction(Store.connection, {
+        {
+            [[
+                CREATE TABLE map_entities_rebuilt (
+                    map_id TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    entity_type TEXT NOT NULL CHECK (entity_type IN ('object', 'vehicle', 'ped')),
+                    model INTEGER NOT NULL,
+                    authored_x REAL NOT NULL,
+                    authored_y REAL NOT NULL,
+                    authored_z REAL NOT NULL,
+                    rotation_x REAL NOT NULL,
+                    rotation_y REAL NOT NULL,
+                    rotation_z REAL NOT NULL,
+                    interior INTEGER NOT NULL,
+                    dimension INTEGER NOT NULL,
+                    PRIMARY KEY (map_id, entity_id),
+                    FOREIGN KEY (map_id) REFERENCES maps(map_id) ON DELETE CASCADE
+                )
+            ]],
+        },
+        {
+            [[
+                INSERT INTO map_entities_rebuilt
+                SELECT map_id, entity_id, entity_type, model,
+                       authored_x, authored_y, authored_z,
+                       rotation_x, rotation_y, rotation_z,
+                       interior, dimension
+                FROM map_entities
+            ]],
+        },
+        {"DROP TABLE map_entities"},
+        {"ALTER TABLE map_entities_rebuilt RENAME TO map_entities"},
+    })
+    -- Whatever happened, the connection goes back to enforcing constraints.
+    local restored = enableForeignKeys(Store.connection)
+    if not rebuilt then
+        return false, rebuildError
+    end
+    if not restored then
+        return false, "foreign_keys_not_enabled"
+    end
+    local checked, violations = execute(Store.connection, "PRAGMA foreign_key_check")
+    if not checked then
+        return false, "constraint_check_failed"
+    end
+    if violations[1] then
+        return false, "map_entity_rebuild_broke_constraints"
+    end
+    return true
+end
+
 local function hasIdentityCollisionTable()
     local ok, rows = execute(
         Store.connection,
@@ -502,83 +589,6 @@ local function ensureIdentityCollisionTable()
     return migrateIdentityCollisionTable()
 end
 
-local function migrateVersionThree()
-    return transaction(Store.connection, {
-        {"ALTER TABLE spatial_links RENAME TO spatial_links_legacy"},
-        {"ALTER TABLE map_entities RENAME TO map_entities_legacy"},
-        {
-            [[
-                CREATE TABLE map_entities (
-                    map_id TEXT NOT NULL,
-                    entity_id TEXT NOT NULL,
-                    entity_type TEXT NOT NULL CHECK (entity_type IN ('object', 'vehicle', 'ped')),
-                    model INTEGER NOT NULL,
-                    authored_x REAL NOT NULL,
-                    authored_y REAL NOT NULL,
-                    authored_z REAL NOT NULL,
-                    rotation_x REAL NOT NULL,
-                    rotation_y REAL NOT NULL,
-                    rotation_z REAL NOT NULL,
-                    interior INTEGER NOT NULL,
-                    dimension INTEGER NOT NULL,
-                    PRIMARY KEY (map_id, entity_id),
-                    FOREIGN KEY (map_id) REFERENCES maps(map_id) ON DELETE CASCADE
-                )
-            ]],
-        },
-        {
-            [[
-                INSERT INTO map_entities
-                SELECT map_id, entity_id, entity_type, model,
-                       authored_x, authored_y, authored_z,
-                       rotation_x, rotation_y, rotation_z,
-                       interior, dimension
-                FROM map_entities_legacy
-            ]],
-        },
-        {
-            [[
-                CREATE TABLE spatial_links (
-                    map_id TEXT NOT NULL,
-                    entity_id TEXT NOT NULL,
-                    collection_uuid TEXT NOT NULL,
-                    card_id INTEGER NOT NULL,
-                    state TEXT NOT NULL CHECK (state = 'active'),
-                    verified_map_sha256 TEXT NOT NULL,
-                    PRIMARY KEY (map_id, entity_id),
-                    FOREIGN KEY (map_id, entity_id)
-                        REFERENCES map_entities(map_id, entity_id)
-                        ON DELETE CASCADE
-                )
-            ]],
-        },
-        {
-            [[
-                CREATE TABLE identity_collisions (
-                    map_id TEXT NOT NULL,
-                    entity_id TEXT NOT NULL,
-                    reason TEXT NOT NULL,
-                    detected_at INTEGER NOT NULL,
-                    PRIMARY KEY (map_id, entity_id),
-                    FOREIGN KEY (map_id, entity_id)
-                        REFERENCES map_entities(map_id, entity_id)
-                        ON DELETE CASCADE
-                )
-            ]],
-        },
-        {
-            [[
-                INSERT INTO spatial_links
-                SELECT map_id, entity_id, collection_uuid, card_id,
-                       state, verified_map_sha256
-                FROM spatial_links_legacy
-            ]],
-        },
-        {"DROP TABLE spatial_links_legacy"},
-        {"DROP TABLE map_entities_legacy"},
-    })
-end
-
 local function migrateVersionOne()
     return transaction(Store.connection, {
         {
@@ -598,6 +608,84 @@ local function migrateVersionOne()
             {2},
         },
     })
+end
+
+--- Every step from a shipped schema shape to the current one.
+--
+-- Each step names the *earliest* version it applies from, never the version it
+-- expects to find. Pinning a step to `version == N` is how this repository
+-- already broke once: a step that bumps the number first leaves the shape
+-- repair after it looking at `N + 1`, deciding it has nothing to do, and
+-- shipping a database that is at the current version while still carrying an
+-- older shape. A floor keeps applying until the shape is actually right.
+--
+-- A step with no `to` is a shape repair rather than a version step. It bumps
+-- nothing, and its `needed` probe both decides whether it runs and, once it has
+-- run, terminates the loop.
+local MIGRATIONS = {
+    {
+        id = "rotation_columns",
+        from = 1,
+        to = 2,
+        apply = migrateVersionOne,
+    },
+    {
+        id = "spatial_links",
+        from = 2,
+        to = 3,
+        apply = migrateVersionTwo,
+    },
+    {
+        id = "map_entity_types",
+        from = 3,
+        needed = needsEntityTypeMigration,
+        apply = rebuildMapEntities,
+    },
+    {
+        id = "identity_collisions_table",
+        from = 3,
+        needed = function()
+            return not hasIdentityCollisionTable()
+        end,
+        apply = migrateIdentityCollisionTable,
+    },
+    {
+        id = "spatial_link_card_missing",
+        from = 3,
+        to = 4,
+        apply = migrateVersionFour,
+    },
+}
+
+local function nextMigration(version)
+    for _, migration in ipairs(MIGRATIONS) do
+        local applies = version >= migration.from
+            and (migration.to == nil or version < migration.to)
+        if applies and (migration.needed == nil or migration.needed()) then
+            return migration
+        end
+    end
+    return nil
+end
+
+local function runMigrations(version)
+    -- Bounded so a repair whose `needed` probe never clears is a reported
+    -- failure rather than a server that hangs on start.
+    for _ = 1, #MIGRATIONS * 2 do
+        local migration = nextMigration(version)
+        if not migration then
+            return version
+        end
+        local applied, applyError = migration.apply()
+        if not applied then
+            return false, tostring(migration.id) .. ": " .. tostring(applyError)
+        end
+        version = readSchemaVersion(Store.connection)
+        if not version then
+            return false, tostring(migration.id) .. ": schema_version_unreadable"
+        end
+    end
+    return false, "migration_did_not_converge"
 end
 
 local function ensureTracerEntity()
@@ -683,6 +771,68 @@ local function ensureTicket07Entities()
     return transaction(Store.connection, steps)
 end
 
+--- Stop, keep everything, and hand the decision to the user.
+--
+-- This is the whole point of the ticket. A damaged database is not repaired
+-- here, not replaced here and not rolled back here: the file is left exactly as
+-- it was found, and what the user gets is the list of copies that survived
+-- verification plus whatever has already been kept for diagnosis.
+local function enterRecovery(reason, detail)
+    Store.ready = false
+    Store.errorCategory = "database_corrupt"
+    Store.errorMessage = tostring(detail)
+    Store.recoveryState = {
+        state = "recovery",
+        reason = reason,
+        detail = tostring(detail),
+        databasePath = DATABASE_PATH,
+        awaitingChoice = true,
+        backups = ANKIGTA.Backup.list(),
+        quarantine = ANKIGTA.Backup.quarantined(),
+    }
+    outputDebugString(
+        "[ANKIGTA] database_recovery reason=" .. tostring(reason)
+            .. " detail=" .. tostring(detail),
+        1
+    )
+    return false
+end
+
+--- Is this file still a database, or only a file where one used to be?
+-- Answered before anything is created, migrated or written, because every one
+-- of those would be a change to a file that must not be changed.
+local function damageReport(connection)
+    local ok, rows = execute(connection, "PRAGMA integrity_check")
+    if not ok then
+        return tostring(rows)
+    end
+    if not rows[1] then
+        return "integrity_check_returned_nothing"
+    end
+    if rows[1].integrity_check ~= "ok" then
+        return tostring(rows[1].integrity_check)
+    end
+    return nil
+end
+
+--- The tables the current schema has to be able to answer for.
+local function structureReport(connection)
+    for _, name in ipairs({"schema_meta", "maps", "map_entities", "spatial_links"}) do
+        local readable = execute(connection, "SELECT 1 FROM " .. name .. " LIMIT 1")
+        if not readable then
+            return "table_unreadable:" .. name
+        end
+    end
+    local checked, violations = execute(connection, "PRAGMA foreign_key_check")
+    if not checked then
+        return "constraint_check_failed"
+    end
+    if violations[1] then
+        return "constraints_violated"
+    end
+    return nil
+end
+
 function Store.open()
     Store.ready = false
     Store.errorCategory = nil
@@ -690,10 +840,29 @@ function Store.open()
     Store.schemaVersion = nil
     Store.identityCollisionByMap = {}
     Store.historyReady = false
+    Store.recoveryState = nil
+
+    ANKIGTA.Backup.configure({
+        databasePath = DATABASE_PATH,
+        currentSchemaVersion = CURRENT_SCHEMA_VERSION,
+    })
+    local interrupted = ANKIGTA.Backup.recoverInterrupted()
+    if interrupted and interrupted.phase ~= "completed" then
+        -- A restore that did not finish is a state to report, not one to guess
+        -- at: both the original and the copy are still on disk under the names
+        -- the journal names, and which of them the user wants is their call.
+        return enterRecovery("restore_interrupted", interrupted.phase)
+    end
 
     Store.connection = connect(DATABASE_PATH)
     if not Store.connection then
         return fail("database_open_failed", DATABASE_PATH)
+    end
+
+    local damage = damageReport(Store.connection)
+    if damage then
+        closeConnection()
+        return enterRecovery("database_corrupt", damage)
     end
 
     local foreignKeysOk, foreignKeysError = enableForeignKeys(Store.connection)
@@ -716,48 +885,39 @@ function Store.open()
         end
     else
         local version = readSchemaVersion(Store.connection)
-        if version == 1 then
-            local migrated, migrationError = migrateVersionOne()
-            if not migrated then
-                closeConnection()
-                return fail("migration_failed", migrationError)
-            end
-            version = readSchemaVersion(Store.connection)
+        if not version then
+            closeConnection()
+            return fail("unsupported_schema_version", "unreadable")
         end
-        if version == 2 then
-            local migrated, migrationError = migrateVersionTwo()
-            if not migrated then
-                closeConnection()
-                return fail("migration_failed", migrationError)
-            end
-            version = readSchemaVersion(Store.connection)
+        if version > CURRENT_SCHEMA_VERSION then
+            -- A database written by a newer build. Guessing at it would be a
+            -- write to data this build does not understand.
+            closeConnection()
+            return fail("unsupported_schema_version", tostring(version))
         end
-        if version == 3 and needsEntityTypeMigration() then
-            local migrated, migrationError = migrateVersionThree()
+        if nextMigration(version) then
+            -- No verified copy, no migration. A migration that runs anyway is
+            -- the one case where a failure has nothing to fall back on.
+            local backup, backupError = ANKIGTA.Backup.createPreMigration()
+            if not backup then
+                closeConnection()
+                return fail("migration_backup_failed", backupError)
+            end
+            local migrated, migrationError = runMigrations(version)
             if not migrated then
                 closeConnection()
                 return fail("migration_failed", migrationError)
             end
-            version = readSchemaVersion(Store.connection)
-        end
-        if version == 3 and not hasIdentityCollisionTable() then
-            local migrated, migrationError = migrateIdentityCollisionTable()
-            if not migrated then
-                closeConnection()
-                return fail("migration_failed", migrationError)
-            end
-        end
-        if version == 3 then
-            local migrated, migrationError = migrateVersionFour()
-            if not migrated then
-                closeConnection()
-                return fail("migration_failed", migrationError)
-            end
-            version = readSchemaVersion(Store.connection)
+            version = migrated
         end
         if version ~= CURRENT_SCHEMA_VERSION then
             closeConnection()
             return fail("unsupported_schema_version", tostring(version))
+        end
+        local structure = structureReport(Store.connection)
+        if structure then
+            closeConnection()
+            return enterRecovery("database_corrupt", structure)
         end
     end
 
@@ -1401,6 +1561,45 @@ function Store.status()
         ready = Store.ready,
         schemaVersion = Store.schemaVersion or false,
         errorCategory = Store.errorCategory or false,
+        recovery = Store.recoveryState or false,
+    }
+end
+
+--- The recovery state, or `false` when there is nothing to recover from.
+function Store.recovery()
+    if not Store.recoveryState then
+        return false
+    end
+    -- Re-read the copies each time: one may have been verified, deleted or
+    -- restored since the state was entered.
+    Store.recoveryState.backups = ANKIGTA.Backup.list()
+    Store.recoveryState.quarantine = ANKIGTA.Backup.quarantined()
+    return Store.recoveryState
+end
+
+--- Restore the copy the user chose, then open what came back.
+--
+-- The choice is the user's and arrives from the recovery screen; this only
+-- makes sure nothing is holding the database file open while it is replaced,
+-- and reports what the reopened database turned out to be.
+function Store.restoreFromBackup(backupId)
+    closeConnection()
+    Store.ready = false
+    Store.historyReady = false
+    local restored, restoreError = ANKIGTA.Backup.restore(backupId)
+    if not restored then
+        -- Both the original and the copy are still on disk; the recovery state
+        -- is refreshed so the screen shows what is left to choose from.
+        return false, restoreError
+    end
+    local opened = Store.open()
+    if not opened then
+        return false, Store.errorCategory or "database_open_failed"
+    end
+    return {
+        restored = restored.restored,
+        quarantine = restored.quarantine,
+        schemaVersion = Store.schemaVersion,
     }
 end
 
@@ -2313,6 +2512,45 @@ function Store.setMapIncludeInStudy(mapId, includeInStudy)
     )
 end
 
+--- Every persisted setting, decoded, keyed by setting.
+--
+-- A stored value the schema no longer accepts is dropped here rather than
+-- handed on: a range that narrowed between versions must not resurrect a value
+-- the user can no longer choose.
+function Store.listUserSettings()
+    if not Store.ready then
+        return false, Store.errorCategory or "storage_unavailable"
+    end
+    local ok, rows = execute(
+        Store.connection,
+        "SELECT setting_key, setting_value FROM user_settings"
+    )
+    if not ok then
+        return false, "user_setting_read_failed"
+    end
+    local settings = {}
+    for _, row in ipairs(rows) do
+        local key = row.setting_key
+        local value = jsonDecode(row.setting_value)
+        local valid, reason = ANKIGTA.Settings.validate(key, value)
+        if valid then
+            settings[key] = ANKIGTA.Settings.normalize(key, value)
+        else
+            outputDebugString(
+                "[ANKIGTA] discarded_stored_setting: "
+                    .. tostring(key) .. " (" .. tostring(reason) .. ")",
+                2
+            )
+        end
+    end
+    return settings
+end
+
+--- Persist one setting the server owns.
+--
+-- The schema decides three separate things here: whether this side may write
+-- the setting at all, whether the value is acceptable, and whether the change
+-- belongs in Change History. None of them is a property of the database.
 function Store.setUserSetting(settingKey, value)
     if not Store.ready or not Store.historyReady then
         return false, Store.errorCategory or "storage_unavailable"
@@ -2320,6 +2558,25 @@ function Store.setUserSetting(settingKey, value)
     if type(settingKey) ~= "string" or settingKey == "" then
         return false, "invalid_user_setting"
     end
+    local writeKind, writeReason =
+        ANKIGTA.Settings.writeKind("server", settingKey)
+    if not writeKind then
+        if writeReason == "unknown_setting" then
+            return false, "settings.error.unknown"
+        end
+        return false, writeReason
+    end
+    if writeKind ~= "authority" then
+        -- A local override is not shared state: it belongs to the connection
+        -- file on the side that made it, not to the shared database.
+        return false, "not_a_stored_setting"
+    end
+    local valid, invalidReason = ANKIGTA.Settings.validate(settingKey, value)
+    if not valid then
+        return false, invalidReason
+    end
+    value = ANKIGTA.Settings.normalize(settingKey, value)
+
     local ok, rows = execute(
         Store.connection,
         "SELECT setting_value FROM user_settings WHERE setting_key = ?",
@@ -2333,17 +2590,27 @@ function Store.setUserSetting(settingKey, value)
         value = rows[1] and jsonDecode(rows[1].setting_value) or nil,
     }
     local after = {exists = true, value = value}
+    local write = {
+        {
+            "INSERT OR REPLACE INTO user_settings (setting_key, setting_value) VALUES (?, ?)",
+            {settingKey, jsonEncode(value)},
+        },
+    }
+    if not ANKIGTA.Settings.inChangeHistory(settingKey) then
+        -- Undoable is a property of the setting, not of the write path.
+        local committed, writeError = transaction(Store.connection, write)
+        if not committed then
+            return false, writeError
+        end
+        noteDataChange()
+        return true
+    end
     return historyTransaction(
         "user_setting",
         jsonEncode({settingKey = settingKey}),
         before,
         after,
-        {
-            {
-                "INSERT OR REPLACE INTO user_settings (setting_key, setting_value) VALUES (?, ?)",
-                {settingKey, jsonEncode(value)},
-            },
-        }
+        write
     )
 end
 

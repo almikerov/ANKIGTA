@@ -10,6 +10,23 @@ ANKIGTA = ANKIGTA or {}
 -- or resizes one; where it coincides with a real zone, one emphasized sphere
 -- is drawn rather than two overlapping ones.
 
+local function text(key)
+    if ANKIGTA.Locale then
+        return ANKIGTA.Locale.text(key)
+    end
+    return key
+end
+
+-- The counters, in the order the HUD reads them. `statistics.*` finally has a
+-- call site: the keys existed while the HUD spelled the labels out in English.
+local COUNTER_KEYS = {
+    {"statistics.total", "total"},
+    {"statistics.new", "new"},
+    {"statistics.learning", "learning"},
+    {"statistics.due", "due"},
+    {"statistics.early", "early"},
+}
+
 local MODE_SPHERE_AND_MINIMAP = "sphere_and_minimap"
 local MODE_MINIMAP_ONLY = "minimap_only"
 local MODE_NONE = "none"
@@ -174,15 +191,17 @@ function Indicator.render()
     local counts = hud.counts
     if type(counts) == "table" then
         local screenWidth = guiGetScreenSize()
+        local parts = {}
+        for index, counter in ipairs(COUNTER_KEYS) do
+            parts[index] = string.format(
+                "%s %d",
+                text(counter[1]),
+                tonumber(counts[counter[2]]) or 0
+            )
+        end
         dxDrawText(
-            string.format(
-                "ANKIGTA  Total %d   New %d   Learning %d   Due %d   Early %d",
-                counts.total or 0,
-                counts.new or 0,
-                counts.learning or 0,
-                counts.due or 0,
-                counts.early or 0
-            ),
+            -- The product name is not a word to translate.
+            "ANKIGTA  " .. table.concat(parts, "   "),
             screenWidth - 520,
             12,
             screenWidth - 12,

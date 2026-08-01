@@ -15,21 +15,41 @@ Stub fidelity is taken from the MTA server source, not from memory:
   and REAL arrive as numbers, TEXT and BLOB as strings, and **SQL NULL arrives
   as boolean `false`** rather than nil (`PushRegistryResultTable`).
 - `sha256` returns **uppercase** hex (`ConvertDataToHexString`).
+- `fileOpen` opens with `rb`/`rb+` and so **fails on a missing file**, while
+  `fileCreate` opens `wb+` and truncates; `fileRename` fails when the
+  destination already exists (`CScriptFile::Load`, `CLuaFileDefs::fileRename`).
+- `fileCopy(source, destination[, overwrite = false])` refuses a missing source
+  and, unless told to overwrite, an existing destination; it creates the
+  destination's directory (`CLuaFileDefs::fileCopy`).
+- `getRealTime()` reports `month` 0-11 and `year` as years since 1900, next to
+  a `timestamp` in seconds (`CLuaUtilDefs::GetCTime`).
+
+Resource files live in a real directory rather than in memory, because a
+database is a file: a backup that copies bytes and is then opened as SQLite
+cannot be proven against a dictionary. `dbConnect` resolves its path in the
+same directory, so `backups/ankigta-3.sqlite` is one file to both APIs.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
+import shutil
 import sqlite3
+import tempfile
+import time
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator, Mapping
 
 from lupa.lua51 import LuaRuntime, lua_type
 
 
 RESOURCE_ROOT = Path(__file__).resolve().parents[2] / "mta" / "ankigta"
+
+IN_MEMORY = ":memory:"
 
 
 class LuaError(AssertionError):
@@ -75,6 +95,139 @@ class Recorder:
         return [line.message for line in self.debug]
 
 
+class _FileStore:
+    """The resource's files, as a mapping backed by a real directory.
+
+    Keys are resource-relative paths exactly as the scripts write them, so a
+    client-private `@name` and a server-side `name` stay distinct, and
+    `backups/x.sqlite` is a real file in a real subdirectory — which is what
+    lets `dbConnect` open a copy the file API produced.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.root.mkdir(parents=True, exist_ok=True)
+
+    def resolve(self, path: str) -> Path:
+        resolved = self.root.joinpath(*str(path).split("/"))
+        # A resource cannot write above its own directory.
+        if self.root not in resolved.parents and resolved != self.root:
+            raise LuaError(f"path escapes the resource directory: {path}")
+        return resolved
+
+    def __contains__(self, path: object) -> bool:
+        return self.resolve(str(path)).is_file()
+
+    def __getitem__(self, path: str) -> bytes:
+        target = self.resolve(path)
+        if not target.is_file():
+            raise KeyError(path)
+        return target.read_bytes()
+
+    def __setitem__(self, path: str, data: bytes) -> None:
+        target = self.resolve(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+
+    def get(self, path: str, default: bytes = b"") -> bytes:
+        try:
+            return self[path]
+        except KeyError:
+            return default
+
+    def pop(self, path: str, default: bytes | None = None) -> bytes | None:
+        try:
+            data = self[path]
+        except KeyError:
+            return default
+        self.resolve(path).unlink()
+        return data
+
+    def update(self, mapping: Mapping[str, bytes] | _FileStore) -> None:
+        source = (
+            {path: mapping[path] for path in mapping.keys()}
+            if isinstance(mapping, _FileStore)
+            else mapping
+        )
+        for path, data in source.items():
+            self[path] = data
+
+    def items(self) -> Iterator[tuple[str, bytes]]:
+        for path in self.keys():
+            yield path, self[path]
+
+    def rename(self, source: str, destination: str) -> None:
+        target = self.resolve(destination)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # `os.rename` refuses an existing destination on Windows, which is the
+        # same answer MTA's fileRename gives everywhere.
+        os.rename(self.resolve(source), target)
+
+    def copy(self, source: str, destination: str, *, prefix: int | None = None) -> None:
+        target = self.resolve(destination)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if prefix is None:
+            shutil.copyfile(self.resolve(source), target)
+            return
+        target.write_bytes(self[source][:prefix])
+
+    def keys(self) -> Iterator[str]:
+        for path in sorted(self.root.rglob("*")):
+            if path.is_file():
+                yield path.relative_to(self.root).as_posix()
+
+
+class Faults:
+    """Failures injected at the MTA API boundary.
+
+    A crash halfway through a backup, a migration, a rotation or a restore is
+    not something a test can wish for: it has to arrive as the answer some MTA
+    call actually gives when the disk, the process or the power goes. So the
+    stubs count their calls and start refusing at the point a test names.
+    """
+
+    def __init__(self) -> None:
+        self.calls: Counter[str] = Counter()
+        #: operation -> how many calls still succeed before it starts failing.
+        self._after: dict[str, int] = {}
+        #: how many bytes `fileCopy` writes before it gives up, if told to.
+        self.copy_prefix: int | None = None
+        #: (substring, remaining successes) for `dbQuery`.
+        self._sql: list[tuple[str, int]] = []
+
+    def fail_after(self, operation: str, successes: int = 0) -> None:
+        """Let `successes` more calls through, then fail this one and all after."""
+        self._after[operation] = successes
+
+    def fail_sql_after(self, contains: str, successes: int = 0) -> None:
+        self._sql.append((contains, successes))
+
+    def partial_copy(self, prefix_bytes: int, *, successes: int = 0) -> None:
+        """Copy only the first bytes and report failure, as a full disk does."""
+        self.copy_prefix = prefix_bytes
+        self.fail_after("fileCopy", successes)
+
+    def trips(self, operation: str) -> bool:
+        self.calls[operation] += 1
+        remaining = self._after.get(operation)
+        if remaining is None:
+            return False
+        if remaining > 0:
+            self._after[operation] = remaining - 1
+            return False
+        return True
+
+    def sql_trips(self, statement: str) -> bool:
+        for index, (contains, remaining) in enumerate(self._sql):
+            if contains not in statement:
+                continue
+            if remaining > 0:
+                self._sql[index] = (contains, remaining - 1)
+                return False
+            return True
+        return False
+
+
 class _Connection:
     """Stands in for the element `dbConnect` returns."""
 
@@ -88,6 +241,22 @@ class _Connection:
         if not self.destroyed:
             self.raw.close()
             self.destroyed = True
+
+
+class _ScriptFile:
+    """Stands in for the element `fileOpen`/`fileCreate` returns.
+
+    MTA opens `rb` (read-only), `rb+` (read-write) or `wb+` (create), so the
+    write pointer starts at 0 on an opened file and a write overlays existing
+    bytes rather than appending.
+    """
+
+    def __init__(self, store: dict[str, bytes], path: str, *, read_only: bool):
+        self.store = store
+        self.path = path
+        self.read_only = read_only
+        self.position = 0
+        self.closed = False
 
 
 class _QueryHandle:
@@ -105,24 +274,69 @@ class _QueryHandle:
         self.polled = False
 
 
+@dataclass
+class Widget:
+    """One CEGUI control, with the text the resource actually wrote into it.
+
+    MTA's grid list indexes rows from 0 and columns from 1
+    (`CLuaGUIDefs::GUIGridListAddRow` / `AddColumn`), and reports no selection
+    as `-1`, so tests that read a row back read the same numbers the resource
+    passed in.
+    """
+
+    kind: str
+    text: str = ""
+    #: Index of the owning control, so destroying a window takes its children
+    #: with it the way CEGUI does. Lupa hands out a fresh wrapper per crossing,
+    #: so the handle's Python identity is not something to key on.
+    parent: int | None = None
+    enabled: bool = True
+    selected: bool = False
+    masked: bool = False
+    destroyed: bool = False
+    columns: list[str] = field(default_factory=list)
+    rows: list[dict[int, str]] = field(default_factory=list)
+    selected_row: int = -1
+    selected_column: int = -1
+
+
 class MtaSandbox:
     """A Lua 5.1 environment with MTA's server API stubbed out."""
 
-    def __init__(self, *, database_path: str = ":memory:") -> None:
+    def __init__(self, *, database_path: str = IN_MEMORY) -> None:
         self.lua = LuaRuntime(unpack_returned_tuples=True)
         self.recorder = Recorder()
         self.database_path = database_path
         self._tick = 0
+        #: Wall clock `getRealTime` reports, which tests move a day at a time.
+        self._real_time = float(time.time())
         self._connections: list[_Connection] = []
         self._elements: set[int] = set()
         self._handlers: dict[str, list[Any]] = {}
         self._exports: dict[str, Any] = {}
+        # The resource directory. A caller that named a database file gets that
+        # file's directory, so `ankigta.sqlite` resolves to the path it passed.
+        self._owned_directory: tempfile.TemporaryDirectory[str] | None = None
+        if database_path == IN_MEMORY:
+            self._owned_directory = tempfile.TemporaryDirectory(prefix="ankigta-")
+            root = Path(self._owned_directory.name)
+        else:
+            root = Path(database_path).resolve().parent
+        #: Resource files, keyed by the path the script passes to fileOpen.
+        self.files = _FileStore(root)
+        #: Failures to inject at the MTA API boundary.
+        self.faults = Faults()
+        #: When set, `fileCreate` fails the way a read-only directory makes it.
+        self.file_writes_fail = False
         # Client-side observable state, for tests to assert against.
         self.controls: dict[str, bool] = {}
         self.cursor_visible = False
         self.camera_target: Any = None
         self.radio_channel = 0
         self.bound_keys: dict[tuple[str, str], list[Any]] = {}
+        self.commands: dict[str, list[Any]] = {}
+        self.chat: list[str] = []
+        self.acl_rights: dict[str, bool] = {}
         self.browsers: list[Any] = []
         self.loaded_urls: list[str] = []
         self.requested_domains: list[str] = []
@@ -136,6 +350,12 @@ class MtaSandbox:
         self.moved: list[dict[str, Any]] = []
         self.world_elements: list[Any] = []
         self.blips: list[Any] = []
+        #: Every control the resource created, in creation order.
+        self.widgets: list[Widget] = []
+        #: What `getLocalization()` reports, as MTA's `{code, name}`.
+        self.localization = {"code": "en-US", "name": "English"}
+        #: Every string handed to `dxDrawText`, in draw order.
+        self.drawn_text: list[str] = []
         self.position_read_fails = False
         self.vanish_after_position_read: Any = None
         self._install_globals()
@@ -177,6 +397,18 @@ class MtaSandbox:
         """Move the fake clock forward without firing timers."""
         self._tick += milliseconds
 
+    def advance_days(self, days: float) -> None:
+        """Move the wall clock `getRealTime` reports, leaving ticks alone."""
+        self._real_time += days * 86400.0
+
+    @property
+    def real_time(self) -> float:
+        return self._real_time
+
+    @real_time.setter
+    def real_time(self, value: float) -> None:
+        self._real_time = float(value)
+
     def fire_timers(self, *, max_rounds: int = 100) -> int:
         """Run every pending timer once, in registration order.
 
@@ -207,23 +439,40 @@ class MtaSandbox:
 
     # ---------------------------------------------------------------- events
 
-    def trigger(self, event: str, source: Any = None, *args: Any) -> None:
+    def trigger(
+        self,
+        event: str,
+        source: Any = None,
+        *args: Any,
+        client: Any = None,
+    ) -> None:
         """Invoke every handler registered for an event.
 
         MTA exposes the event's source as a global during dispatch, and handlers
-        legitimately branch on it, so set it the same way.
+        legitimately branch on it, so set it the same way. For an event a player
+        triggered with `triggerServerEvent` it also sets `client` to that
+        player, and leaves it nil otherwise -- server code checks that global to
+        tell a remote request from a local one.
         """
         for handler in self._handlers.get(event, []):
-            self._dispatch(handler, source, args)
+            self._dispatch(handler, source, args, client)
 
-    def _dispatch(self, handler: Any, source: Any, args: tuple[Any, ...]) -> None:
+    def _dispatch(
+        self,
+        handler: Any,
+        source: Any,
+        args: tuple[Any, ...],
+        client: Any = None,
+    ) -> None:
         g = self.lua.globals()
-        previous = g.source
+        previous_source, previous_client = g.source, g.client
         g.source = source
+        g.client = client
         try:
             handler(*args)
         finally:
-            g.source = previous
+            g.source = previous_source
+            g.client = previous_client
 
     def handlers(self, event: str) -> list[Any]:
         return list(self._handlers.get(event, []))
@@ -271,8 +520,7 @@ class MtaSandbox:
         ) -> Any:
             if kind != "sqlite":
                 return False
-            target = self.database_path if path else self.database_path
-            connection = _Connection(target)
+            connection = _Connection(self.database_file(str(path)))
             self._connections.append(connection)
             self._elements.add(id(connection))
             return connection
@@ -280,6 +528,9 @@ class MtaSandbox:
         def db_query(connection: Any, statement: str, *params: Any) -> Any:
             if not isinstance(connection, _Connection) or connection.destroyed:
                 return False
+            if self.faults.sql_trips(str(statement)):
+                # SQLITE_IOERR is what a disk that stopped answering produces.
+                return _QueryHandle(None, 0, 0, (10, "disk I/O error"))
             bindings = [self._to_sqlite(value) for value in params]
             try:
                 cursor = connection.raw.execute(statement, bindings)
@@ -332,14 +583,45 @@ class MtaSandbox:
                 return True
             if lua_type(value) == "table" and value["__element"] is True:
                 value["__destroyed"] = True
+                index = value["__widget"]
+                if index is not None:
+                    self._destroy_widget(int(index))
                 return True
             if id(value) in self._elements:
                 self._elements.discard(id(value))
                 return True
             return False
 
+        # --- accounts and rights --------------------------------------------
+        # MTA always hands back an account element; an unlogged player gets the
+        # guest one, so `false` is not an answer this function gives.
+        def get_player_account(player: Any = None) -> Any:
+            # Keyed inside the Lua table: lupa hands out a fresh wrapper object
+            # per crossing, so the Python identity of an element is not stable.
+            if lua_type(player) == "table" and player["__account"] is not None:
+                return player["__account"]
+            return self.lua.table_from(
+                {"__element": True, "type": "account", "guest": True}
+            )
+
+        g.getPlayerAccount = get_player_account
+        g.isGuestAccount = lambda account=None: (
+            lua_type(account) != "table" or account["guest"] is True
+        )
+        g.hasObjectPermissionTo = lambda _object, right, default=False: (
+            self.acl_rights.get(str(right), default is True)
+        )
+
         g.isElement = is_element
         g.destroyElement = destroy_element
+        g.getElementByID = lambda element_id, *_rest: next(
+            (
+                element
+                for element in self.world_elements
+                if lua_type(element) == "table" and element["id"] == str(element_id)
+            ),
+            False,
+        )
 
         # --- crypto and serialisation --------------------------------------
         def sha256(data: str) -> str:
@@ -355,7 +637,19 @@ class MtaSandbox:
                 return False
             return self._to_lua(decoded)
 
+        def mta_hash(algorithm: str, data: str, *_rest: Any) -> Any:
+            # `hash()` lowercases its hex (CLuaCryptDefs::Hash), where the older
+            # `sha256()` uppercases it. Getting this backwards would silently
+            # break every digest comparison in the connection config.
+            try:
+                digest = hashlib.new(str(algorithm).replace("-", ""))
+            except ValueError:
+                return False
+            digest.update(str(data).encode("utf-8"))
+            return digest.hexdigest().lower()
+
         g.sha256 = sha256
+        g.hash = mta_hash
         g.toJSON = to_json
         g.fromJSON = from_json
 
@@ -394,7 +688,31 @@ class MtaSandbox:
         def is_timer(timer: Any) -> bool:
             return isinstance(timer, Timer) and not timer.cancelled
 
+        def get_real_time(seconds: Any = None, _local: Any = True) -> Any:
+            # `month` is 0-11 and `year` is years since 1900, straight out of
+            # `tm`. Anything keying a calendar day off this has to say so.
+            moment = time.localtime(
+                float(seconds) if seconds is not None else self._real_time
+            )
+            return self.lua.table_from(
+                {
+                    "second": moment.tm_sec,
+                    "minute": moment.tm_min,
+                    "hour": moment.tm_hour,
+                    "monthday": moment.tm_mday,
+                    "month": moment.tm_mon - 1,
+                    "year": moment.tm_year - 1900,
+                    "weekday": moment.tm_wday,
+                    "yearday": moment.tm_yday,
+                    "isdst": 1 if moment.tm_isdst > 0 else 0,
+                    "timestamp": float(
+                        seconds if seconds is not None else self._real_time
+                    ),
+                }
+            )
+
         g.getTickCount = get_tick_count
+        g.getRealTime = get_real_time
         g.outputDebugString = output_debug_string
         g.setTimer = set_timer
         g.killTimer = kill_timer
@@ -487,7 +805,164 @@ class MtaSandbox:
         g.fetchRemote = fetch_remote
         g.abortRemoteRequest = lambda _handle=None: True
 
+        # XML: only the "not there" answer, which is what MTA returns for a map
+        # file no test fixture provides. Anything richer belongs to whichever
+        # ticket actually reads map XML.
+        g.xmlLoadFile = lambda _path=None, _readonly=None: False
+        g.xmlUnloadFile = lambda _node=None: True
+
+        self._install_file_globals(g)
         self._install_client_globals(g)
+
+    def database_file(self, path: str) -> str:
+        """Where `dbConnect("sqlite", path)` actually opens.
+
+        A sandbox told to stay in memory keeps every connection in memory, the
+        way it always did. One given a real database file resolves every path
+        inside that file's directory, so a backup the file API wrote is the
+        same file SQLite then opens.
+        """
+        if self.database_path == IN_MEMORY:
+            return IN_MEMORY
+        target = self.files.resolve(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        return str(target)
+
+    def _install_file_globals(self, g: Any) -> None:
+        """The resource file API, backed by `self.files`.
+
+        Paths are resource-relative exactly as the scripts write them, so a
+        client-private `@name` and a server-side `name` stay distinct keys.
+        """
+
+        def file_exists(path: str) -> bool:
+            return str(path) in self.files
+
+        def file_open(path: str, read_only: Any = False) -> Any:
+            # `rb`/`rb+`: opening a file that is not there fails.
+            if str(path) not in self.files:
+                return False
+            return _ScriptFile(self.files, str(path), read_only=read_only is True)
+
+        def file_create(path: str) -> Any:
+            if self.file_writes_fail or self.faults.trips("fileCreate"):
+                # MTA returns false when the file cannot be created -- a
+                # read-only directory, or a name the client refuses.
+                return False
+            # `wb+`: creates, or truncates what was there.
+            self.files[str(path)] = b""
+            return _ScriptFile(self.files, str(path), read_only=False)
+
+        def file_copy(source: str, destination: str, overwrite: Any = False) -> bool:
+            # "Source file doesn't exist", then "Destination file already
+            # exists" unless overwrite was asked for.
+            if str(source) not in self.files:
+                return False
+            if str(destination) in self.files and overwrite is not True:
+                return False
+            if self.faults.trips("fileCopy"):
+                if self.faults.copy_prefix is not None:
+                    # A copy that stopped partway leaves what it had written.
+                    self.files.copy(
+                        str(source),
+                        str(destination),
+                        prefix=self.faults.copy_prefix,
+                    )
+                return False
+            self.files.copy(str(source), str(destination))
+            return True
+
+        def file_read(handle: Any, count: float) -> Any:
+            if not isinstance(handle, _ScriptFile) or handle.closed:
+                return None
+            data = handle.store.get(handle.path, b"")
+            chunk = data[handle.position : handle.position + int(count)]
+            handle.position += len(chunk)
+            return chunk.decode("utf-8", errors="surrogateescape")
+
+        def file_write(handle: Any, *parts: Any) -> Any:
+            if not isinstance(handle, _ScriptFile) or handle.closed:
+                return False
+            if handle.read_only:
+                return False
+            if self.faults.trips("fileWrite"):
+                return False
+            written = 0
+            data = bytearray(handle.store.get(handle.path, b""))
+            for part in parts:
+                encoded = str(part).encode("utf-8", errors="surrogateescape")
+                end = handle.position + len(encoded)
+                if end > len(data):
+                    data.extend(b"\0" * (end - len(data)))
+                data[handle.position : end] = encoded
+                handle.position = end
+                written += len(encoded)
+            handle.store[handle.path] = bytes(data)
+            return written
+
+        def file_get_size(handle: Any) -> Any:
+            if not isinstance(handle, _ScriptFile) or handle.closed:
+                return False
+            return len(handle.store.get(handle.path, b""))
+
+        def file_close(handle: Any) -> bool:
+            if not isinstance(handle, _ScriptFile) or handle.closed:
+                return False
+            handle.closed = True
+            return True
+
+        def file_delete(path: str) -> bool:
+            if self.faults.trips("fileDelete"):
+                return False
+            return self.files.pop(str(path), None) is not None
+
+        def file_rename(source: str, destination: str) -> bool:
+            # "fileRename failed; destination file already exists".
+            if str(source) not in self.files or str(destination) in self.files:
+                return False
+            if self.faults.trips("fileRename"):
+                return False
+            self.files.rename(str(source), str(destination))
+            return True
+
+        g.fileExists = file_exists
+        g.fileOpen = file_open
+        g.fileCreate = file_create
+        g.fileCopy = file_copy
+        g.fileRead = file_read
+        g.fileWrite = file_write
+        g.fileGetSize = file_get_size
+        g.fileClose = file_close
+        g.fileFlush = lambda handle=None: isinstance(handle, _ScriptFile)
+        g.fileDelete = file_delete
+        g.fileRename = file_rename
+
+    def add_study_player(self, *, right: str = "resource.ankigta.study") -> Any:
+        """A logged-in player holding the study right, as the resource expects."""
+        player = self.lua.table_from(
+            {"__element": True, "type": "player", "name": "study-player"}
+        )
+        player["__account"] = self.lua.table_from(
+            {"__element": True, "type": "account", "guest": False}
+        )
+        self.world_elements.append(player)
+        self.acl_rights[right] = True
+        return player
+
+    def to_python(self, value: Any) -> Any:
+        """Convert a Lua value the scripts produced into plain Python.
+
+        Useful for handing one side's real payload to the other side, instead
+        of writing a second guess at its shape.
+        """
+        return self._from_lua(value)
+
+    def write_file(self, path: str, contents: str) -> None:
+        """Seed a resource file, as the companion add-on would publish one."""
+        self.files[path] = contents.encode("utf-8")
+
+    def read_file(self, path: str) -> str:
+        return self.files[path].decode("utf-8")
 
     def _install_client_globals(self, g: Any) -> None:
         """Client-side surface: input, drawing and the CEF browser."""
@@ -512,6 +987,12 @@ class MtaSandbox:
             (str(key), str(state)), []
         ).append(handler) or True
         g.unbindKey = lambda key, state=None, handler=None: True
+        g.addCommandHandler = lambda name, handler, *_rest: (
+            self.commands.setdefault(str(name), []).append(handler) or True
+        )
+        g.outputChatBox = lambda message, *_rest: (
+            self.chat.append(str(message)) or True
+        )
 
         # --- camera, radio ---------------------------------------------------
         g.getCameraTarget = lambda *_args: self.camera_target
@@ -526,8 +1007,15 @@ class MtaSandbox:
         # --- drawing ---------------------------------------------------------
         g.guiGetScreenSize = lambda: (1920.0, 1080.0)
         g.dxDrawRectangle = lambda *_args, **_kwargs: True
-        g.dxDrawText = lambda *_args, **_kwargs: True
+
+        def dx_draw_text(text: Any = "", *_args: Any, **_kwargs: Any) -> bool:
+            self.drawn_text.append(str(text))
+            return True
+
+        g.dxDrawText = dx_draw_text
         g.dxDrawImage = lambda *_args, **_kwargs: True
+        g.getLocalization = lambda: self.lua.table_from(self.localization)
+        self._install_gui_globals(g)
         g.tocolor = lambda r=0, gr=0, b=0, a=255: (
             (int(a) << 24) | (int(r) << 16) | (int(gr) << 8) | int(b)
         )
@@ -663,6 +1151,228 @@ class MtaSandbox:
         g.isBrowserFocused = lambda _browser=None: True
         g.cancelEvent = lambda *_args: True
 
+    def _install_gui_globals(self, g: Any) -> None:
+        """CEGUI controls, recorded with the text the resource wrote.
+
+        Only the calls the resource makes are stubbed, and they keep MTA's
+        indexing: `guiGridListAddRow` returns a 0-based row, `AddColumn` a
+        1-based column, and `guiGridListGetSelectedItem` reports `-1, -1` when
+        nothing is selected.
+        """
+
+        def parent_index(parent: Any) -> int | None:
+            if lua_type(parent) != "table":
+                return None
+            index = parent["__widget"]
+            return None if index is None else int(index)
+
+        def register(kind: str, text: Any = "", parent: Any = None) -> Any:
+            widget = Widget(kind=kind, text=str(text), parent=parent_index(parent))
+            self.widgets.append(widget)
+            handle = self.lua.table_from(
+                {
+                    "__element": True,
+                    "type": "gui-" + kind,
+                    "__widget": len(self.widgets) - 1,
+                }
+            )
+            return handle
+
+        def widget_of(handle: Any) -> Widget | None:
+            if lua_type(handle) != "table":
+                return None
+            index = handle["__widget"]
+            if index is None:
+                return None
+            return self.widgets[int(index)]
+
+        def create_window(
+            _x: float, _y: float, _w: float, _h: float,
+            title: Any = "", _relative: Any = False, parent: Any = None,
+        ) -> Any:
+            return register("window", title, parent)
+
+        def create_label(
+            _x: float, _y: float, _w: float, _h: float,
+            text: Any = "", _relative: Any = False, parent: Any = None,
+        ) -> Any:
+            return register("label", text, parent)
+
+        def create_button(
+            _x: float, _y: float, _w: float, _h: float,
+            text: Any = "", _relative: Any = False, parent: Any = None,
+        ) -> Any:
+            return register("button", text, parent)
+
+        def create_edit(
+            _x: float, _y: float, _w: float, _h: float,
+            text: Any = "", _relative: Any = False, parent: Any = None,
+        ) -> Any:
+            return register("edit", text, parent)
+
+        def create_check_box(
+            _x: float, _y: float, _w: float, _h: float,
+            text: Any = "", selected: Any = False,
+            _relative: Any = False, parent: Any = None,
+        ) -> Any:
+            handle = register("checkbox", text, parent)
+            widget = widget_of(handle)
+            if widget is not None:
+                widget.selected = selected is True
+            return handle
+
+        def create_grid_list(
+            _x: float, _y: float, _w: float, _h: float,
+            _relative: Any = False, parent: Any = None,
+        ) -> Any:
+            return register("gridlist", "", parent)
+
+        def set_text(handle: Any, text: Any) -> bool:
+            widget = widget_of(handle)
+            if widget is None:
+                return False
+            widget.text = str(text)
+            return True
+
+        def get_text(handle: Any) -> Any:
+            widget = widget_of(handle)
+            return widget.text if widget is not None else False
+
+        def set_enabled(handle: Any, enabled: Any) -> bool:
+            widget = widget_of(handle)
+            if widget is None:
+                return False
+            widget.enabled = enabled is True
+            return True
+
+        def add_column(handle: Any, title: Any, _width: float) -> Any:
+            widget = widget_of(handle)
+            if widget is None:
+                return False
+            widget.columns.append(str(title))
+            return len(widget.columns)
+
+        def add_row(handle: Any, *_args: Any) -> Any:
+            widget = widget_of(handle)
+            if widget is None:
+                return False
+            widget.rows.append({})
+            return len(widget.rows) - 1
+
+        def set_item_text(
+            handle: Any, row: float, column: float, text: Any, *_rest: Any
+        ) -> bool:
+            widget = widget_of(handle)
+            if widget is None or not 0 <= int(row) < len(widget.rows):
+                return False
+            widget.rows[int(row)][int(column)] = str(text)
+            return True
+
+        def get_item_text(handle: Any, row: float, column: float) -> Any:
+            widget = widget_of(handle)
+            if widget is None or not 0 <= int(row) < len(widget.rows):
+                return False
+            return widget.rows[int(row)].get(int(column), "")
+
+        def get_selected_item(handle: Any) -> Any:
+            widget = widget_of(handle)
+            if widget is None:
+                return (-1, -1)
+            return (widget.selected_row, widget.selected_column)
+
+        def set_selected_item(handle: Any, row: float, column: float) -> bool:
+            widget = widget_of(handle)
+            if widget is None:
+                return False
+            widget.selected_row = int(row)
+            widget.selected_column = int(column)
+            return True
+
+        def clear_grid(handle: Any) -> bool:
+            widget = widget_of(handle)
+            if widget is None:
+                return False
+            widget.rows = []
+            widget.selected_row = -1
+            widget.selected_column = -1
+            return True
+
+        g.guiCreateWindow = create_window
+        g.guiCreateLabel = create_label
+        g.guiCreateButton = create_button
+        g.guiCreateEdit = create_edit
+        g.guiCreateCheckBox = create_check_box
+        g.guiCreateGridList = create_grid_list
+        g.guiSetText = set_text
+        g.guiGetText = get_text
+        def get_enabled(handle: Any) -> bool:
+            widget = widget_of(handle)
+            return widget.enabled if widget is not None else False
+
+        def set_masked(handle: Any, masked: Any = True) -> bool:
+            widget = widget_of(handle)
+            if widget is None:
+                return False
+            widget.masked = masked is True
+            return True
+
+        def get_selected(handle: Any) -> bool:
+            widget = widget_of(handle)
+            return widget.selected if widget is not None else False
+
+        def set_selected(handle: Any, selected: Any) -> bool:
+            widget = widget_of(handle)
+            if widget is None:
+                return False
+            widget.selected = selected is True
+            return True
+
+        def row_count(handle: Any) -> int:
+            widget = widget_of(handle)
+            return len(widget.rows) if widget is not None else 0
+
+        g.guiSetEnabled = set_enabled
+        g.guiGetEnabled = get_enabled
+        g.guiSetProperty = lambda *_args: True
+        g.guiSetVisible = lambda *_args: True
+        g.guiEditSetMasked = set_masked
+        g.guiCheckBoxGetSelected = get_selected
+        g.guiCheckBoxSetSelected = set_selected
+        g.guiGridListAddColumn = add_column
+        g.guiGridListAddRow = add_row
+        g.guiGridListClear = clear_grid
+        g.guiGridListSetItemText = set_item_text
+        g.guiGridListGetItemText = get_item_text
+        g.guiGridListGetSelectedItem = get_selected_item
+        g.guiGridListSetSelectedItem = set_selected_item
+        g.guiGridListGetRowCount = row_count
+
+    def _destroy_widget(self, index: int) -> None:
+        """Destroy a control and everything parented to it, as CEGUI does."""
+        self.widgets[index].destroyed = True
+        for child, widget in enumerate(self.widgets):
+            if widget.parent == index and not widget.destroyed:
+                self._destroy_widget(child)
+
+    def widget_texts(self, kind: str | None = None) -> list[str]:
+        """Text of every live control, i.e. what the player would read now."""
+        return [
+            widget.text
+            for widget in self.widgets
+            if not widget.destroyed and (kind is None or widget.kind == kind)
+        ]
+
+    def grid_texts(self) -> list[str]:
+        """Every grid column heading and cell, in the order they were written."""
+        written: list[str] = []
+        for widget in self.widgets:
+            if widget.destroyed or widget.kind != "gridlist":
+                continue
+            written.extend(widget.columns)
+            for row in widget.rows:
+                written.extend(row[column] for column in sorted(row))
+        return written
+
     def _record_move(self, element: Any, **fields: Any) -> None:
         """Collect setElement* calls per element, so tests read one entry."""
         kind = (
@@ -745,6 +1455,9 @@ class MtaSandbox:
     def close(self) -> None:
         for connection in self._connections:
             connection.close()
+        if self._owned_directory is not None:
+            self._owned_directory.cleanup()
+            self._owned_directory = None
 
     def __enter__(self) -> MtaSandbox:
         return self

@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from tests.lua.constants import string_constants
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RESOURCE = REPO_ROOT / "mta" / "ankigta"
@@ -85,7 +87,7 @@ def test_f7_exposes_missing_metadata_and_relink_actions() -> None:
     assert "RELINK_ENTITY_REQUEST_EVENT" in main
     assert 'relink_entity' in main
     assert "RELINK_ENTITY_REQUEST_EVENT" in client
-    assert "Relink entity" in client
+    assert "f7.relink" in string_constants(F7)
     assert "relinkPreview" in client
 
 

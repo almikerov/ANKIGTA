@@ -4,6 +4,8 @@ import re
 import sqlite3
 from pathlib import Path
 
+from tests.lua.constants import string_constants
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RESOURCE = REPO_ROOT / "mta" / "ankigta"
@@ -66,8 +68,9 @@ def test_missing_card_is_visible_but_not_eligible_and_ui_requires_confirmation()
     assert "activation = false" in snapshot
     assert "statistics = false" in snapshot
     assert "markers = false" in snapshot
-    assert "Unlink" in client
-    assert "Replace card" in client
+    f7_keys = string_constants(RESOURCE / "client" / "f7.lua")
+    assert "f7.unlink" in f7_keys
+    assert "f7.replaceCard" in f7_keys
     assert "oldCardIdentity" in client
     assert "newCardIdentity" in client
     assert "confirmation" in client.lower()

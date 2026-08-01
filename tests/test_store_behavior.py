@@ -18,6 +18,12 @@ from tests.lua import MtaSandbox
 @pytest.fixture
 def store(tmp_path: Path) -> Iterator[tuple[MtaSandbox, Any]]:
     sandbox = MtaSandbox(database_path=str(tmp_path / "ankigta.sqlite"))
+    # meta.xml loads the shared schema before the store, and the store now
+    # validates against it, so the harness loads them in the same order.
+    sandbox.load("shared/settings.lua")
+    # The store asks the backup module for a verified copy before it
+    # migrates, so it is loaded here in the order meta.xml declares.
+    sandbox.load("server/backup.lua")
     sandbox.load("server/store.lua")
     handle = sandbox.eval("ANKIGTA.Store")
     try:
@@ -81,12 +87,12 @@ def test_user_setting_round_trips_and_records_one_history_entry(
 
     ok = call(
         sandbox,
-        'function() return ANKIGTA.Store.setUserSetting("radius", 7) end',
+        'function() return ANKIGTA.Store.setUserSetting("activationRadius", 7) end',
     )
     assert ok is not False
 
     stored = rows(sandbox, "SELECT setting_key, setting_value FROM user_settings")
-    assert [row["setting_key"] for row in stored] == ["radius"]
+    assert [row["setting_key"] for row in stored] == ["activationRadius"]
 
     history = rows(sandbox, "SELECT operation FROM change_history")
     assert len(history) == 1
@@ -101,7 +107,7 @@ def test_change_history_keeps_only_the_most_recent_hundred_entries(
     sandbox.execute(
         """
         for index = 1, 130 do
-            ANKIGTA.Store.setUserSetting("setting", index)
+            ANKIGTA.Store.setUserSetting("maxActivationSpeedKmh", index)
         end
         """
     )
@@ -116,7 +122,8 @@ def test_change_history_keeps_only_the_most_recent_hundred_entries(
     assert history[-1]["history_id"] > history[0]["history_id"]
     setting = rows(
         sandbox,
-        "SELECT setting_value FROM user_settings WHERE setting_key = 'setting'",
+        "SELECT setting_value FROM user_settings "
+        "WHERE setting_key = 'maxActivationSpeedKmh'",
     )
     assert "130" in str(setting[0]["setting_value"])
 
@@ -127,13 +134,14 @@ def test_undo_restores_the_previous_value_and_redo_reapplies_it(
     sandbox, _ = store
     call(sandbox, "function() return ANKIGTA.Store.open() end")
 
-    sandbox.execute('ANKIGTA.Store.setUserSetting("radius", 3)')
-    sandbox.execute('ANKIGTA.Store.setUserSetting("radius", 9)')
+    sandbox.execute('ANKIGTA.Store.setUserSetting("activationRadius", 3)')
+    sandbox.execute('ANKIGTA.Store.setUserSetting("activationRadius", 9)')
 
     def current() -> str:
         found = rows(
             sandbox,
-            "SELECT setting_value FROM user_settings WHERE setting_key = 'radius'",
+            "SELECT setting_value FROM user_settings "
+            "WHERE setting_key = 'activationRadius'",
         )
         return str(found[0]["setting_value"])
 
@@ -152,11 +160,11 @@ def test_a_new_change_after_undo_truncates_the_redo_branch(
     sandbox, _ = store
     call(sandbox, "function() return ANKIGTA.Store.open() end")
 
-    sandbox.execute('ANKIGTA.Store.setUserSetting("radius", 1)')
-    sandbox.execute('ANKIGTA.Store.setUserSetting("radius", 2)')
+    sandbox.execute('ANKIGTA.Store.setUserSetting("activationRadius", 1)')
+    sandbox.execute('ANKIGTA.Store.setUserSetting("activationRadius", 2)')
     call(sandbox, "function() return ANKIGTA.Store.undo() end")
 
-    sandbox.execute('ANKIGTA.Store.setUserSetting("radius", 3)')
+    sandbox.execute('ANKIGTA.Store.setUserSetting("activationRadius", 3)')
 
     redone, reason = call(sandbox, "function() return ANKIGTA.Store.redo() end")
     assert redone is False
@@ -168,7 +176,8 @@ def test_a_new_change_after_undo_truncates_the_redo_branch(
 
     found = rows(
         sandbox,
-        "SELECT setting_value FROM user_settings WHERE setting_key = 'radius'",
+        "SELECT setting_value FROM user_settings "
+        "WHERE setting_key = 'activationRadius'",
     )
     assert "3" in str(found[0]["setting_value"])
 
@@ -260,7 +269,7 @@ def test_operations_are_rejected_before_the_store_is_open(
     assert handle.ready is False
     ok, category = call(
         sandbox,
-        'function() return ANKIGTA.Store.setUserSetting("radius", 1) end',
+        'function() return ANKIGTA.Store.setUserSetting("activationRadius", 1) end',
     )
     assert ok is False
     assert category == "storage_unavailable"

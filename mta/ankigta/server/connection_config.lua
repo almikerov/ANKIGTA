@@ -55,11 +55,29 @@ local function readJson(path)
     return decoded
 end
 
+-- This side of the connection. The MTA server is one override holder; the
+-- companion add-on is the other, and its manual values are what this side has
+-- to agree with rather than adopt.
+local OVERRIDE_SIDE = "server"
+
+-- Range, step and type all come from the shared schema. A second copy of
+-- "1 to 65535" here is a copy that will one day disagree with the one the UI
+-- shows.
+local function portRejection(port)
+    if type(port) ~= "number" then
+        -- A published or stored port that is not a number is a malformed file,
+        -- not a value to coerce.
+        return "settings.error.not_a_number"
+    end
+    local ok, reason = ANKIGTA.Settings.validate("connectionPort", port)
+    if ok then
+        return false
+    end
+    return reason
+end
+
 local function validPort(port)
-    return type(port) == "number"
-        and port == math.floor(port)
-        and port >= 1
-        and port <= 65535
+    return portRejection(port) == false
 end
 
 local function validTokenDigest(digest)
@@ -93,19 +111,37 @@ local function validatePublished(value)
         and validTokenDigest(value.companion.tokenDigest)
 end
 
+--- Is this a manual override this side may act on?
+--
+-- Returns `true`, or `false` plus the reason. The reason matters: a file this
+-- side simply did not write is a different problem from a corrupt one.
 local function validateManual(value)
     if type(value) ~= "table"
         or value.format ~= "ankigta-mta-connection-settings"
         or value.formatVersion ~= 1
     then
-        return false
+        return false, "manual_connection_config_invalid"
     end
     if value.mode == "automatic" then
         return true
     end
-    return value.mode == "manual"
-        and validPort(value.port)
-        and type(value.token) == "string"
+    if value.mode ~= "manual" then
+        return false, "manual_connection_config_invalid"
+    end
+    if not ANKIGTA.Settings.overrideAppliesTo(
+        OVERRIDE_SIDE,
+        {side = value.overrideSide}
+    ) then
+        return false, "foreign_manual_connection_override"
+    end
+    local portReason = portRejection(value.port)
+    if portReason then
+        return false, portReason
+    end
+    if not ANKIGTA.Settings.validate("connectionToken", value.token) then
+        return false, "settings.error.not_a_string"
+    end
+    return true
 end
 
 local function loadPublished()
@@ -129,8 +165,9 @@ local function loadManual()
         }
     end
     local manual = readJson(MANUAL_PATH)
-    if not validateManual(manual) then
-        return false, "manual_connection_config_invalid"
+    local ok, reason = validateManual(manual)
+    if not ok then
+        return false, reason
     end
     return manual
 end
@@ -198,8 +235,9 @@ function ConnectionConfig.loadEffective()
 end
 
 local function writeManual(value)
-    if not validateManual(value) then
-        return false, "invalid_manual_connection"
+    local valid, invalidReason = validateManual(value)
+    if not valid then
+        return false, invalidReason
     end
     local encoded = encodeJson(value)
     if not encoded then
@@ -246,12 +284,31 @@ function ConnectionConfig.setManual(port, token, keepExistingToken)
             token = published.automatic.token
         end
     end
+    local portOverride, portReason = ANKIGTA.Settings.overrideBy(
+        OVERRIDE_SIDE,
+        "connectionPort",
+        port
+    )
+    if not portOverride then
+        return false, portReason
+    end
+    local tokenOverride, tokenReason = ANKIGTA.Settings.overrideBy(
+        OVERRIDE_SIDE,
+        "connectionToken",
+        token
+    )
+    if not tokenOverride then
+        return false, tokenReason
+    end
     return writeManual({
         format = "ankigta-mta-connection-settings",
         formatVersion = 1,
         mode = "manual",
-        port = port,
-        token = token,
+        port = portOverride.value,
+        token = tokenOverride.value,
+        -- Stamped, so the side that reads it back can tell whether it is its
+        -- own override or someone else's.
+        overrideSide = portOverride.side,
     })
 end
 

@@ -18,6 +18,27 @@ local function label(key)
     return key
 end
 
+local function formatted(key, ...)
+    if ANKIGTA.Locale then
+        return ANKIGTA.Locale.format(key, ...)
+    end
+    return key
+end
+
+--- Resolve a stored warning or result into text.
+-- What is stored is the key and its arguments, never finished text: a language
+-- switch has to reach a warning that is already on screen, and it cannot if the
+-- string was frozen when the event arrived.
+local function message(entry)
+    if type(entry) == "table" then
+        return formatted(entry.key, unpack(entry.args or {}))
+    end
+    if type(entry) == "string" then
+        return label(entry)
+    end
+    return false
+end
+
 local RATING_KEYS = {
     again = "review.again",
     hard = "review.hard",
@@ -43,6 +64,18 @@ local BLOCKED_CONTROLS = {
 local RATING_BAR_HEIGHT = 56
 local SURFACE_MARGIN = 48
 
+-- Defaults come from the shared schema where it is loaded, so this module and
+-- the settings store cannot drift into disagreeing about what "default" means.
+local function schemaDefault(key, fallback)
+    if ANKIGTA.Settings then
+        local value = ANKIGTA.Settings.default(key)
+        if value ~= nil then
+            return value
+        end
+    end
+    return fallback
+end
+
 local Review = {
     active = false,
     side = "question",
@@ -51,17 +84,17 @@ local Review = {
     result = false,
     warning = false,
     focused = true,
-    closeAfterRating = true,
+    closeAfterRating = schemaDefault("closeAfterRating", true),
     -- Set when the card navigated its main frame somewhere else. Rating stays
     -- available: the player still knows which card they were answering.
     externalPage = false,
-    cardAudioEnabled = true,
-    muteGameWorld = false,
+    cardAudioEnabled = schemaDefault("cardAudioEnabled", true),
+    muteGameWorld = schemaDefault("muteGameWorld", false),
     -- Two independent settings, both on by default. Protection stops new harm;
     -- disabling controls stops the player acting. Wanting one without the
     -- other is reasonable, so neither implies the other.
-    reviewProtection = true,
-    disablePlayerControls = true,
+    reviewProtection = schemaDefault("reviewProtection", true),
+    disablePlayerControls = schemaDefault("disablePlayerControls", true),
     browser = false,
     identity = false,
     ratingBounds = {},
@@ -162,8 +195,8 @@ function reviewModeState()
         side = Review.side,
         submitted = Review.submitted,
         awaitingResult = Review.awaitingResult,
-        result = Review.result,
-        warning = Review.warning,
+        result = message(Review.result),
+        warning = message(Review.warning),
         focused = Review.focused,
         externalPage = Review.externalPage,
         cardAudioEnabled = Review.cardAudioEnabled,
@@ -178,6 +211,14 @@ end
 function setReviewProtection(protection, disableControls)
     Review.reviewProtection = protection ~= false
     Review.disablePlayerControls = disableControls ~= false
+    return true
+end
+
+--- Whether an accepted rating closes the card.
+-- The player owns this one (ADR 0014), so it is set here rather than carried
+-- in the payload the server sends when it opens a card.
+function setCloseAfterRating(closeAfterRating)
+    Review.closeAfterRating = closeAfterRating ~= false
     return true
 end
 
@@ -247,9 +288,10 @@ function renderReviewMode()
         )
     end
 
-    if Review.warning then
+    local warningText = message(Review.warning)
+    if warningText then
         dxDrawText(
-            Review.warning,
+            warningText,
             x + 8,
             y + 8,
             x + width - 8,
@@ -343,9 +385,10 @@ function renderReviewMode()
         )
     end
 
-    if Review.result then
+    local resultText = message(Review.result)
+    if resultText then
         dxDrawText(
-            Review.result,
+            resultText,
             x,
             barY - 24,
             x + width,
@@ -431,7 +474,6 @@ local function openReviewMode(payload)
     Review.result = false
     Review.warning = payload.warning or false
     Review.focused = true
-    Review.closeAfterRating = payload.closeAfterRating ~= false
     Review.identity = payload.cardIdentity or false
     Review.ratingBounds = {}
 
@@ -464,7 +506,7 @@ addEventHandler(REVIEW_SIDE_EVENT, resourceRoot, function(payload)
         return
     end
     if type(payload.url) ~= "string" or payload.url == "" then
-        Review.warning = "Не удалось загрузить сторону карточки"
+        Review.warning = "review.sideLoadFailed"
         return
     end
     Review.side = payload.side == "answer" and "answer" or "question"
@@ -483,7 +525,7 @@ addEventHandler(REVIEW_RESULT_EVENT, resourceRoot, function(outcome)
     Review.awaitingResult = false
     if outcome.state == "applied" then
         Review.submitted = true
-        Review.result = label("review.applied")
+        Review.result = "review.applied"
         if Review.closeAfterRating then
             closeReviewMode("closed_after_rating")
         end
@@ -494,10 +536,13 @@ addEventHandler(REVIEW_RESULT_EVENT, resourceRoot, function(outcome)
         -- card open rather than pretending the rating did or did not land.
         Review.submitted = true
         Review.result = false
-        Review.warning = label("review.outcomeUnknown")
+        Review.warning = "review.outcomeUnknown"
         return
     end
-    Review.warning = "Оценка отклонена: " .. tostring(outcome.category or "unknown")
+    Review.warning = {
+        key = "review.ratingRejected",
+        args = {tostring(outcome.category or "unknown")},
+    }
 end)
 
 addEventHandler("onClientBrowserNavigate", root, function(url, isBlocked)
@@ -505,7 +550,7 @@ addEventHandler("onClientBrowserNavigate", root, function(url, isBlocked)
         return
     end
     if isBlocked then
-        Review.warning = "Переход заблокирован настройками MTA"
+        Review.warning = "review.navigationBlocked"
         return
     end
     -- MTA reports navigation after the fact; it cannot be cancelled from Lua
@@ -513,7 +558,7 @@ addEventHandler("onClientBrowserNavigate", root, function(url, isBlocked)
     -- card they were answering.
     if type(url) == "string" and not string.find(url, "/render/", 1, true) then
         Review.externalPage = true
-        Review.warning = label("review.externalPage")
+        Review.warning = "review.externalPage"
     end
 end)
 
@@ -522,10 +567,10 @@ addEventHandler("onClientBrowserLoadingFailed", root, function(url, errorCode)
         return
     end
     -- A card that fails to render is still a card that can be rated.
-    Review.warning = string.format(
-        "Ошибка загрузки карточки (%s)",
-        tostring(errorCode or url or "unknown")
-    )
+    Review.warning = {
+        key = "review.loadFailed",
+        args = {tostring(errorCode or url or "unknown")},
+    }
 end)
 
 addEventHandler("onClientBrowserCreated", root, function()

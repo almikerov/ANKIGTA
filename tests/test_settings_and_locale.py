@@ -107,6 +107,82 @@ def test_an_unknown_setting_is_never_writable(settings: MtaSandbox) -> None:
     assert reason == "unknown_setting"
 
 
+def test_writing_a_setting_you_own_is_not_the_same_as_overriding_it(
+    settings: MtaSandbox,
+) -> None:
+    """The store has to put the two in different places, so the schema has to
+    tell them apart."""
+    write_kind = settings.eval(
+        "function(s, k) return ANKIGTA.Settings.writeKind(s, k) end"
+    )
+
+    assert write_kind("server", "activationRadius") == "authority"
+    assert write_kind("addon", "connectionPort") == "authority"
+    assert write_kind("server", "connectionPort") == "local_override"
+    assert write_kind("client", "connectionPort") == "local_override"
+    assert write_kind("client", "activationRadius")[0] is False
+
+
+@pytest.mark.parametrize("key", ["activationRadius", "indicatorMode", "connectionPort"])
+def test_a_side_the_schema_does_not_know_may_not_write_anything(
+    settings: MtaSandbox,
+    key: str,
+) -> None:
+    ok, reason = can_write(settings, "somewhere_else", key)
+
+    assert ok is False
+    assert reason == "wrong_authority"
+    assert settings.eval(
+        "function(s, k) return ANKIGTA.Settings.writeKind(s, k) end"
+    )("somewhere_else", key)[0] is False
+
+
+def test_an_override_carries_the_side_that_made_it(settings: MtaSandbox) -> None:
+    record = settings.eval(
+        "function(s, k, v) return ANKIGTA.Settings.overrideBy(s, k, v) end"
+    )("server", "connectionPort", "40009")
+
+    assert record["side"] == "server"
+    assert record["key"] == "connectionPort"
+    # Normalized, so a port typed into a text field is not stored as text.
+    assert record["value"] == 40009
+
+
+def test_an_override_applies_only_to_the_side_that_made_it(
+    settings: MtaSandbox,
+) -> None:
+    applies = settings.eval(
+        "function(s, side) return ANKIGTA.Settings.overrideAppliesTo("
+        "s, {key = 'connectionPort', side = side, value = 1}) end"
+    )
+
+    assert applies("server", "server") is True
+    assert applies("server", "client") is False
+    assert applies("client", "server") is False
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "reason"),
+    [
+        ("activationRadius", 3, "not_a_local_override"),
+        ("connectionPort", 70000, "settings.error.out_of_range"),
+        ("nothingLikeThis", 1, "unknown_setting"),
+    ],
+)
+def test_only_a_valid_local_override_can_be_stamped(
+    settings: MtaSandbox,
+    key: str,
+    value: Any,
+    reason: str,
+) -> None:
+    refused, why = settings.eval(
+        "function(s, k, v) return ANKIGTA.Settings.overrideBy(s, k, v) end"
+    )("server", key, value)
+
+    assert refused is False
+    assert why == reason
+
+
 @pytest.mark.parametrize(
     "key",
     ["connectionPort", "connectionToken", "uiPlacement"],

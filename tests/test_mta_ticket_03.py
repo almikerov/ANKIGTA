@@ -8,6 +8,7 @@ from urllib.error import URLError
 
 from ankigta_companion.connection import CompanionConnectionManager
 from ankigta_companion.connection_settings_ui import connection_summary
+from tests.lua import MtaSandbox
 from ankigta_companion.contract import (
     CollectionObservation,
     CollectionState,
@@ -123,17 +124,69 @@ def test_mta_config_reader_validates_current_and_last_known_good() -> None:
 
 
 def test_mta_connection_ui_masks_replacement_token_and_offers_connect() -> None:
+    """Ticket 27 moved these labels into the string table, so run the window.
+
+    The controls are read back off the rendered window rather than grepped out
+    of the file: a label that stopped reaching a control would otherwise still
+    satisfy a source search.
+    """
     source = (MTA_RESOURCE / "client" / "connection_settings.lua").read_text(
         encoding="utf-8"
     )
-
-    assert "Подключиться" in source
-    assert "Automatic Connection Mode" in source
-    assert "Manual Connection Mode" in source
-    assert "guiEditSetMasked" in source
     assert "keepToken" in source
-    assert "Disable token explicitly" in source
-    assert "Dismiss empty-token warning" in source
+
+    sandbox = MtaSandbox()
+    try:
+        sandbox.load("shared/locale.lua")
+        sandbox.load("client/connection_settings.lua")
+        label = sandbox.eval("function(key) return ANKIGTA.Locale.text(key) end")
+
+        sandbox.eval(
+            """
+            function()
+                triggerEvent("ankigta:companionStatus", resourceRoot, {
+                    state = "disconnected",
+                    category = "timeout",
+                })
+                triggerEvent(
+                    "ankigta:connectionSettingsSnapshot",
+                    resourceRoot,
+                    {mode = "automatic", tokenConfigured = true}
+                )
+            end
+            """
+        )()
+
+        written = sandbox.widget_texts()
+        assert label("connection.connect") in written
+        assert label("connection.manualMode") in written
+        assert label("connection.automaticMode") in written
+        assert label("connection.disableToken") in written
+        # The replacement token is typed into a masked edit, never echoed.
+        masked = [
+            widget for widget in sandbox.widgets
+            if widget.kind == "edit" and widget.masked
+        ]
+        assert len(masked) == 1
+        assert masked[0].text == ""
+
+        # The dismiss button is offered only while the token is disabled and
+        # the warning has not already been waved off.
+        assert label("connection.dismissWarning") not in written
+        sandbox.eval(
+            """
+            function()
+                triggerEvent(
+                    "ankigta:connectionSettingsSnapshot",
+                    resourceRoot,
+                    {mode = "manual", tokenConfigured = false, tokenDisabled = true}
+                )
+            end
+            """
+        )()
+        assert label("connection.dismissWarning") in sandbox.widget_texts()
+    finally:
+        sandbox.close()
     assert "emptyTokenDismissed" in source
     assert "ankigta:connectCompanion" in source
     assert "ankigta:updateConnectionSettings" in source

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+
+from tests.lua.constants import string_constants
 import re
 import xml.etree.ElementTree as ET
 
@@ -42,8 +44,11 @@ def test_study_ui_exposes_only_explicit_start_and_safe_cleanup_actions() -> None
     scripts = [script.get("src") for script in manifest.findall("script")]
     assert "client/study.lua" in scripts
     study = source("client/study.lua")
-    assert "Начать обучение" in study
-    assert "ANKIGTA Session" in study
+    study_keys = string_constants(RESOURCE / "client" / "study.lua")
+    assert "study.start" in study_keys
+    assert "study.session" in study_keys
+    assert "study.pause" in study_keys
+    assert "study.stop" in study_keys
     assert 'triggerServerEvent(\n            START_STUDY_REQUEST_EVENT' in study
     assert "PAUSE_STUDY_REQUEST_EVENT" in study
     assert "STOP_STUDY_REQUEST_EVENT" in study

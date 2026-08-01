@@ -462,7 +462,7 @@ local function discardPending(pending, reason)
             pending.player,
             PENDING_NOTICE_EVENT,
             resourceRoot,
-            "Pending Map Save удалена: карта была закрыта или перезагружена без Save.",
+            "notice.pendingDiscarded",
             reason
         )
     end
@@ -784,8 +784,7 @@ function MapIdentity.linkSnapshot(row)
     if ANKIGTA.Store.isIdentityCollision(row.map_id, row.entity_id) then
         return {
             state = "Identity Collision",
-            guidance = "Скопированные ID заблокированы до решения: Original / renamed "
-                .. "или New copy.",
+            guidanceKey = "guidance.copyBlocked",
             study = false,
             activation = false,
             statistics = false,
@@ -811,12 +810,13 @@ function MapIdentity.linkSnapshot(row)
         }
     end
     if pending then
-        local guidance = "Сохраните карту штатной командой stock Map Editor."
+        -- Guidance travels as a key, not a sentence: this side has no
+        -- language, and the F7 window that shows it does.
+        local guidanceKey = "guidance.saveWithEditor"
         if pending.lastReadBackOutcome == "identity_collision" then
             return {
                 state = "Identity Collision",
-                guidance = "Скопированные ID заблокированы до решения: Original / renamed "
-                    .. "или New copy.",
+                guidanceKey = "guidance.copyBlocked",
                 study = false,
                 activation = false,
                 statistics = false,
@@ -828,12 +828,11 @@ function MapIdentity.linkSnapshot(row)
         if pending.lastReadBackOutcome == "partial_read_back"
             or pending.lastReadBackOutcome == "ambiguous_read_back"
         then
-            guidance = "Повторите stock Save или восстановление Editor, "
-                .. "затем нажмите Проверить ещё раз."
+            guidanceKey = "guidance.retrySave"
         end
         return {
             state = pending.state,
-            guidance = guidance,
+            guidanceKey = guidanceKey,
             study = pending.study,
             activation = pending.activation,
             statistics = pending.statistics,
@@ -862,8 +861,7 @@ function MapIdentity.linkSnapshot(row)
         return {
             state = "Card missing",
             metadata = metadata,
-            guidance = "Карточка удалена из Bound Anki Collection. "
-                .. "Используйте Replace card.",
+            guidanceKey = "guidance.cardMissing",
             cardIdentity = {
                 collectionUuid = row.collection_uuid,
                 cardId = tonumber(row.card_id),

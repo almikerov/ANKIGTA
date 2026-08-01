@@ -5,6 +5,7 @@ local F7_REQUEST_EVENT = "ankigta:requestF7"
 local F7_SNAPSHOT_EVENT = "ankigta:f7Snapshot"
 local F7_DENIED_EVENT = "ankigta:f7Denied"
 local AUTHORIZATION_EVENT = "ankigta:setAuthorized"
+local SETTINGS_EVENT = "ankigta:settings"
 local AUTHORIZATION_REQUEST_EVENT = "ankigta:requestAuthorization"
 local RECHECK_REQUEST_EVENT = "ankigta:recheckPendingMapSave"
 local COPY_DECISION_REQUEST_EVENT = "ankigta:resolveMapCopyDecision"
@@ -443,6 +444,16 @@ local function sendAuthorization(player)
         resourceRoot,
         authorized == true
     )
+    if authorized == true then
+        -- The world and study settings the server owns. The client's own
+        -- settings are not in here: it owns those and reads them locally.
+        triggerClientEvent(
+            player,
+            SETTINGS_EVENT,
+            resourceRoot,
+            ANKIGTA.SettingsStore.owned()
+        )
+    end
 end
 
 local function activeCardIdentities()
@@ -476,6 +487,14 @@ local function requestStudyStart(player, rebuild, allowEarlyReview)
     if not authorized then
         return false, authorizationError.category
     end
+    -- The early-review policy is the server's (ADR 0014). The request carries
+    -- what the player asked for; the setting is what actually governs, so the
+    -- request changes the setting and then the setting is read back. A study
+    -- session started after a restart uses the same policy as the one before.
+    if type(allowEarlyReview) == "boolean" then
+        ANKIGTA.SettingsStore.set("allowEarlyReview", allowEarlyReview)
+    end
+    allowEarlyReview = ANKIGTA.SettingsStore.get("allowEarlyReview") == true
     local identities, identityError = activeCardIdentities()
     if not identities then
         return false, identityError
@@ -561,8 +580,9 @@ local function changeHistory(player, direction)
             player,
             PENDING_NOTICE_EVENT,
             resourceRoot,
-            (direction == "undo" and "Undo" or "Redo")
-                .. " unavailable: " .. tostring(outcome),
+            direction == "undo"
+                and "notice.undoUnavailable"
+                or "notice.redoUnavailable",
             outcome
         )
         return false, outcome
@@ -603,15 +623,13 @@ local function recheckPendingMapSave(player, mapId, entityId)
     end
     local verified, outcome =
         ANKIGTA.MapIdentity.recheckPendingMapSave(mapId, entityId)
-    local message = verified
-        and "Spatial Link активирована после независимого read-back."
-        or "Read-back не подтвердил ID; Pending Map Save сохранена: "
-            .. tostring(outcome)
+    -- The notice travels as a key: the player's language is a client-owned
+    -- setting, so the side that renders it is the side that translates it.
     triggerClientEvent(
         player,
         PENDING_NOTICE_EVENT,
         resourceRoot,
-        message,
+        verified and "notice.pendingActivated" or "notice.pendingNotConfirmed",
         outcome
     )
     if not verified then
@@ -637,8 +655,8 @@ function resolveMapCopyDecision(player, mapId, entityId, decision)
         PENDING_NOTICE_EVENT,
         resourceRoot,
         resolved
-            and "Map copy decision applied; New copy has no automatic Spatial Link."
-            or "Map copy decision was not applied: " .. tostring(outcome),
+            and "notice.copyDecisionApplied"
+            or "notice.copyDecisionFailed",
         outcome
     )
     local refresh = sendF7Snapshot
@@ -735,7 +753,7 @@ addEventHandler(CARD_PICKER_REQUEST_EVENT, resourceRoot, function(
             client,
             PENDING_NOTICE_EVENT,
             resourceRoot,
-            "Card Picker unavailable: " .. tostring(requestError),
+            "notice.cardPickerUnavailable",
             requestError
         )
     end
@@ -781,7 +799,7 @@ addEventHandler(LINK_CARD_REQUEST_EVENT, resourceRoot, function(
             client,
             PENDING_NOTICE_EVENT,
             resourceRoot,
-            "Spatial Link не активирована: " .. tostring(linkError),
+            "notice.linkFailed",
             linkError
         )
     else
@@ -814,7 +832,7 @@ addEventHandler(START_STUDY_REQUEST_EVENT, resourceRoot, function(
             client,
             PENDING_NOTICE_EVENT,
             resourceRoot,
-            "Study start failed: " .. tostring(requestError),
+            "notice.studyStartFailed",
             requestError
         )
     end
@@ -837,7 +855,7 @@ addEventHandler(REBUILD_STUDY_REQUEST_EVENT, resourceRoot, function(
             client,
             PENDING_NOTICE_EVENT,
             resourceRoot,
-            "Study rebuild failed: " .. tostring(requestError),
+            "notice.studyRebuildFailed",
             requestError
         )
     end
@@ -854,7 +872,7 @@ addEventHandler(PAUSE_STUDY_REQUEST_EVENT, resourceRoot, function()
             client,
             PENDING_NOTICE_EVENT,
             resourceRoot,
-            "Study pause failed: " .. tostring(requestError),
+            "notice.studyPauseFailed",
             requestError
         )
     end
@@ -871,7 +889,7 @@ addEventHandler(STOP_STUDY_REQUEST_EVENT, resourceRoot, function()
             client,
             PENDING_NOTICE_EVENT,
             resourceRoot,
-            "Study stop failed: " .. tostring(requestError),
+            "notice.studyStopFailed",
             requestError
         )
     end
@@ -888,7 +906,7 @@ addEventHandler(CANCEL_STUDY_REQUEST_EVENT, resourceRoot, function()
             client,
             PENDING_NOTICE_EVENT,
             resourceRoot,
-            "Study rebuild cancel failed: " .. tostring(requestError),
+            "notice.studyCancelFailed",
             requestError
         )
     end
@@ -914,7 +932,7 @@ addEventHandler(UNLINK_CARD_REQUEST_EVENT, resourceRoot, function(
             client,
             PENDING_NOTICE_EVENT,
             resourceRoot,
-            "Unlink не выполнен: " .. tostring(unlinkError),
+            "notice.unlinkFailed",
             unlinkError
         )
         return
@@ -929,7 +947,7 @@ addEventHandler(UNLINK_CARD_REQUEST_EVENT, resourceRoot, function(
         client,
         PENDING_NOTICE_EVENT,
         resourceRoot,
-        "Spatial Link удалена; Map Entity metadata сохранены.",
+        "notice.unlinked",
         "unlink"
     )
     sendF7Snapshot(client)
@@ -957,7 +975,7 @@ addEventHandler(REPLACE_CARD_REQUEST_EVENT, resourceRoot, function(
             client,
             PENDING_NOTICE_EVENT,
             resourceRoot,
-            "Replace card не выполнен: " .. tostring(replaceError),
+            "notice.replaceFailed",
             replaceError
         )
         return
@@ -972,7 +990,7 @@ addEventHandler(REPLACE_CARD_REQUEST_EVENT, resourceRoot, function(
         client,
         PENDING_NOTICE_EVENT,
         resourceRoot,
-        "Карточка заменена без промежуточного Unlink.",
+        "notice.replaced",
         "replace_card"
     )
     sendF7Snapshot(client)
@@ -999,9 +1017,7 @@ addEventHandler(RELINK_ENTITY_REQUEST_EVENT, resourceRoot, function(
         client,
         PENDING_NOTICE_EVENT,
         resourceRoot,
-        relinked
-            and "Relink entity completed; Spatial Link and metadata moved."
-            or "Relink entity was not applied: " .. tostring(relinkError),
+        relinked and "notice.relinkApplied" or "notice.relinkFailed",
         relinkError
     )
     if relinked then
@@ -1090,6 +1106,9 @@ end)
 addEventHandler("onResourceStart", resourceRoot, function()
     runtimeInstance = getElementByID(RUNTIME_REFERENCE_ID)
     ANKIGTA.Store.open()
+    -- Before anything reads a setting: a restart restores what the user chose,
+    -- and falls back to the schema default only where nothing valid is stored.
+    ANKIGTA.SettingsStore.load()
     ANKIGTA.MapIdentity.recoverPersistedCollisions()
     ANKIGTA.MapIdentity.refreshEntityPresence()
 
@@ -1183,7 +1202,8 @@ addEventHandler(RENDER_ISSUED_EVENT, resourceRoot, function(
                 url = render.url,
                 side = openReview.side,
                 cardIdentity = openReview.cardIdentity,
-                closeAfterRating = ANKIGTA.closeAfterRating ~= false,
+                -- No closeAfterRating here: the client owns it (ADR 0014) and
+                -- reads it from its own settings store.
             }
         )
         return

@@ -5,8 +5,22 @@ local PAUSE_STUDY_REQUEST_EVENT = "ankigta:pauseStudy"
 local STOP_STUDY_REQUEST_EVENT = "ankigta:stopStudy"
 local CANCEL_STUDY_REQUEST_EVENT = "ankigta:cancelStudyRebuild"
 
+ANKIGTA = ANKIGTA or {}
+
+local function text(key, ...)
+    -- Read when the control is written, so switching language and reopening
+    -- the window needs no resource restart.
+    if ANKIGTA.Locale then
+        return ANKIGTA.Locale.format(key, ...)
+    end
+    return key
+end
+
 local window = nil
 local statusLabel = nil
+-- The last status drawn, so the window can be rebuilt in another language
+-- without waiting for the companion to send the next one.
+local lastStatus = nil
 local startButton = nil
 local pauseButton = nil
 local rebuildButton = nil
@@ -31,16 +45,16 @@ end
 
 local function studyText(study)
     if type(study) ~= "table" then
-        return "Study: disconnected"
+        return text("study.disconnected")
     end
     if study.sessionActive == true then
-        return string.format(
-            "Study: ANKIGTA Session (%d/%d)",
+        return text(
+            "study.session",
             tonumber(study.progress or 0),
             tonumber(study.total or 0)
         )
     end
-    return "Study: paused"
+    return text("study.paused")
 end
 
 local function ensureStudyUi()
@@ -54,30 +68,46 @@ local function ensureStudyUi()
         (screenHeight - height) / 2,
         width,
         height,
-        "ANKIGTA — Study",
+        text("study.title"),
         false
     )
-    statusLabel = guiCreateLabel(18, 30, width - 36, 24, "Study: paused", false, window)
+    statusLabel = guiCreateLabel(
+        18,
+        30,
+        width - 36,
+        24,
+        text("study.paused"),
+        false,
+        window
+    )
     earlyReview = guiCreateCheckBox(
         18,
         60,
         width - 36,
         24,
-        "Разрешить досрочное повторение",
+        text("settings.allowEarlyReview"),
         false,
         false,
         window
     )
-    startButton = guiCreateButton(18, 96, 92, 30, "Начать обучение", false, window)
-    pauseButton = guiCreateButton(118, 96, 76, 30, "Пауза", false, window)
-    rebuildButton = guiCreateButton(202, 96, 92, 30, "Перестроить", false, window)
-    stopButton = guiCreateButton(302, 96, 76, 30, "Остановить", false, window)
+    startButton = guiCreateButton(
+        18, 96, 92, 30, text("study.start"), false, window
+    )
+    pauseButton = guiCreateButton(
+        118, 96, 76, 30, text("study.pause"), false, window
+    )
+    rebuildButton = guiCreateButton(
+        202, 96, 92, 30, text("study.rebuild"), false, window
+    )
+    stopButton = guiCreateButton(
+        302, 96, 76, 30, text("study.stop"), false, window
+    )
     cancelButton = guiCreateButton(
         18,
         136,
         140,
         30,
-        "Отменить перестройку",
+        text("study.cancelRebuild"),
         false,
         window
     )
@@ -136,7 +166,20 @@ addEventHandler(STATUS_EVENT, resourceRoot, function(status)
     if source ~= resourceRoot or type(status) ~= "table" then
         return
     end
+    lastStatus = status
     updateStudyUi(status)
 end)
+
+if ANKIGTA.Locale then
+    ANKIGTA.Locale.onChange(function()
+        if not isElement(window) then
+            return
+        end
+        -- Labels are written once, when the control is built, so the window is
+        -- rebuilt rather than relabelled control by control.
+        closeStudyUi()
+        updateStudyUi(lastStatus)
+    end)
+end
 
 addEventHandler("onClientResourceStop", resourceRoot, closeStudyUi)

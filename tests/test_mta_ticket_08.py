@@ -4,6 +4,8 @@ import re
 import sqlite3
 from pathlib import Path
 
+from tests.lua.constants import string_constants
+
 import pytest
 
 
@@ -82,7 +84,7 @@ def test_pending_and_collision_links_are_ineligible_and_picker_is_presented() ->
     assert 'state = "Pending Map Save"' in identity
     assert "activation = false" in identity
     assert "identity_collision" in server or "collision" in identity
-    assert "Card Picker" in client
+    assert "f7.cardPicker" in string_constants(CLIENT_F7)
     assert "CARD_PICKER" in client
     assert "link.state == \"Unlinked\"" in client
     assert "triggerServerEvent" in client

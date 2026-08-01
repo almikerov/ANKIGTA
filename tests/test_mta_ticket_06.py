@@ -5,6 +5,9 @@ import sqlite3
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from tests.lua import MtaSandbox
+from tests.lua.constants import string_constants
+
 import pytest
 
 
@@ -73,8 +76,9 @@ def test_pending_map_save_is_visible_but_ineligible_until_read_back() -> None:
     assert "ANKIGTA.Store" not in prepare
     assert "pendingByEntity[entityKey(row.map_id, row.entity_id)]" in snapshot
     assert "link = ANKIGTA.MapIdentity.linkSnapshot(row)" in entity_contract
-    assert 'guiGridListAddColumn(grid, "Spatial Link", 0.18)' in client
-    assert '"Проверить ещё раз"' in client
+    f7_keys = string_constants(CLIENT_F7)
+    assert "f7.column.link" in f7_keys
+    assert "f7.recheck" in f7_keys
 
 
 def test_auto_observer_and_manual_recheck_share_independent_read_back() -> None:
@@ -191,10 +195,11 @@ def test_unsaved_close_discards_pending_while_failed_save_stays_pending() -> Non
     assert 'attemptReadBack(pending, "close_or_reload")' in destroyed
     assert "pendingByEntity[key] = nil" in discard
     assert "PENDING_NOTICE_EVENT" in discard
+    assert "notice.pendingDiscarded" in string_constants(SERVER_IDENTITY)
     assert 'addEventHandler("onElementDestroy", root' in server
     assert "ANKIGTA.MapIdentity.handleEditorElementDestroyed(source)" in server
     assert 'local PENDING_NOTICE_EVENT = "ankigta:pendingMapSaveNotice"' in client
-    assert "outputChatBox(message" in client
+    assert "outputChatBox" in client
 
 
 def test_public_object_prepare_path_uses_stock_editor_and_acl_boundary() -> None:
@@ -312,10 +317,27 @@ def test_pending_guidance_is_honest_after_failed_read_back() -> None:
     snapshot = _function_body(identity, "MapIdentity.linkSnapshot")
 
     assert "pending.lastReadBackOutcome" in snapshot
-    assert "Повторите stock Save" in snapshot
-    assert "восстановление Editor" in snapshot
-    assert "Проверить ещё раз" in snapshot
-    assert "entry.link.guidance" in client
+    assert 'guidanceKey = "guidance.retrySave"' in snapshot
+    assert "entry.link.guidanceKey" in client
+
+    # The guidance is a key now, so honesty is a property of what it resolves
+    # to. Both languages have to name the stock Save and the recheck action,
+    # not a vague "try again".
+    sandbox = MtaSandbox()
+    try:
+        sandbox.load("shared/locale.lua")
+        for language, expected in (
+            ("en", ("stock Save", "Check again")),
+            ("ru", ("stock Save", "Проверить ещё раз")),
+        ):
+            sandbox.eval("function(l) ANKIGTA.Locale.setLanguage(l) end")(language)
+            guidance = sandbox.eval(
+                'ANKIGTA.Locale.text("guidance.retrySave")'
+            )
+            for phrase in expected:
+                assert phrase in guidance, (language, guidance)
+    finally:
+        sandbox.close()
 
 
 def test_prepare_never_overwrites_existing_persistent_ids() -> None:

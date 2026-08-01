@@ -11,7 +11,11 @@
     <script src="shared/locale.lua" type="shared" />
     <script src="server/connection_config.lua" type="server" />
     <script src="server/companion.lua" type="server" />
+    <!-- Before the store: the store asks it for a verified copy before it
+         migrates, and for the list of copies when it cannot open at all. -->
+    <script src="server/backup.lua" type="server" />
     <script src="server/store.lua" type="server" />
+    <script src="server/settings_store.lua" type="server" />
     <script src="server/map_identity.lua" type="server" />
     <script src="server/teleport.lua" type="server" />
     <script src="server/statistics.lua" type="server" />
@@ -24,6 +28,9 @@
     <script src="client/review_mode.lua" type="client" cache="false" />
     <script src="client/activation.lua" type="client" cache="false" />
     <script src="client/indicator.lua" type="client" cache="false" />
+    <!-- Last on this side: it puts the stored settings in force, so the
+         modules it applies them to have to exist by then. -->
+    <script src="client/settings_store.lua" type="client" cache="false" />
     <map src="maps/ticket05.map" dimension="0" />
     <map src="maps/ticket07-matrix.map" dimension="0" />
     <export function="requestCompanionHealth" type="server" />

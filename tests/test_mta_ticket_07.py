@@ -5,6 +5,8 @@ import sqlite3
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from tests.lua.constants import string_constants
+
 import pytest
 
 
@@ -73,8 +75,10 @@ def test_collision_coordinator_blocks_ambiguous_ids_before_activation() -> None:
     assert "isIdentityCollision" in identity
     assert "state = \"Identity Collision\"" in identity
     assert "needsEntityTypeMigration" in store
-    assert "migrateVersionThree" in store
-    assert "map_entities_legacy" in store
+    # What the rebuild is called, and whether it goes via a `_legacy` table, is
+    # incidental: ticket 29 replaced the rename-and-drop with the procedure
+    # SQLite documents, because renaming took the dependent rows with it.
+    # `tests/test_migrations.py` covers the shape repair on real data.
     assert "identity_collisions" in store
     assert "markEntityIdentityCollision" in store
     assert "clearEntityIdentityCollision" in store
@@ -88,9 +92,10 @@ def test_copy_decision_is_visible_in_f7_and_new_copy_has_no_link_transfer() -> N
     main = source(MAIN)
     meta = source(META)
 
-    assert "Map copy decision" in client
-    assert "Original / renamed" in client
-    assert "New copy" in client
+    f7_keys = string_constants(F7)
+    assert "f7.copyDecisionHint" in f7_keys
+    assert "f7.copyOriginal" in f7_keys
+    assert "f7.copyNew" in f7_keys
     assert "COPY_DECISION_REQUEST_EVENT" in client
     assert "copyCollision" in main
     assert "resolveCopyDecision" in main

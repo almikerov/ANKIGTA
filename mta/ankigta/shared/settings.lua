@@ -116,21 +116,67 @@ function Settings.authorityOf(key)
     return definition and definition.authority or false
 end
 
---- May this side write this setting?
-function Settings.canWrite(side, key)
+--- Why may this side write this setting -- because it owns it, or because the
+--- setting allows a local override?
+--
+-- The two are not interchangeable. An authoritative write is the value; an
+-- override is one side's local replacement for it, and the store has to put
+-- them in different places.
+function Settings.writeKind(side, key)
     local definition = Settings.schema[key]
     if not definition then
         return false, "unknown_setting"
     end
     if definition.authority == side then
-        return true
+        return "authority"
     end
     -- A manual connection override is local to whichever side made it, so both
     -- sides may write it even though the add-on owns the published value.
     if definition.localOverride and (side == SERVER or side == CLIENT) then
-        return true
+        return "local_override"
     end
     return false, "wrong_authority"
+end
+
+--- May this side write this setting at all?
+function Settings.canWrite(side, key)
+    local kind, reason = Settings.writeKind(side, key)
+    if not kind then
+        return false, reason
+    end
+    return true
+end
+
+--- Stamp a local override with the side that made it.
+--
+-- ADR 0014: an override has priority over the published value **only on its
+-- own side**. Without the stamp, an override read back later is just a value,
+-- and whichever side finds it would adopt it as its own.
+function Settings.overrideBy(side, key, value)
+    local definition = Settings.schema[key]
+    if not definition then
+        return false, "unknown_setting"
+    end
+    if definition.localOverride ~= true then
+        return false, "not_a_local_override"
+    end
+    local allowed, reason = Settings.canWrite(side, key)
+    if not allowed then
+        return false, reason
+    end
+    local valid, why = Settings.validate(key, value)
+    if not valid then
+        return false, why
+    end
+    return {key = key, side = side, value = Settings.normalize(key, value)}
+end
+
+--- Does an override govern this side?
+--
+-- Only the side that made it. A companion override is the value this side must
+-- agree with, never a value it adopts.
+function Settings.overrideAppliesTo(side, record)
+    return type(record) == "table" and record.side == side
 end
 
 function Settings.inChangeHistory(key)
@@ -207,6 +253,18 @@ function Settings.validate(key, value)
     end
 
     return true
+end
+
+--- The value as it should be stored, once validated.
+--
+-- A number typed into a text field arrives as a string; storing it that way
+-- would make `40001` and `"40001"` two different ports later on.
+function Settings.normalize(key, value)
+    local definition = Settings.schema[key]
+    if definition and definition.rule.kind == "number" then
+        return tonumber(value)
+    end
+    return value
 end
 
 ANKIGTA.Settings = Settings

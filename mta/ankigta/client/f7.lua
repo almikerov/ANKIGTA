@@ -20,6 +20,25 @@ local PICK_ENTITY_REQUEST_EVENT = "ankigta:pickEntity"
 local PICK_ENTITY_RESULT_EVENT = "ankigta:pickEntityResult"
 local PICK_ENTITY_FINISHED_EVENT = "ankigta:pickEntityFinished"
 
+ANKIGTA = ANKIGTA or {}
+
+--- Every user-facing string in this window goes through here.
+-- The lookup happens when the control is written rather than when the file
+-- loads, so a language change reaches the next snapshot without a restart.
+local function text(key, ...)
+    if ANKIGTA.Locale then
+        return ANKIGTA.Locale.format(key, ...)
+    end
+    return key
+end
+
+--- Display text for a Spatial Link state.
+-- The state itself is a stable technical value the client compares against and
+-- the server stores; only what the player reads follows the language.
+local function linkStateText(state)
+    return text("f7.linkState." .. tostring(state))
+end
+
 local authorized = false
 local window = nil
 local grid = nil
@@ -59,6 +78,10 @@ local copyMapId = nil
 local copyEntityId = nil
 local cursorOwned = false
 local cursorWasShowing = false
+-- Kept so the window can be rebuilt in another language without asking the
+-- server for the same rows again.
+local lastSnapshot = nil
+local lastCardPickerSnapshot = nil
 
 local function closeF7()
     if isElement(window) then
@@ -114,22 +137,22 @@ end
 
 local function runtimeStatus(runtime)
     if not runtime.available then
-        return "Unavailable — Runtime Instance destroyed"
+        return text("f7.runtime.destroyed")
     end
 
     local element = getElementByID(runtime.referenceId)
     if not isElement(element) or not isElementStreamedIn(element) then
-        return "Unavailable — Runtime Instance not streamed"
+        return text("f7.runtime.notStreamed")
     end
 
-    return "Available — Runtime Instance streamed"
+    return text("f7.runtime.streamed")
 end
 
 local function authoredPosition(mapEntity)
     local position = mapEntity.authored.position
     local world = mapEntity.authored.world
-    return string.format(
-        "%.2f, %.2f, %.2f · interior %d · dimension %d",
+    return text(
+        "f7.authoredPosition",
         position.x,
         position.y,
         position.z,
@@ -140,12 +163,14 @@ end
 
 local function metadataSummary(entry)
     local metadata = entry.metadata or entry.link.metadata or {}
-    return string.format(
-        "name=%s; tag=%s; radius=%.1f; show=%s",
+    -- The name and the Entity Tag are the user's own words and are substituted
+    -- in untouched; only the labels around them are translated.
+    return text(
+        "f7.metadataSummary",
         tostring(metadata.name or ""),
         tostring(metadata.entityTag or ""),
         tonumber(metadata.radius) or 3,
-        metadata.showRadius and "yes" or "no"
+        metadata.showRadius and text("common.yes") or text("common.no")
     )
 end
 
@@ -164,7 +189,7 @@ local function renderRelinkPreview()
         (screenHeight - height) / 2,
         width,
         height,
-        "ANKIGTA — Relink entity preview",
+        text("f7.relink.title"),
         false
     )
     guiCreateLabel(
@@ -172,8 +197,11 @@ local function renderRelinkPreview()
         32,
         width - 32,
         42,
-        "Missing: " .. relinkSource.mapEntity.mapId .. "/"
-            .. relinkSource.mapEntity.entityId,
+        text(
+            "f7.relink.missing",
+            relinkSource.mapEntity.mapId .. "/"
+                .. relinkSource.mapEntity.entityId
+        ),
         false,
         relinkPreviewWindow
     )
@@ -182,10 +210,13 @@ local function renderRelinkPreview()
         76,
         width - 32,
         42,
-        "Target: " .. (relinkTarget
-            and relinkTarget.mapEntity.mapId .. "/"
-                .. relinkTarget.mapEntity.entityId
-            or "choose from F7 or Pick Entity"),
+        text(
+            "f7.relink.target",
+            relinkTarget
+                and relinkTarget.mapEntity.mapId .. "/"
+                    .. relinkTarget.mapEntity.entityId
+                or text("f7.relink.chooseTarget")
+        ),
         false,
         relinkPreviewWindow
     )
@@ -194,7 +225,7 @@ local function renderRelinkPreview()
         120,
         width - 32,
         42,
-        "Metadata moved: " .. metadataSummary(relinkSource),
+        text("f7.relink.metadataMoved", metadataSummary(relinkSource)),
         false,
         relinkPreviewWindow
     )
@@ -203,7 +234,7 @@ local function renderRelinkPreview()
         height - 38,
         116,
         26,
-        "Confirm",
+        text("common.confirm"),
         false,
         relinkPreviewWindow
     )
@@ -212,7 +243,7 @@ local function renderRelinkPreview()
         height - 38,
         116,
         26,
-        "Cancel",
+        text("common.cancel"),
         false,
         relinkPreviewWindow
     )
@@ -222,7 +253,7 @@ local function renderRelinkPreview()
         height - 38,
         116,
         26,
-        "Pick target",
+        text("f7.relink.pickTarget"),
         false,
         relinkPreviewWindow
     )
@@ -260,10 +291,13 @@ end
 
 local function linkIdentityText(identity)
     if type(identity) ~= "table" then
-        return "—"
+        return text("common.empty")
     end
-    return tostring(identity.collectionUuid or "")
-        .. " / cardId " .. tostring(identity.cardId or "")
+    return text(
+        "f7.cardIdentity",
+        tostring(identity.collectionUuid or ""),
+        tostring(identity.cardId or "")
+    )
 end
 
 local function linkCanBeChanged(entry)
@@ -289,7 +323,7 @@ local function renderUnlinkConfirmation(entry)
         (screenHeight - height) / 2,
         width,
         height,
-        "ANKIGTA — Confirm Unlink",
+        text("f7.unlink.title"),
         false
     )
     guiCreateLabel(
@@ -297,8 +331,10 @@ local function renderUnlinkConfirmation(entry)
         32,
         width - 32,
         40,
-        "Map Entity: " .. entry.mapEntity.mapId .. "/"
-            .. entry.mapEntity.entityId,
+        text(
+            "f7.entityLabel",
+            entry.mapEntity.mapId .. "/" .. entry.mapEntity.entityId
+        ),
         false,
         linkConfirmationWindow
     )
@@ -307,7 +343,7 @@ local function renderUnlinkConfirmation(entry)
         72,
         width - 32,
         40,
-        "Card: " .. linkIdentityText(entry.link.cardIdentity),
+        text("f7.cardLabel", linkIdentityText(entry.link.cardIdentity)),
         false,
         linkConfirmationWindow
     )
@@ -316,7 +352,7 @@ local function renderUnlinkConfirmation(entry)
         112,
         width - 32,
         28,
-        "Only Spatial Link is removed; metadata stays saved.",
+        text("f7.unlink.explanation"),
         false,
         linkConfirmationWindow
     )
@@ -325,7 +361,7 @@ local function renderUnlinkConfirmation(entry)
         height - 38,
         116,
         26,
-        "Confirm Unlink",
+        text("f7.unlink.confirm"),
         false,
         linkConfirmationWindow
     )
@@ -334,7 +370,7 @@ local function renderUnlinkConfirmation(entry)
         height - 38,
         116,
         26,
-        "Cancel",
+        text("common.cancel"),
         false,
         linkConfirmationWindow
     )
@@ -370,7 +406,7 @@ local function renderReplaceConfirmation(entry, oldIdentity, newIdentity)
         (screenHeight - height) / 2,
         width,
         height,
-        "ANKIGTA — Confirm Replace card",
+        text("f7.replace.title"),
         false
     )
     guiCreateLabel(
@@ -378,8 +414,10 @@ local function renderReplaceConfirmation(entry, oldIdentity, newIdentity)
         32,
         width - 32,
         32,
-        "Map Entity: " .. entry.mapEntity.mapId .. "/"
-            .. entry.mapEntity.entityId,
+        text(
+            "f7.entityLabel",
+            entry.mapEntity.mapId .. "/" .. entry.mapEntity.entityId
+        ),
         false,
         linkConfirmationWindow
     )
@@ -388,7 +426,7 @@ local function renderReplaceConfirmation(entry, oldIdentity, newIdentity)
         68,
         width - 32,
         32,
-        "Old card: " .. linkIdentityText(oldIdentity),
+        text("f7.replace.oldCard", linkIdentityText(oldIdentity)),
         false,
         linkConfirmationWindow
     )
@@ -397,7 +435,7 @@ local function renderReplaceConfirmation(entry, oldIdentity, newIdentity)
         104,
         width - 32,
         32,
-        "New card: " .. linkIdentityText(newIdentity),
+        text("f7.replace.newCard", linkIdentityText(newIdentity)),
         false,
         linkConfirmationWindow
     )
@@ -406,7 +444,7 @@ local function renderReplaceConfirmation(entry, oldIdentity, newIdentity)
         140,
         width - 32,
         28,
-        "Replacement is atomic; no intermediate Unlink is performed.",
+        text("f7.replace.explanation"),
         false,
         linkConfirmationWindow
     )
@@ -415,7 +453,7 @@ local function renderReplaceConfirmation(entry, oldIdentity, newIdentity)
         height - 38,
         116,
         26,
-        "Confirm Replace",
+        text("f7.replace.confirm"),
         false,
         linkConfirmationWindow
     )
@@ -424,7 +462,7 @@ local function renderReplaceConfirmation(entry, oldIdentity, newIdentity)
         height - 38,
         116,
         26,
-        "Cancel",
+        text("common.cancel"),
         false,
         linkConfirmationWindow
     )
@@ -457,15 +495,15 @@ local function renderSnapshot(snapshot)
         (screenHeight - height) / 2,
         width,
         height,
-        "ANKIGTA — Map Entity",
+        text("f7.title"),
         false
     )
     grid = guiCreateGridList(16, 32, width - 32, height - 84, false, window)
-    guiGridListAddColumn(grid, "Map Entity", 0.17)
-    guiGridListAddColumn(grid, "Type", 0.08)
-    guiGridListAddColumn(grid, "Authored transform / world", 0.29)
-    guiGridListAddColumn(grid, "Runtime Instance", 0.24)
-    guiGridListAddColumn(grid, "Spatial Link", 0.18)
+    guiGridListAddColumn(grid, text("f7.column.mapEntity"), 0.17)
+    guiGridListAddColumn(grid, text("f7.column.type"), 0.08)
+    guiGridListAddColumn(grid, text("f7.column.authored"), 0.29)
+    guiGridListAddColumn(grid, text("f7.column.runtime"), 0.24)
+    guiGridListAddColumn(grid, text("f7.column.link"), 0.18)
 
     local hasPending = false
     entityRows = {}
@@ -500,17 +538,16 @@ local function renderSnapshot(snapshot)
             false,
             false
         )
-        local linkText = entry.link.state
-        if entry.link.guidance then
-            linkText = linkText .. " — " .. entry.link.guidance
+        local linkText = linkStateText(entry.link.state)
+        if entry.link.guidanceKey then
+            linkText = linkText .. " — " .. text(entry.link.guidanceKey)
         end
         guiGridListSetItemText(grid, row, 5, linkText, false, false)
         hasPending = hasPending or entry.link.recheckAvailable == true
         if entry.link.copyCollision == true then
             copyMapId = mapEntity.mapId
             copyEntityId = mapEntity.entityId
-            linkText = linkText
-                .. " — Map copy decision: Original / renamed or New copy"
+            linkText = linkText .. " — " .. text("f7.copyDecisionHint")
             guiGridListSetItemText(grid, row, 5, linkText, false, false)
         end
         if entry.link.recheckAvailable == true then
@@ -595,7 +632,7 @@ local function renderSnapshot(snapshot)
         height - 42,
         174,
         26,
-        "Проверить ещё раз",
+        text("f7.recheck"),
         false,
         window
     )
@@ -616,7 +653,7 @@ local function renderSnapshot(snapshot)
         height - 74,
         180,
         26,
-        "Original / renamed",
+        text("f7.copyOriginal"),
         false,
         window
     )
@@ -625,7 +662,7 @@ local function renderSnapshot(snapshot)
         height - 74,
         140,
         26,
-        "New copy",
+        text("f7.copyNew"),
         false,
         window
     )
@@ -659,7 +696,7 @@ local function renderSnapshot(snapshot)
         height - 42,
         150,
         26,
-        "Relink entity",
+        text("f7.relink"),
         false,
         window
     )
@@ -676,7 +713,7 @@ local function renderSnapshot(snapshot)
         height - 42,
         120,
         26,
-        "Unlink",
+        text("f7.unlink"),
         false,
         window
     )
@@ -685,7 +722,7 @@ local function renderSnapshot(snapshot)
         height - 42,
         140,
         26,
-        "Replace card",
+        text("f7.replaceCard"),
         false,
         window
     )
@@ -708,7 +745,7 @@ local function renderSnapshot(snapshot)
         height - 74,
         150,
         26,
-        "Card Picker",
+        text("f7.cardPicker"),
         false,
         window
     )
@@ -740,7 +777,7 @@ local function renderSnapshot(snapshot)
         height - 74,
         174,
         26,
-        "Pick Entity",
+        text("f7.pickEntity"),
         false,
         window
     )
@@ -755,7 +792,7 @@ local function renderSnapshot(snapshot)
         height - 42,
         88,
         26,
-        "Undo",
+        text("f7.undo"),
         false,
         window
     )
@@ -764,7 +801,7 @@ local function renderSnapshot(snapshot)
         height - 42,
         88,
         26,
-        "Redo",
+        text("f7.redo"),
         false,
         window
     )
@@ -801,14 +838,14 @@ addEventHandler(PICK_ENTITY_FINISHED_EVENT, resourceRoot, function(
     end
     if mode == "relink" and success ~= true then
         outputChatBox(
-            "Relink entity не выполнен: " .. tostring(reason),
+            text("notice.relinkFailed", tostring(reason)),
             255,
             196,
             64
         )
     elseif success ~= true and reason ~= "resource_stop" then
         outputChatBox(
-            "Pick Entity: " .. tostring(reason),
+            text("notice.pickEntityFailed", tostring(reason)),
             255,
             196,
             64
@@ -833,8 +870,8 @@ local function renderCardPicker(snapshot)
         width,
         height,
         cardPickerMode == "replace"
-            and "ANKIGTA — Replace card"
-            or "ANKIGTA — Card Picker",
+            and text("cardPicker.replaceTitle")
+            or text("cardPicker.title"),
         false
     )
     deckFilterEdit = guiCreateEdit(
@@ -842,15 +879,21 @@ local function renderCardPicker(snapshot)
     )
     guiSetProperty(deckFilterEdit, "NormalTextColour", "FF000000")
     cardSearchButton = guiCreateButton(
-        width - 190, 32, 174, 26, "Search cards", false, cardPickerWindow
+        width - 190,
+        32,
+        174,
+        26,
+        text("cardPicker.search"),
+        false,
+        cardPickerWindow
     )
     cardGrid = guiCreateGridList(
         16, 66, width - 32, height - 110, false, cardPickerWindow
     )
-    guiGridListAddColumn(cardGrid, "Card", 0.22)
-    guiGridListAddColumn(cardGrid, "Deck", 0.28)
-    guiGridListAddColumn(cardGrid, "State", 0.22)
-    guiGridListAddColumn(cardGrid, "Collection", 0.24)
+    guiGridListAddColumn(cardGrid, text("cardPicker.column.card"), 0.22)
+    guiGridListAddColumn(cardGrid, text("cardPicker.column.deck"), 0.28)
+    guiGridListAddColumn(cardGrid, text("cardPicker.column.state"), 0.22)
+    guiGridListAddColumn(cardGrid, text("cardPicker.column.collection"), 0.24)
     cardRows = {}
     for _, card in ipairs(snapshot.cards or {}) do
         local row = guiGridListAddRow(cardGrid)
@@ -884,8 +927,11 @@ local function renderCardPicker(snapshot)
                 cardGrid,
                 row,
                 3,
-                tostring(card.state or "") .. " — already linked to "
-                    .. table.concat(existingNames, ", "),
+                text(
+                    "cardPicker.alreadyLinked",
+                    tostring(card.state or ""),
+                    table.concat(existingNames, ", ")
+                ),
                 false,
                 false
             )
@@ -898,8 +944,8 @@ local function renderCardPicker(snapshot)
         194,
         26,
         cardPickerMode == "replace"
-            and "Preview replacement"
-            or "Link selected card",
+            and text("cardPicker.previewReplacement")
+            or text("cardPicker.link"),
         false,
         cardPickerWindow
     )
@@ -974,9 +1020,37 @@ end)
 addEvent(F7_SNAPSHOT_EVENT, true)
 addEventHandler(F7_SNAPSHOT_EVENT, resourceRoot, function(snapshot)
     if authorized and type(snapshot) == "table" and snapshot.visible == true then
+        lastSnapshot = snapshot
         renderSnapshot(snapshot)
     end
 end)
+
+-- Rebuilt from the snapshot already in hand rather than re-asked for: the
+-- language is a client-side setting, and a window open while the player changes
+-- it has no business waiting on the server to read differently.
+if ANKIGTA.Locale then
+    ANKIGTA.Locale.onChange(function()
+        -- Read before rebuilding: rebuilding the main window closes the Card
+        -- Picker and resets the mode it was opened in.
+        local hadWindow = isElement(window)
+        local hadPicker = isElement(cardPickerWindow)
+        local pickerMode = cardPickerMode
+        local pickerOldIdentity = oldCardIdentity
+        -- What the player typed is theirs; a relabel must not throw it away.
+        local deckFilter = hadPicker and guiGetText(deckFilterEdit) or nil
+        if hadWindow and lastSnapshot then
+            renderSnapshot(lastSnapshot)
+        end
+        if hadPicker and lastCardPickerSnapshot then
+            cardPickerMode = pickerMode
+            oldCardIdentity = pickerOldIdentity
+            renderCardPicker(lastCardPickerSnapshot)
+            if deckFilter then
+                guiSetText(deckFilterEdit, deckFilter)
+            end
+        end
+    end)
+end
 
 addEvent(F7_DENIED_EVENT, true)
 addEventHandler(F7_DENIED_EVENT, resourceRoot, function()
@@ -987,14 +1061,18 @@ end)
 addEvent(CARD_PICKER_SNAPSHOT_EVENT, true)
 addEventHandler(CARD_PICKER_SNAPSHOT_EVENT, resourceRoot, function(snapshot)
     if authorized and type(snapshot) == "table" and snapshot.enabled == true then
+        lastCardPickerSnapshot = snapshot
         renderCardPicker(snapshot)
     end
 end)
 
 addEvent(PENDING_NOTICE_EVENT, true)
-addEventHandler(PENDING_NOTICE_EVENT, resourceRoot, function(message)
-    if type(message) == "string" then
-        outputChatBox(message, 255, 196, 64)
+-- The server sends the key and the outcome code, never a sentence: the language
+-- is a client-owned setting (ADR 0014), so only this side knows which one to
+-- render. The outcome code is a stable technical value and is passed through.
+addEventHandler(PENDING_NOTICE_EVENT, resourceRoot, function(noticeKey, outcome)
+    if type(noticeKey) == "string" then
+        outputChatBox(text(noticeKey, tostring(outcome)), 255, 196, 64)
     end
 end)
 

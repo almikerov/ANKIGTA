@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from tests.lua.constants import string_constants
+
 import pytest
 
 
@@ -76,7 +78,7 @@ def test_f7_exposes_pick_action_and_focuses_successful_target() -> None:
     pick = source(CLIENT_PICK)
 
     assert 'local PICK_ENTITY_REQUEST_EVENT = "ankigta:pickEntity"' in f7
-    assert "Pick Entity" in f7
+    assert "f7.pickEntity" in string_constants(CLIENT_F7)
     assert "selectedMapId" in f7
     assert "selectedEntityId" in f7
     assert "guiGridListSetSelectedItem" in f7
@@ -90,7 +92,7 @@ def test_relink_preview_can_handoff_to_pick_entity_mode() -> None:
     preview = function_body(f7, "renderRelinkPreview")
     snapshot = function_body(f7, "renderSnapshot")
 
-    assert "Pick target" in preview
+    assert "f7.relink.pickTarget" in preview
     assert 'triggerEvent(PICK_ENTITY_START_EVENT, resourceRoot, "relink")' in preview
     assert "pendingRelinkSourceMapId" in preview
     assert "pendingRelinkSourceEntityId" in preview

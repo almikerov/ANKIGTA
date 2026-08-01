@@ -40,18 +40,23 @@ def open_card(
     close_after_rating: bool = True,
     url: str = URL,
 ) -> None:
+    """Open a card exactly as the server does.
+
+    The payload carries no `closeAfterRating`: the client owns that setting, so
+    it is set here the way the client settings store sets it.
+    """
+    sandbox.eval("function(v) setCloseAfterRating(v) end")(close_after_rating)
     sandbox.eval(
         """
-        function(url, side, closeAfter, uuid)
+        function(url, side, uuid)
             triggerEvent("ankigta:openReviewMode", resourceRoot, {
                 url = url,
                 side = side,
-                closeAfterRating = closeAfter,
                 cardIdentity = {collectionUuid = uuid, cardId = 7},
             })
         end
         """
-    )(url, side, close_after_rating, UUID)
+    )(url, side, UUID)
 
 
 def reveal(sandbox: MtaSandbox, url: str = URL) -> None:
@@ -594,7 +599,10 @@ def test_a_blocked_navigation_is_reported_as_a_warning(client: MtaSandbox) -> No
     navigate(client, "https://blocked.example", blocked=True)
 
     assert state(client).externalPage is False
-    assert state(client).warning == "Переход заблокирован настройками MTA"
+    # This fixture loads Review Mode without the string table, so the warning
+    # comes back as the key it stores. That it reads as a sentence in both
+    # languages is `tests/test_localization.py`'s job.
+    assert state(client).warning == "review.navigationBlocked"
 
 
 def test_return_to_card_is_offered_only_after_navigating_away(

@@ -9,8 +9,19 @@ ANKIGTA.ConnectionWarning = ANKIGTA.ConnectionWarning or {
     emptyTokenDismissed = false,
 }
 
+local function text(key, ...)
+    if ANKIGTA.Locale then
+        return ANKIGTA.Locale.format(key, ...)
+    end
+    return key
+end
+
 local statusWindow = nil
 local settingsWindow = nil
+-- What each window was built from, so a language change can rebuild it without
+-- another round trip to the server.
+local lastStatus = nil
+local lastSettingsSnapshot = nil
 local cursorOwned = false
 local cursorWasShowing = false
 
@@ -60,7 +71,7 @@ local function openDisconnectedWindow(status)
         (screenHeight - height) / 2,
         width,
         height,
-        "ANKIGTA — Companion Connection",
+        text("connection.title"),
         false
     )
     guiCreateLabel(
@@ -68,7 +79,10 @@ local function openDisconnectedWindow(status)
         34,
         width - 36,
         38,
-        "Соединение отключено: " .. tostring(status.category or "disconnected"),
+        text(
+            "connection.disconnected",
+            tostring(status.category or "disconnected")
+        ),
         false,
         statusWindow
     )
@@ -77,7 +91,7 @@ local function openDisconnectedWindow(status)
         88,
         190,
         36,
-        "Подключиться",
+        text("connection.connect"),
         false,
         statusWindow
     )
@@ -86,7 +100,7 @@ local function openDisconnectedWindow(status)
         88,
         190,
         36,
-        "Advanced settings…",
+        text("connection.advanced"),
         false,
         statusWindow
     )
@@ -109,7 +123,7 @@ local function openSettingsWindow(snapshot)
         (screenHeight - height) / 2,
         width,
         height,
-        "ANKIGTA — Connection settings",
+        text("connection.settingsTitle"),
         false
     )
     guiCreateLabel(
@@ -117,13 +131,20 @@ local function openSettingsWindow(snapshot)
         34,
         width - 36,
         22,
-        "Current mode: " .. tostring(snapshot.mode or "invalid")
-            .. "; token: "
-            .. (snapshot.tokenConfigured and "protected (hidden)" or "disabled"),
+        text(
+            "connection.currentMode",
+            -- The mode is a stable technical value and stays as stored.
+            tostring(snapshot.mode or "invalid"),
+            snapshot.tokenConfigured
+                and text("connection.tokenProtected")
+                or text("connection.tokenDisabled")
+        ),
         false,
         settingsWindow
     )
-    guiCreateLabel(18, 72, 120, 24, "Manual port", false, settingsWindow)
+    guiCreateLabel(
+        18, 72, 120, 24, text("connection.manualPort"), false, settingsWindow
+    )
     local portEdit = guiCreateEdit(
         150,
         68,
@@ -138,7 +159,7 @@ local function openSettingsWindow(snapshot)
         112,
         120,
         24,
-        "Replacement token (blank keeps current)",
+        text("connection.replacementToken"),
         false,
         settingsWindow
     )
@@ -157,7 +178,7 @@ local function openSettingsWindow(snapshot)
         146,
         280,
         26,
-        "Disable token explicitly",
+        text("connection.disableToken"),
         false,
         false,
         settingsWindow
@@ -171,7 +192,7 @@ local function openSettingsWindow(snapshot)
             180,
             280,
             28,
-            "Dismiss empty-token warning",
+            text("connection.dismissWarning"),
             false,
             settingsWindow
         )
@@ -181,7 +202,7 @@ local function openSettingsWindow(snapshot)
         220,
         205,
         34,
-        "Manual Connection Mode",
+        text("connection.manualMode"),
         false,
         settingsWindow
     )
@@ -190,7 +211,7 @@ local function openSettingsWindow(snapshot)
         220,
         205,
         34,
-        "Automatic Connection Mode",
+        text("connection.automaticMode"),
         false,
         settingsWindow
     )
@@ -199,7 +220,7 @@ local function openSettingsWindow(snapshot)
         264,
         422,
         30,
-        "Close",
+        text("common.close"),
         false,
         settingsWindow
     )
@@ -208,7 +229,7 @@ local function openSettingsWindow(snapshot)
         local disableTokenSelected = guiCheckBoxGetSelected(disableToken)
         if token ~= "" and disableTokenSelected then
             outputChatBox(
-                "ANKIGTA: clear the replacement token before disabling it.",
+                text("connection.clearTokenFirst"),
                 255,
                 196,
                 96
@@ -260,6 +281,7 @@ addEventHandler(STATUS_EVENT, resourceRoot, function(status)
     if source ~= resourceRoot or type(status) ~= "table" then
         return
     end
+    lastStatus = status
     if status.state == "connected" then
         closeStatusWindow()
     elseif status.state ~= "connecting" then
@@ -270,9 +292,21 @@ end)
 addEvent(SETTINGS_SNAPSHOT_EVENT, true)
 addEventHandler(SETTINGS_SNAPSHOT_EVENT, resourceRoot, function(snapshot)
     if source == resourceRoot and type(snapshot) == "table" then
+        lastSettingsSnapshot = snapshot
         openSettingsWindow(snapshot)
     end
 end)
+
+if ANKIGTA.Locale then
+    ANKIGTA.Locale.onChange(function()
+        if isElement(statusWindow) and lastStatus then
+            openDisconnectedWindow(lastStatus)
+        end
+        if isElement(settingsWindow) and lastSettingsSnapshot then
+            openSettingsWindow(lastSettingsSnapshot)
+        end
+    end)
+end
 
 addCommandHandler("ankigta-connect", function()
     triggerServerEvent(CONNECT_EVENT, resourceRoot)

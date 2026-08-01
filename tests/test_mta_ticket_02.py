@@ -18,6 +18,7 @@ from ankigta_companion.contract import (
     RuntimeObservation,
 )
 from ankigta_companion.http_server import HealthServer
+from tests.lua import MtaSandbox
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -99,15 +100,40 @@ def test_client_presents_only_the_sanitized_connection_status() -> None:
     assert '"ankigta:companionStatus"' in source
     assert "addEvent(STATUS_EVENT, true)" in source
     assert "outputChatBox" in source
-    for category in (
-        "protocol_error",
-        "timeout",
-        "transport_error",
-        "collection_unavailable",
-        "compatibility_failure",
-    ):
-        assert category in source
-    assert "getLocalization()" in source
+
+    # Ticket 27 moved the two-language table out of this module, so the
+    # categories are no longer literals in it. What matters is unchanged and is
+    # now checked by running it: each sanitized category reaches the player as
+    # its own line, in the language the setting selects.
+    sandbox = MtaSandbox()
+    try:
+        sandbox.load("shared/locale.lua")
+        sandbox.load("client/connection_status.lua")
+        announce = sandbox.eval(
+            """
+            function(category)
+                triggerEvent("ankigta:companionStatus", resourceRoot, {
+                    state = "disconnected",
+                    category = category,
+                })
+            end
+            """
+        )
+        for category in (
+            "protocol_error",
+            "timeout",
+            "transport_error",
+            "collection_unavailable",
+            "compatibility_failure",
+        ):
+            announce(category)
+            expected = sandbox.eval(
+                "function(key) return ANKIGTA.Locale.text(key) end"
+            )("connection.status." + category)
+            assert sandbox.chat[-1] == expected
+            assert expected != "connection.status." + category
+    finally:
+        sandbox.close()
 
 
 def test_companion_listener_is_unreachable_through_ipv6_or_lan() -> None:

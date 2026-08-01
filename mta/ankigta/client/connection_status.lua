@@ -5,63 +5,43 @@ ANKIGTA.ConnectionWarning = ANKIGTA.ConnectionWarning or {
     emptyTokenDismissed = false,
 }
 
-local MESSAGES = {
-    en = {
-        connected = "ANKIGTA Companion: connected",
-        connecting = "ANKIGTA Companion: connecting",
-        protocol_error = "ANKIGTA Companion: protocol error",
-        timeout = "ANKIGTA Companion: connection timed out",
-        transport_error = "ANKIGTA Companion: transport error",
-        collection_unavailable = "ANKIGTA Companion: collection unavailable",
-        compatibility_failure = "ANKIGTA Companion: incompatible Anki configuration",
-        authorization_failure = "ANKIGTA Companion: connection token rejected",
-        connection_config_invalid = "ANKIGTA Companion: connection configuration is invalid",
-        manual_connection_config_invalid = "ANKIGTA Companion: manual connection settings are invalid",
-        effective_config_mismatch = "ANKIGTA Companion: effective settings do not match",
-        connection_config_rollback = "ANKIGTA Companion: using last-known-good settings",
-        empty_token = "ANKIGTA Companion: token protection is disabled",
-        disconnected = "ANKIGTA Companion: disconnected",
-    },
-    ru = {
-        connected = "ANKIGTA Companion: подключено",
-        connecting = "ANKIGTA Companion: подключение",
-        protocol_error = "ANKIGTA Companion: ошибка протокола",
-        timeout = "ANKIGTA Companion: превышено время ожидания",
-        transport_error = "ANKIGTA Companion: ошибка транспорта",
-        collection_unavailable = "ANKIGTA Companion: коллекция недоступна",
-        compatibility_failure = "ANKIGTA Companion: конфигурация Anki несовместима",
-        authorization_failure = "ANKIGTA Companion: токен подключения отклонён",
-        connection_config_invalid = "ANKIGTA Companion: конфигурация подключения повреждена",
-        manual_connection_config_invalid = "ANKIGTA Companion: ручные настройки подключения повреждены",
-        effective_config_mismatch = "ANKIGTA Companion: effective-настройки не совпадают",
-        connection_config_rollback = "ANKIGTA Companion: используется предыдущая рабочая конфигурация",
-        empty_token = "ANKIGTA Companion: защита токеном отключена",
-        disconnected = "ANKIGTA Companion: отключено",
-    },
-}
+-- Every status line lives in the shared string table, read at the moment the
+-- status arrives: this module used to carry its own two-language table and its
+-- own locale detection, which meant switching the language setting moved the
+-- rest of the interface and left the connection messages behind.
+local STATUS_KEY_PREFIX = "connection.status."
 
-local function messages()
-    local localization = getLocalization()
-    if type(localization) == "table"
-        and type(localization.code) == "string"
-        and string.sub(string.lower(localization.code), 1, 2) == "ru"
-    then
-        return MESSAGES.ru
+local function has(key)
+    local strings = ANKIGTA.Locale and ANKIGTA.Locale.strings
+    local english = strings and strings.en
+    return english ~= nil and english[key] ~= nil
+end
+
+local function text(key, ...)
+    if ANKIGTA.Locale then
+        return ANKIGTA.Locale.format(key, ...)
     end
-    return MESSAGES.en
+    return key
 end
 
 local function statusMessage(status)
-    local localized = messages()
     if status.state == "connected" then
-        return localized.connected
+        return text(STATUS_KEY_PREFIX .. "connected")
     end
     if status.state == "connecting" then
-        return localized.connecting
+        return text(STATUS_KEY_PREFIX .. "connecting")
     end
     local category = tostring(status.category or "disconnected")
-    return localized[category]
-        or string.format("%s [%s]", localized.disconnected, category)
+    if has(STATUS_KEY_PREFIX .. category) then
+        return text(STATUS_KEY_PREFIX .. category)
+    end
+    -- An unknown category is still worth showing, with the raw code attached:
+    -- the code is a stable technical value and is not translated.
+    return text(
+        STATUS_KEY_PREFIX .. "unknown",
+        text(STATUS_KEY_PREFIX .. "disconnected"),
+        category
+    )
 end
 
 addEvent(STATUS_EVENT, true)
@@ -77,9 +57,13 @@ addEventHandler(STATUS_EVENT, resourceRoot, function(status)
             and ANKIGTA.ConnectionWarning.emptyTokenDismissed
         )
     then
-        local warning = messages()[warningCategory]
-        if warning then
-            outputChatBox(warning, 255, 196, 96)
+        if has(STATUS_KEY_PREFIX .. warningCategory) then
+            outputChatBox(
+                text(STATUS_KEY_PREFIX .. warningCategory),
+                255,
+                196,
+                96
+            )
         end
     end
 end)
