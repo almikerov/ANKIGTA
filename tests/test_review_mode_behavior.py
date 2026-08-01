@@ -672,3 +672,143 @@ def test_card_audio_and_world_audio_are_separate_controls(
     client.eval("function() return setReviewAudio(true, true) end")()
     assert client.browser_volume == 1.0
     assert client.world_sound_enabled is False
+
+
+# --- ticket 26: Review Protection and exact restoration ----------------------
+
+
+def protection(sandbox: MtaSandbox, enabled: bool, disable_controls: bool) -> None:
+    sandbox.eval("function(p, c) return setReviewProtection(p, c) end")(
+        enabled, disable_controls
+    )
+
+
+def test_protection_and_control_disabling_default_on_and_are_independent(
+    client: MtaSandbox,
+) -> None:
+    assert client.eval("ANKIGTA.ReviewMode.reviewProtection") is True
+    assert client.eval("ANKIGTA.ReviewMode.disablePlayerControls") is True
+
+    protection(client, True, False)
+    open_card(client)
+
+    # Protection without taking the controls away.
+    assert client.damage_proof["player"] is True
+    assert client.controls.get("fire") is not False
+
+
+def test_controls_can_be_disabled_without_damage_protection(
+    client: MtaSandbox,
+) -> None:
+    protection(client, False, True)
+
+    open_card(client)
+
+    assert client.damage_proof.get("player", False) is False
+    assert client.controls["fire"] is False
+
+
+def test_the_occupied_vehicle_is_protected_too(client: MtaSandbox) -> None:
+    client.occupied_vehicle = client.lua.table_from(
+        {"__element": True, "type": "vehicle"}
+    )
+
+    open_card(client)
+
+    assert client.damage_proof["player"] is True
+    assert client.damage_proof["vehicle"] is True
+
+
+def test_protection_is_not_a_heal_and_does_not_freeze_the_world(
+    client: MtaSandbox,
+) -> None:
+    """Only new damage is prevented; nothing is restored or paused."""
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "mta"
+        / "ankigta"
+        / "client"
+        / "review_mode.lua"
+    ).read_text(encoding="utf-8")
+
+    for forbidden in (
+        "setElementHealth",
+        "setPedArmor",
+        "setGameSpeed",
+        "setElementFrozen",
+        "setWorldSpecialPropertyEnabled",
+    ):
+        assert forbidden not in source, f"protection must not call {forbidden}"
+
+
+def test_protection_that_was_already_on_survives_the_review(
+    client: MtaSandbox,
+) -> None:
+    # Another resource had already made the player damage-proof.
+    client.damage_proof["player"] = True
+
+    open_card(client)
+    client.eval("function() return requestCloseReviewMode() end")()
+
+    assert client.damage_proof["player"] is True, (
+        "restoration must return the captured value, not ANKIGTA's default"
+    )
+
+
+def test_protection_is_lifted_on_close_when_it_was_not_set_before(
+    client: MtaSandbox,
+) -> None:
+    client.damage_proof["player"] = False
+
+    open_card(client)
+    assert client.damage_proof["player"] is True
+    client.eval("function() return requestCloseReviewMode() end")()
+
+    assert client.damage_proof["player"] is False
+
+
+def test_world_muting_is_restored_on_close(client: MtaSandbox) -> None:
+    open_card(client)
+    client.eval("function() return setReviewAudio(true, true) end")()
+    assert client.world_sound_enabled is False
+
+    client.eval("function() return requestCloseReviewMode() end")()
+
+    assert client.world_sound_enabled is True
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["authorization", "resource_stop"],
+)
+def test_no_failure_leaves_protection_or_the_cursor_stuck(
+    client: MtaSandbox,
+    failure: str,
+) -> None:
+    client.damage_proof["player"] = False
+    client.cursor_visible = False
+    open_card(client)
+    assert client.damage_proof["player"] is True
+
+    if failure == "authorization":
+        client.eval(
+            'function() triggerEvent("ankigta:setAuthorized", resourceRoot, false) end'
+        )()
+    else:
+        client.trigger("onClientResourceStop", None)
+
+    assert state(client).active is False
+    assert client.damage_proof["player"] is False
+    assert client.cursor_visible is False
+
+
+def test_a_browser_failure_restores_protection(client: MtaSandbox) -> None:
+    client.damage_proof["player"] = False
+    client.browser_available = False
+
+    open_card(client)
+
+    assert state(client).active is False
+    assert client.damage_proof["player"] is False

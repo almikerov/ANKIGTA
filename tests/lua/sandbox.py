@@ -129,6 +129,8 @@ class MtaSandbox:
         self.browser_available = True
         self.browser_volume = 1.0
         self.world_sound_enabled = True
+        self.damage_proof: dict[str, bool] = {}
+        self.occupied_vehicle: Any = False
         self._install_globals()
 
     # ---------------------------------------------------------------- loading
@@ -566,6 +568,19 @@ class MtaSandbox:
             self.world_sound_enabled = enabled is True
             return True
 
+        def set_damage_proof(element: Any, proof: Any) -> bool:
+            key = "vehicle" if lua_type(element) == "table" else "player"
+            self.damage_proof[key] = proof is True
+            return True
+
+        def is_damage_proof(element: Any) -> bool:
+            key = "vehicle" if lua_type(element) == "table" else "player"
+            return self.damage_proof.get(key, False)
+
+        g.setElementDamageProof = set_damage_proof
+        g.isElementDamageProof = is_damage_proof
+        g.localPlayer = "localPlayer"
+        g.getPedOccupiedVehicle = lambda _ped=None: self.occupied_vehicle
         g.setBrowserVolume = set_browser_volume
         g.setWorldSoundEnabled = set_world_sound_enabled
         g.focusBrowser = lambda _browser=None: True

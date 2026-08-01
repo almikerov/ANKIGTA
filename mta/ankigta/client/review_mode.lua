@@ -49,6 +49,11 @@ local Review = {
     externalPage = false,
     cardAudioEnabled = true,
     muteGameWorld = false,
+    -- Two independent settings, both on by default. Protection stops new harm;
+    -- disabling controls stops the player acting. Wanting one without the
+    -- other is reasonable, so neither implies the other.
+    reviewProtection = true,
+    disablePlayerControls = true,
     browser = false,
     identity = false,
     ratingBounds = {},
@@ -64,21 +69,43 @@ local function surfaceRect()
     return x, y, width, height
 end
 
+local function occupiedVehicle()
+    local vehicle = getPedOccupiedVehicle(localPlayer)
+    return isElement(vehicle) and vehicle or false
+end
+
 local function captureClientState()
     -- Restoration must return what was actually there, not a default: the
-    -- player may already have had the cursor up, or controls disabled by
-    -- another resource.
+    -- player may already have had the cursor up, controls disabled by another
+    -- resource, or damage-proofing set by a gamemode.
     local controls = {}
-    for _, control in ipairs(BLOCKED_CONTROLS) do
-        controls[control] = isControlEnabled(control)
-        toggleControl(control, false)
+    if Review.disablePlayerControls then
+        for _, control in ipairs(BLOCKED_CONTROLS) do
+            controls[control] = isControlEnabled(control)
+            toggleControl(control, false)
+        end
     end
+
+    local vehicle = occupiedVehicle()
     Review.captured = {
         controls = controls,
         cursor = isCursorShowing(),
         cameraTarget = getCameraTarget(),
         radioChannel = getRadioChannel(),
+        worldSoundEnabled = Review.muteGameWorld ~= true,
+        playerDamageProof = isElementDamageProof(localPlayer),
+        vehicle = vehicle,
+        vehicleDamageProof = vehicle and isElementDamageProof(vehicle) or false,
     }
+
+    if Review.reviewProtection then
+        -- New damage only. Existing health is left exactly where it was: this
+        -- is not a heal, and the world keeps running around the player.
+        setElementDamageProof(localPlayer, true)
+        if vehicle then
+            setElementDamageProof(vehicle, true)
+        end
+    end
     showCursor(true)
 end
 
@@ -96,6 +123,16 @@ local function restoreClientState()
     end
     if type(captured.radioChannel) == "number" then
         setRadioChannel(captured.radioChannel)
+    end
+    setWorldSoundEnabled(0, captured.worldSoundEnabled ~= false)
+    -- Protection goes back to whatever it was, which may well have been on:
+    -- another resource's damage-proofing must survive a review.
+    setElementDamageProof(localPlayer, captured.playerDamageProof == true)
+    if captured.vehicle and isElement(captured.vehicle) then
+        setElementDamageProof(
+            captured.vehicle,
+            captured.vehicleDamageProof == true
+        )
     end
     Review.captured = false
 end
@@ -129,6 +166,13 @@ end
 --- Card audio and world audio are separate controls.
 -- Muting a noisy card should not also silence the game, and playing in silence
 -- should not force card audio off.
+--- Review Protection and control disabling are configured independently.
+function setReviewProtection(protection, disableControls)
+    Review.reviewProtection = protection ~= false
+    Review.disablePlayerControls = disableControls ~= false
+    return true
+end
+
 function setReviewAudio(cardAudioEnabled, muteGameWorld)
     Review.cardAudioEnabled = cardAudioEnabled ~= false
     Review.muteGameWorld = muteGameWorld == true
