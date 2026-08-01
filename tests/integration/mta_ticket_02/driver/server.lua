@@ -54,11 +54,13 @@ end
 local function pollStatus(case)
     local status = exports.ankigta:getCompanionConnectionStatus()
     if type(status) ~= "table"
-        or status.requestId ~= requestId
+        or type(status.requestId) ~= "string"
+        or status.requestId == ""
         or status.state == "connecting"
     then
         return
     end
+    requestId = status.requestId
     if terminalSeen then
         return
     end
@@ -97,18 +99,18 @@ addEventHandler("onResourceStart", resourceRoot, function()
     setTimer(function()
         timerTicks = timerTicks + 1
     end, 25, 0)
+    -- The resource connects itself on start (ticket 03). Observe that request
+    -- instead of racing it with a second connect, which would only ever win or
+    -- lose depending on resource start order.
+    setTimer(pollStatus, 25, 0, case)
     setTimer(function()
-        local accepted, acceptedRequestId =
-            exports.ankigta:connectCompanion()
-        if not accepted then
+        if not finished then
             writeResult({
-                error = acceptedRequestId,
+                error = "no_terminal_status",
+                status = exports.ankigta:getCompanionConnectionStatus(),
                 elapsedMs = getTickCount() - startedAt,
                 timerTicks = timerTicks,
             })
-            return
         end
-        requestId = acceptedRequestId
-        setTimer(pollStatus, 25, 0, case)
-    end, 50, 1)
+    end, 12000, 1)
 end)

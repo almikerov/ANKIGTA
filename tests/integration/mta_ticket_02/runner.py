@@ -406,6 +406,12 @@ def run_health_case(mta_server_root: Path, case_name: str) -> dict[str, Any]:
 
 
 def configured_mta_server_root() -> Path:
+    """Locate a launchable MTA Server.
+
+    Launching MTA Server from a disposable copy is permitted; the MTA client,
+    GTA:SA and Map Editor are not. See
+    `docs/agents/mta-gta-reference-policy.md`.
+    """
     configured = os.environ.get("ANKIGTA_MTA_SERVER_ROOT")
     candidates = [
         Path(configured) if configured else None,

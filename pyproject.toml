@@ -7,5 +7,5 @@ strict = true
 files = ["companion/ankigta_companion"]
 
 [[tool.mypy.overrides]]
-module = ["aqt", "aqt.*"]
+module = ["aqt", "aqt.*", "anki", "anki.*"]
 ignore_missing_imports = true

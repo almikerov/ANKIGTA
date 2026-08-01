@@ -190,6 +190,8 @@ def test_bound_collection_selection_pauses_a_different_open_collection(
     assert second_health["payload"]["study"] == {
         "sessionActive": False,
         "ratingEnabled": False,
+        "filteredDeckCreated": False,
+        "reviewModeOpened": False,
         "paused": True,
         "pausedReason": "wrong_collection",
     }

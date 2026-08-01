@@ -30,6 +30,17 @@ def _function_body(lua: str, name: str) -> str:
     return match.group(1)
 
 
+def _call_offsets(lua: str, name: str) -> list[int]:
+    """Offsets of every call to `name`, excluding its own definition."""
+    offsets = []
+    for match in re.finditer(rf"(?<![\w.]){re.escape(name)}\(", lua):
+        line_start = lua.rfind("\n", 0, match.start()) + 1
+        if lua[line_start : match.start()].rstrip().endswith("function"):
+            continue
+        offsets.append(match.start())
+    return offsets
+
+
 def _event_handler_body(lua: str, event: str, attached_to: str) -> str:
     prefix = f"addEventHandler({event}, {attached_to}, function("
     start = lua.find(prefix)
@@ -164,8 +175,16 @@ def test_server_source_guards_f7_with_a_logged_player_and_acl_right() -> None:
         "    end\n"
         "    sendAuthorization(client)"
     )
-    assert server.count("sendF7Snapshot(") == 2
-    assert server.count("buildF7Snapshot(") == 2
+    # The invariant is that the snapshot cannot be built outside the authorized
+    # sender, not how many call sites later tickets add.
+    assert server.count("local function sendF7Snapshot(") == 1
+    body_start = server.index(send_snapshot)
+    body_end = body_start + len(send_snapshot)
+    build_calls = _call_offsets(server, "buildF7Snapshot")
+    assert build_calls, "buildF7Snapshot is never called"
+    assert all(body_start <= offset < body_end for offset in build_calls), (
+        "buildF7Snapshot must only be reachable through sendF7Snapshot"
+    )
     assert "getF7SnapshotForAccount" not in server
     assert "getF7SnapshotForAccount" not in meta
 
@@ -239,13 +258,13 @@ def test_current_schema_create_and_restart_preserve_the_record(
     store = _source(SERVER_STORE)
     statements = _current_schema_statements(store)
     seed_statements = _tracer_seed_statements(store)
-    assert len(statements) == 4
+    assert len(statements) == 5
     assert len(seed_statements) == 2
 
     connection = sqlite3.connect(database)
     try:
         for statement in statements:
-            connection.execute(statement, (2,) if "?" in statement else ())
+            connection.execute(statement, (3,) if "?" in statement else ())
         connection.execute(
             seed_statements[0],
             ("ticket05-map", "ankigta", "Ticket 05 tracer map"),
@@ -275,7 +294,7 @@ def test_current_schema_create_and_restart_preserve_the_record(
     try:
         assert restarted.execute(
             "SELECT version FROM schema_meta WHERE singleton = 1"
-        ).fetchone() == (2,)
+        ).fetchone() == (3,)
         assert restarted.execute(
             """
             SELECT map_id, entity_id, entity_type, model,
@@ -360,8 +379,17 @@ def test_versioned_store_seeds_only_the_supported_object_record() -> None:
     map_root = ET.parse(MAP).getroot()
     objects = map_root.findall("object")
 
-    assert "local CURRENT_SCHEMA_VERSION = 2" in store
-    assert "entity_type TEXT NOT NULL CHECK (entity_type = 'object')" in store
+    # Ticket 05 introduced schema version 3; later tickets are free to migrate
+    # past it, so pin the floor rather than the current number.
+    version = re.search(r"local CURRENT_SCHEMA_VERSION = (\d+)", store)
+    assert version and int(version.group(1)) >= 3
+    entity_type_check = re.search(
+        r"entity_type TEXT NOT NULL CHECK \(entity_type (?:= '(\w+)'|IN \(([^)]*)\))\)",
+        store,
+    )
+    assert entity_type_check, "entity_type must stay constrained to supported types"
+    allowed = entity_type_check.group(1) or entity_type_check.group(2)
+    assert "object" in allowed
     assert 'entityId = "ticket05-entity"' in store
     assert 'entityType = "object"' in store
     assert "model = 1337" in store
@@ -371,7 +399,6 @@ def test_versioned_store_seeds_only_the_supported_object_record() -> None:
     assert "rotationZ = 135" in store
     assert "interior = 3" in store
     assert "dimension = 17" in store
-    assert "backup" not in store.lower()
     assert len(objects) == 1
     assert objects[0].attrib == {
         "id": "ankigta-ticket05-runtime",

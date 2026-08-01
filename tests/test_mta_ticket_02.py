@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import socket
 import xml.etree.ElementTree as ET
 from functools import lru_cache
@@ -139,11 +140,16 @@ def test_real_mta_server_fetches_companion_health_over_ipv4_loopback() -> None:
 
     assert status["state"] == "connected"
     assert status["category"] is False
+    # The gateway owns the correlator now, so assert that it is a stable health
+    # request id rather than a prefix the harness used to inject.
     assert isinstance(status["requestId"], str)
-    assert status["requestId"].startswith("ankigta-health-")
+    assert re.fullmatch(r"health-\d+-\d+", status["requestId"])
     assert status["httpStatus"] == 200
+    # A successful connection must start nothing: no session, no filtered deck,
+    # no Review Mode, no rating capability.
     assert status["study"] == {
         "sessionActive": False,
+        "ratingEnabled": False,
         "filteredDeckCreated": False,
         "reviewModeOpened": False,
     }

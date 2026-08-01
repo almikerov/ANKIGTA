@@ -79,9 +79,14 @@ def test_blocking_ticket_02_harness_uses_configured_gateway_seam() -> None:
         encoding="utf-8"
     )
 
+    # The harness must reach the gateway through the published connection file,
+    # never by injecting a port or request id of its own. It observes the
+    # resource's configured auto-connect rather than initiating a competing one.
     assert '"connection.json"' in runner
-    assert "connectCompanion(" in driver
+    assert "getCompanionConnectionStatus()" in driver
     assert "requestCompanionHealth(" not in driver
+    assert "case.port" not in driver
+    assert "case.requestId" not in driver
 
 
 def test_mta_config_reader_validates_current_and_last_known_good() -> None:

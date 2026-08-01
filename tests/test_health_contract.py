@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 from concurrent.futures import ThreadPoolExecutor
 from http.client import HTTPConnection
 from threading import Event, Lock
@@ -36,6 +37,40 @@ def post_raw_health(
     payload = json.loads(response.read())
     connection.close()
     return response.status, payload
+
+
+def post_oversized_health(
+    server: HealthServer,
+    declared_length: int,
+) -> tuple[int, dict[str, object]]:
+    """Declare an oversized body without streaming it.
+
+    The server must reject on the declared Content-Length alone, before reading
+    a byte. Streaming the whole body would only race that early rejection: the
+    server answers and closes while the client is still writing, which aborts
+    the client's own connection before it can read the answer.
+    """
+    request = (
+        f"POST /v1/health HTTP/1.1\r\n"
+        f"Host: {server.host}:{server.port}\r\n"
+        f"Content-Type: application/json\r\n"
+        f"Content-Length: {declared_length}\r\n"
+        f"Connection: close\r\n"
+        f"\r\n"
+    ).encode("ascii")
+
+    with socket.create_connection((server.host, server.port), timeout=5) as sock:
+        sock.sendall(request)
+        chunks = []
+        while True:
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+
+    head, _, body = b"".join(chunks).partition(b"\r\n\r\n")
+    status = int(head.split(b"\r\n", 1)[0].split(b" ")[1])
+    return status, json.loads(body)
 
 
 def test_supported_open_collection_is_observable_without_enabling_study() -> None:
@@ -85,6 +120,8 @@ def test_supported_open_collection_is_observable_without_enabling_study() -> Non
             "study": {
                 "sessionActive": False,
                 "ratingEnabled": False,
+                "filteredDeckCreated": False,
+                "reviewModeOpened": False,
             },
         },
     }
@@ -322,10 +359,7 @@ def test_control_request_larger_than_two_mib_is_rejected() -> None:
     )
 
     with HealthServer(lambda: observation) as server:
-        status, response = post_raw_health(
-            server,
-            b"{" + (b" " * (2 * 1024 * 1024)),
-        )
+        status, response = post_oversized_health(server, 2 * 1024 * 1024 + 1)
 
     assert status == 413
     assert response["error"] == {
@@ -499,4 +533,6 @@ def test_incompatible_anki_configuration_is_an_explicit_failure(
     assert response["payload"]["study"] == {
         "sessionActive": False,
         "ratingEnabled": False,
+        "filteredDeckCreated": False,
+        "reviewModeOpened": False,
     }
