@@ -267,7 +267,9 @@ def test_an_unknown_outcome_keeps_the_card_open_and_says_so(
     result(client, "outcome_unknown")
 
     assert state(client).active is True
-    assert "неизвест" in state(client).warning.lower()
+    # Ticket 27 moved these strings into the locale; without it loaded the key
+    # itself surfaces, which is the visible-gap behaviour the locale specifies.
+    assert state(client).warning == "review.outcomeUnknown"
 
 
 def test_regaining_focus_costs_a_click_and_rates_nothing(
@@ -592,7 +594,7 @@ def test_a_blocked_navigation_is_reported_as_a_warning(client: MtaSandbox) -> No
     navigate(client, "https://blocked.example", blocked=True)
 
     assert state(client).externalPage is False
-    assert "заблокир" in state(client).warning.lower()
+    assert state(client).warning == "Переход заблокирован настройками MTA"
 
 
 def test_return_to_card_is_offered_only_after_navigating_away(
@@ -651,7 +653,7 @@ def test_a_failed_load_warns_without_disabling_rating(client: MtaSandbox) -> Non
     )
     render(client)
 
-    assert "ошибка" in state(client).warning.lower()
+    assert "load" in state(client).warning.lower() or "загруз" in state(client).warning.lower()
     click(client, *rating_centre(client, "good"))
     assert [
         event
@@ -812,3 +814,53 @@ def test_a_browser_failure_restores_protection(client: MtaSandbox) -> None:
 
     assert state(client).active is False
     assert client.damage_proof["player"] is False
+
+
+def test_review_labels_come_from_the_locale_in_both_languages() -> None:
+    """Ticket 27: no user-facing string is hard-coded in one language."""
+    for language, expected_reveal, expected_applied in (
+        ("en", "Show answer", "Rating applied"),
+        ("ru", "Показать ответ", "Оценка принята"),
+    ):
+        sandbox = MtaSandbox()
+        try:
+            sandbox.load("shared/locale.lua")
+            sandbox.load("client/review_mode.lua")
+            sandbox.eval("function(l) ANKIGTA.Locale.setLanguage(l) end")(language)
+
+            open_card(sandbox)
+            reveal(sandbox)
+            render(sandbox)
+            click(sandbox, *rating_centre(sandbox, "good"))
+            result(sandbox, "applied")
+
+            assert sandbox.eval(
+                'ANKIGTA.Locale.text("review.showAnswer")'
+            ) == expected_reveal
+            assert sandbox.eval(
+                'ANKIGTA.Locale.text("review.applied")'
+            ) == expected_applied
+        finally:
+            sandbox.close()
+
+
+def test_switching_language_needs_no_resource_restart() -> None:
+    sandbox = MtaSandbox()
+    try:
+        sandbox.load("shared/locale.lua")
+        sandbox.load("client/review_mode.lua")
+        open_card(sandbox)
+        reveal(sandbox)
+
+        sandbox.eval('function() ANKIGTA.Locale.setLanguage("ru") end')()
+        result(sandbox, "outcome_unknown")
+        russian = state(sandbox).warning
+
+        sandbox.eval('function() ANKIGTA.Locale.setLanguage("en") end')()
+        result(sandbox, "outcome_unknown")
+        english = state(sandbox).warning
+
+        assert "неизвест" in russian.lower()
+        assert "unknown" in english.lower()
+    finally:
+        sandbox.close()

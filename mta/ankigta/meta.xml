@@ -7,6 +7,8 @@
         edf:definition="ankigta.edf"
     />
     <min_mta_version server="1.6.0-9.24124.0" client="1.6.0-9.24124.0" />
+    <script src="shared/settings.lua" type="shared" />
+    <script src="shared/locale.lua" type="shared" />
     <script src="server/connection_config.lua" type="server" />
     <script src="server/companion.lua" type="server" />
     <script src="server/store.lua" type="server" />

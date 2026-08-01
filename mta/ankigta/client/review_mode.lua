@@ -10,11 +10,19 @@ local REVIEW_RETURN_REQUEST_EVENT = "ankigta:returnToCard"
 local AUTHORIZATION_EVENT = "ankigta:setAuthorized"
 
 local RATINGS = {"again", "hard", "good", "easy"}
-local RATING_LABELS = {
-    again = "Again",
-    hard = "Hard",
-    good = "Good",
-    easy = "Easy",
+local function label(key)
+    -- Read at draw time, so switching language needs no resource restart.
+    if ANKIGTA.Locale then
+        return ANKIGTA.Locale.text(key)
+    end
+    return key
+end
+
+local RATING_KEYS = {
+    again = "review.again",
+    hard = "review.hard",
+    good = "review.good",
+    easy = "review.easy",
 }
 
 -- Game controls ANKIGTA must not act on while a card is open. Movement is left
@@ -273,7 +281,7 @@ function renderReviewMode()
             tocolor(48, 48, 48, 235)
         )
         dxDrawText(
-            "Вернуться к карточке",
+            label("review.returnToCard"),
             x + width - returnWidth - 8,
             y + 8,
             x + width - 8,
@@ -286,11 +294,11 @@ function renderReviewMode()
         )
     end
     if Review.side ~= "answer" then
-        local label = "Показать ответ"
+        local revealLabel = label("review.showAnswer")
         Review.ratingBounds.reveal = {x, barY, width, RATING_BAR_HEIGHT}
         dxDrawRectangle(x, barY, width, RATING_BAR_HEIGHT, tocolor(40, 40, 40, 235))
         dxDrawText(
-            label,
+            revealLabel,
             x,
             barY,
             x + width,
@@ -322,7 +330,7 @@ function renderReviewMode()
             enabled and tocolor(48, 48, 48, 235) or tocolor(28, 28, 28, 235)
         )
         dxDrawText(
-            RATING_LABELS[rating],
+            label(RATING_KEYS[rating]),
             buttonX,
             barY,
             buttonX + buttonWidth,
@@ -475,7 +483,7 @@ addEventHandler(REVIEW_RESULT_EVENT, resourceRoot, function(outcome)
     Review.awaitingResult = false
     if outcome.state == "applied" then
         Review.submitted = true
-        Review.result = "Оценка принята"
+        Review.result = label("review.applied")
         if Review.closeAfterRating then
             closeReviewMode("closed_after_rating")
         end
@@ -486,7 +494,7 @@ addEventHandler(REVIEW_RESULT_EVENT, resourceRoot, function(outcome)
         -- card open rather than pretending the rating did or did not land.
         Review.submitted = true
         Review.result = false
-        Review.warning = "Результат оценки неизвестен; ANKIGTA сверит его позже"
+        Review.warning = label("review.outcomeUnknown")
         return
     end
     Review.warning = "Оценка отклонена: " .. tostring(outcome.category or "unknown")
@@ -505,7 +513,7 @@ addEventHandler("onClientBrowserNavigate", root, function(url, isBlocked)
     -- card they were answering.
     if type(url) == "string" and not string.find(url, "/render/", 1, true) then
         Review.externalPage = true
-        Review.warning = "Открыта внешняя страница"
+        Review.warning = label("review.externalPage")
     end
 end)
 

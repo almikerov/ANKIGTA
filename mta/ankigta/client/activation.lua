@@ -20,11 +20,29 @@ local MAX_DELAY_SECONDS = 60
 -- default is far above anything reachable on foot or in a car.
 local DEFAULT_MAX_SPEED_KMH = 10000
 
+-- Defaults come from the shared schema where it is loaded, so the schema and
+-- this module cannot drift into disagreeing about what "default" means.
+local function schemaDefault(key, fallback)
+    if ANKIGTA.Settings then
+        local value = ANKIGTA.Settings.default(key)
+        if value ~= nil then
+            return value
+        end
+    end
+    return fallback
+end
+
 local Activation = {
     settings = {
-        defaultRadius = DEFAULT_RADIUS,
-        delaySeconds = DEFAULT_DELAY_SECONDS,
-        maxSpeedKmh = DEFAULT_MAX_SPEED_KMH,
+        defaultRadius = schemaDefault("activationRadius", DEFAULT_RADIUS),
+        delaySeconds = schemaDefault(
+            "activationDelaySeconds",
+            DEFAULT_DELAY_SECONDS
+        ),
+        maxSpeedKmh = schemaDefault(
+            "maxActivationSpeedKmh",
+            DEFAULT_MAX_SPEED_KMH
+        ),
     },
     countdown = false,
 }

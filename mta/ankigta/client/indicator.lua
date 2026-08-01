@@ -23,7 +23,8 @@ local MODES = {
 }
 
 local Indicator = {
-    mode = MODE_NONE,
+    mode = (ANKIGTA.Settings and ANKIGTA.Settings.default("indicatorMode"))
+        or MODE_NONE,
 }
 
 function Indicator.availableModes()
