@@ -153,17 +153,17 @@ class CardPickerService:
                 "Anki rejected the card search",
             ) from error
 
-        cards = self._read_existing_cards(
-            collection,
-            collection_uuid,
-            raw_ids,
-        )
+        matched = self._matched_card_ids(raw_ids)
         start = page * page_size
         return CardSearchPage(
-            cards=tuple(cards[start : start + page_size]),
+            cards=self._read_page(
+                collection,
+                collection_uuid,
+                matched[start : start + page_size],
+            ),
             page=page,
             page_size=page_size,
-            total=len(cards),
+            total=len(matched),
             query=normalized_query,
             deck_filter=normalized_deck,
         )
@@ -260,14 +260,17 @@ class CardPickerService:
         escaped = deck_filter.replace("\\", "\\\\").replace('"', '\\"')
         return f'deck:"{escaped}"' + (f" {query}" if query else "")
 
-    def _read_existing_cards(
-        self,
-        collection: CollectionLike,
-        collection_uuid: str,
-        raw_ids: Sequence[int],
-    ) -> list[CardView]:
-        result: list[CardView] = []
-        for raw_id in sorted(
+    @staticmethod
+    def _matched_card_ids(raw_ids: Sequence[int]) -> list[int]:
+        """What the search matched, as ids: deduplicated and in a stable order.
+
+        Ids only, because reading a card is what costs. A page of fifty is
+        fifty cards however many the search matched, and shaping every match to
+        serve one page read a hundred thousand cards for the reference
+        collection's first page — the whole of that threshold's budget spent on
+        cards nobody asked to see.
+        """
+        return sorted(
             {
                 card_id
                 for card_id in raw_ids
@@ -275,23 +278,43 @@ class CardPickerService:
                 and not isinstance(card_id, bool)
                 and card_id > 0
             }
-        ):
+        )
+
+    def _read_page(
+        self,
+        collection: CollectionLike,
+        collection_uuid: str,
+        card_ids: Sequence[int],
+    ) -> tuple[CardView, ...]:
+        """Read exactly these cards.
+
+        A card the search matched and that is gone by the time it is read
+        leaves a gap on its own page rather than pulling the next page's first
+        card forward: the collection changed under the search, and hiding that
+        by silently reflowing would make the page disagree with `total`.
+        """
+        deck_names = self._deck_names(collection)
+        result: list[CardView] = []
+        for card_id in card_ids:
             try:
-                card = collection.get_card(raw_id)
+                card = collection.get_card(card_id)
             except Exception as error:
                 raise CardPickerError(
                     "card_read_failed",
                     "Anki rejected a card state refresh",
                 ) from error
             if card is not None:
-                result.append(self._view(collection, collection_uuid, card))
-        return result
+                result.append(
+                    self._view(collection, collection_uuid, card, deck_names)
+                )
+        return tuple(result)
 
     def _view(
         self,
         collection: CollectionLike,
         collection_uuid: str,
         card: CardLike,
+        deck_names: dict[int, str] | None = None,
     ) -> CardView:
         try:
             card_id = int(card.id)
@@ -304,10 +327,12 @@ class CardPickerService:
                 "card_state_invalid",
                 "Anki returned an invalid card state",
             ) from error
+        if deck_names is None:
+            deck_names = self._deck_names(collection)
         return CardView(
             identity=AnkiCardIdentity(collection_uuid, card_id),
             deck_id=deck_id,
-            deck_name=self._deck_name(collection, deck_id),
+            deck_name=deck_names.get(deck_id),
             state=self._state(queue, due),
             due=due,
             tags=tags,
@@ -316,29 +341,47 @@ class CardPickerService:
     def _state(self, queue: int, due: int) -> CardState:
         return card_state(queue, due, self._today())
 
-    def _deck_name(self, collection: CollectionLike, deck_id: int) -> str | None:
+    @staticmethod
+    def _deck_names(collection: CollectionLike) -> dict[int, str]:
+        """Every deck's name by id, read once.
+
+        Once per search rather than once per card: the deck list is one answer
+        for the whole page, and asking Anki for all of it per card made naming
+        a page of cards cost the deck list times the page.
+
+        Anki has spelt this list three ways across builds, so all three are
+        read: a mapping either way round, and a sequence of pairs or records.
+        A shape this build does not recognise leaves the names empty rather
+        than guessing, and a card with no name still carries its deck id.
+        """
         try:
             raw_decks = collection.decks.all_names_and_ids()
         except Exception:
-            return None
+            return {}
+        names: dict[int, str] = {}
         if isinstance(raw_decks, dict):
-            value = raw_decks.get(deck_id)
-            if isinstance(value, str):
-                return value
-            for raw_name, raw_id in raw_decks.items():
-                try:
-                    if int(raw_id) == deck_id:
-                        return str(raw_name)
-                except (TypeError, ValueError):
-                    continue
-            return None
+            for first, second in raw_decks.items():
+                for raw_id, raw_name in ((first, second), (second, first)):
+                    if isinstance(raw_name, str):
+                        try:
+                            names.setdefault(int(raw_id), raw_name)
+                        except (TypeError, ValueError):
+                            continue
+            return names
         if isinstance(raw_decks, Sequence) and not isinstance(raw_decks, (str, bytes)):
             for raw in raw_decks:
                 if isinstance(raw, tuple) and len(raw) == 2:
                     name, raw_id = raw
-                    if int(raw_id) == deck_id:
-                        return str(name)
-                elif isinstance(raw, dict) and int(raw.get("id", -1)) == deck_id:
+                    try:
+                        names.setdefault(int(raw_id), str(name))
+                    except (TypeError, ValueError):
+                        continue
+                elif isinstance(raw, dict):
                     name = raw.get("name")
-                    return str(name) if isinstance(name, str) else None
-        return None
+                    try:
+                        identifier = int(raw.get("id", -1))
+                    except (TypeError, ValueError):
+                        continue
+                    if isinstance(name, str):
+                        names.setdefault(identifier, name)
+        return names

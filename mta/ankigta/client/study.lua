@@ -145,6 +145,21 @@ addEventHandler(STATUS_EVENT, resourceRoot, function(status)
     end
     lastStatus = status
     updateStudyUi(status)
+    if ANKIGTA.Diagnostics then
+        -- What the session is doing, for the same report the spatial and F7
+        -- state go into. A rebuild in flight is the state most worth having in
+        -- a bug report, and it is the one that is hardest to describe.
+        local study = type(status.study) == "table" and status.study or {}
+        ANKIGTA.Diagnostics.record("session", {
+            connection = status.state or false,
+            sessionActive = study.sessionActive == true,
+            pausedReason = study.pausedReason or false,
+            cardCount = study.cardCount or false,
+            progress = study.progress or false,
+            total = study.total or false,
+            filteredDeckCreated = study.filteredDeckCreated == true,
+        })
+    end
 end)
 
 -- Labels and control geometry are both written once, when the control is

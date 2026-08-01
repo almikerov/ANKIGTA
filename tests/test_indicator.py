@@ -463,3 +463,73 @@ def test_a_nearer_target_still_wins_against_a_smaller_identity(
     result = plan(indicator, [candidate("aaa", x=9.0), candidate("zzz", x=1.0)])
 
     assert result["entityId"] == "zzz"
+
+
+def test_a_repeated_plan_over_the_same_world_only_looks_at_the_card_it_marks(
+    indicator: MtaSandbox,
+) -> None:
+    """The marker is for one card; the world carries every other one.
+
+    This runs on every rendered frame, inside the budget shared with the
+    Activation Zone and the HUD. Walking every streamed Spatial Link to find
+    the handful carrying this card was most of that budget spent rejecting
+    entities that were never eligible for the marker.
+
+    Counted rather than timed: a time is a property of the machine, and what is
+    being asserted is that the entities carrying other cards are not looked at
+    at all.
+    """
+    set_mode(indicator, "minimap_only")
+    # Each candidate reports every field read on it, so the test can see which
+    # of them the plan actually inspected — including the identity, which is
+    # what a scan looking for the marked card reads first.
+    world = indicator.eval(
+        """
+        function(n, uuid, reads)
+            local list = {}
+            for index = 1, n do
+                local fields = {
+                    mapId = "m1",
+                    entityId = "other-" .. index,
+                    cardIdentity = {collectionUuid = uuid, cardId = 1000 + index},
+                }
+                list[index] = setmetatable({}, {
+                    __index = function(_, key)
+                        reads[key] = (reads[key] or 0) + 1
+                        return fields[key]
+                    end,
+                })
+            end
+            list[n + 1] = {
+                mapId = "m1",
+                entityId = "marked",
+                cardIdentity = {collectionUuid = uuid, cardId = 7},
+                x = 3.0, y = 0.0, z = 0.0,
+                interior = 0, dimension = 0,
+                eligible = true, present = true,
+                hasActivationZone = false, radius = 3.0,
+            }
+            return list
+        end
+        """
+    )
+    reads = indicator.eval("{}")
+    candidates = world(500, UUID, reads)
+    player = indicator.lua.table_from(
+        {"x": 0.0, "y": 0.0, "z": 0.0, "interior": 0, "dimension": 0}
+    )
+    identity = indicator.lua.table_from({"collectionUuid": UUID, "cardId": 7})
+    run = indicator.eval(
+        "function(p, c, i) return ANKIGTA.Indicator.plan(p, c, i) end"
+    )
+
+    assert run(player, candidates, identity)["entityId"] == "marked"
+    # The first plan over a list it has not seen groups it by card, which reads
+    # each candidate's identity once. What must not happen is the frame after.
+    assert reads["cardIdentity"] == 500
+    for key in list(reads.keys()):
+        reads[key] = 0
+
+    assert run(player, candidates, identity)["entityId"] == "marked"
+
+    assert {key: value for key, value in reads.items() if value} == {}

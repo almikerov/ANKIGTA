@@ -56,12 +56,50 @@ function Indicator.setMode(mode)
     return true
 end
 
-local function sameCard(candidate, cardIdentity)
-    return type(candidate.cardIdentity) == "table"
-        and type(cardIdentity) == "table"
-        and candidate.cardIdentity.collectionUuid == cardIdentity.collectionUuid
-        and tonumber(candidate.cardIdentity.cardId)
-            == tonumber(cardIdentity.cardId)
+local function cardKey(cardIdentity)
+    if type(cardIdentity) ~= "table" then
+        return nil
+    end
+    local cardId = tonumber(cardIdentity.cardId)
+    if cardId == nil then
+        return nil
+    end
+    -- Anki Card Identity is the pair, never the number alone: the same cardId
+    -- in another collection is another card (CONTEXT.md).
+    return tostring(cardIdentity.collectionUuid) .. "\0" .. tostring(cardId)
+end
+
+-- Which candidates carry which card, for the candidate list currently in hand.
+--
+-- A marker is wanted for one card, and the world holds thousands of entities
+-- carrying every other one. Walking all of them per rendered frame to find the
+-- handful that carry this card is most of a two-millisecond budget spent
+-- rejecting entities that were never eligible for the marker.
+--
+-- Keyed on the candidate list itself. The list is replaced wholesale whenever
+-- the server sends one, so a new list is a new table, and an entity's Anki
+-- Card Identity does not change under a list that is still the same one --
+-- that would be a Spatial Link changing, which arrives as a new list.
+local byCard = {byList = false, buckets = nil}
+
+local function candidatesCarrying(candidates, key)
+    if byCard.byList ~= candidates then
+        local buckets = {}
+        for _, candidate in ipairs(candidates or {}) do
+            local candidateKey = cardKey(candidate.cardIdentity)
+            if candidateKey ~= nil then
+                local bucket = buckets[candidateKey]
+                if bucket == nil then
+                    bucket = {}
+                    buckets[candidateKey] = bucket
+                end
+                bucket[#bucket + 1] = candidate
+            end
+        end
+        byCard.byList = candidates
+        byCard.buckets = buckets
+    end
+    return byCard.buckets[key] or {}
 end
 
 --- Which entity, if any, should carry the marker for the next card.
@@ -69,19 +107,26 @@ end
 -- A card may be linked to several entities. Only the nearest reachable one is
 -- marked: marking all of them would turn a hint into clutter.
 function Indicator.selectTarget(player, candidates, cardIdentity)
-    if type(player) ~= "table" or type(cardIdentity) ~= "table" then
+    if type(player) ~= "table" then
+        return false
+    end
+    local key = cardKey(cardIdentity)
+    if key == nil then
         return false
     end
     -- Same order as the Activation Zone uses (`shared/nearest.lua`): two
     -- entities carrying the same card at the same distance resolve on their
     -- Map Entity identity, not on where the snapshot happened to put them.
-    return (ANKIGTA.Nearest.select(player, candidates, function(candidate)
-        return sameCard(candidate, cardIdentity)
-            and candidate.eligible == true
-            and candidate.present ~= false
-            and candidate.interior == player.interior
-            and candidate.dimension == player.dimension
-    end))
+    return (ANKIGTA.Nearest.select(
+        player,
+        candidatesCarrying(candidates, key),
+        function(candidate)
+            return candidate.eligible == true
+                and candidate.present ~= false
+                and candidate.interior == player.interior
+                and candidate.dimension == player.dimension
+        end
+    ))
 end
 
 --- What to draw for the next card, given the mode and the world.

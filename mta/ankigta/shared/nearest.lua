@@ -23,6 +23,38 @@ end
 
 Nearest.distanceSquared = distanceSquared
 
+--- The squared distance, when the candidate is inside `radius`, else `nil`.
+--
+-- One axis at a time, so a candidate that is nowhere near is rejected by a
+-- subtraction and a comparison rather than by three of each. An Activation
+-- Zone is at most fifty metres across and the world is kilometres wide, so
+-- almost every candidate is rejected on the first axis -- and this runs
+-- against every streamed Spatial Link on every observation, inside the frame
+-- budget everything ANKIGTA draws and decides has to share.
+--
+-- It lives here rather than in the caller because it is the same measurement
+-- `distanceSquared` makes, only stopped early: a second copy of "how far away
+-- is that" is a second answer waiting to disagree.
+function Nearest.withinRadius(origin, candidate, radius)
+    local dx = candidate.x - origin.x
+    if dx > radius or dx < -radius then
+        return nil
+    end
+    local dy = candidate.y - origin.y
+    if dy > radius or dy < -radius then
+        return nil
+    end
+    local dz = candidate.z - origin.z
+    if dz > radius or dz < -radius then
+        return nil
+    end
+    local distance = dx * dx + dy * dy + dz * dz
+    if distance > radius * radius then
+        return nil
+    end
+    return distance
+end
+
 --- The pair the tie is broken on, as strings, so `<` means the same thing for
 --- a numeric editor id and a generated one.
 local function identity(candidate)

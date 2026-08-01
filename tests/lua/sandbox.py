@@ -23,6 +23,10 @@ Stub fidelity is taken from the MTA server source, not from memory:
   destination's directory (`CLuaFileDefs::fileCopy`).
 - `getRealTime()` reports `month` 0-11 and `year` as years since 1900, next to
   a `timestamp` in seconds (`CLuaUtilDefs::GetCTime`).
+- `xmlNodeGetAttribute` returns **`false`** for an attribute that is not set,
+  and `xmlLoadFile` `false` for a file that is not there (`CLuaXMLDefs`). Both
+  read the same files `fileOpen` does, so one fixture map is one document to
+  both APIs, and every load is recorded in `xml_loads`.
 
 Resource files live in a real directory rather than in memory, because a
 database is a file: a backup that copies bytes and is then opened as SQLite
@@ -43,6 +47,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator, Mapping
+from xml.etree import ElementTree
 
 from lupa.lua51 import LuaRuntime, lua_type
 
@@ -109,7 +114,14 @@ class _FileStore:
         self.root.mkdir(parents=True, exist_ok=True)
 
     def resolve(self, path: str) -> Path:
-        resolved = self.root.joinpath(*str(path).split("/"))
+        parts = str(path).split("/")
+        if parts and parts[0].startswith(":"):
+            # MTA's `:otherResource/file` reaches into another resource. It is
+            # a real path here so that `fileOpen` and `xmlLoadFile` read the
+            # same bytes, but a leading colon is not a legal Windows directory
+            # name, so the resource name is spelt out instead.
+            parts[0] = "__resource__" + parts[0][1:]
+        resolved = self.root.joinpath(*parts)
         # A resource cannot write above its own directory.
         if self.root not in resolved.parents and resolved != self.root:
             raise LuaError(f"path escapes the resource directory: {path}")
@@ -174,7 +186,12 @@ class _FileStore:
     def keys(self) -> Iterator[str]:
         for path in sorted(self.root.rglob("*")):
             if path.is_file():
-                yield path.relative_to(self.root).as_posix()
+                relative = path.relative_to(self.root).as_posix()
+                # Spelt back the way the script wrote it, so a key read out
+                # here is a key `resolve` accepts again.
+                if relative.startswith("__resource__"):
+                    relative = ":" + relative[len("__resource__") :]
+                yield relative
 
 
 class Faults:
@@ -326,7 +343,13 @@ class MtaSandbox:
         self.lua = LuaRuntime(unpack_returned_tuples=True)
         self.recorder = Recorder()
         self.database_path = database_path
-        self._tick = 0
+        #: Milliseconds a test has pushed the tick clock forward by hand.
+        self._tick_offset = 0
+        self._tick_origin = time.perf_counter()
+        #: The last tick handed out, so the clock never goes backwards or
+        #: repeats -- MTA's is a millisecond counter, and two calls inside
+        #: one millisecond must still be distinguishable.
+        self._tick_floor = 0
         #: Wall clock `getRealTime` reports, which tests move a day at a time.
         self._real_time = float(time.time())
         self._connections: list[_Connection] = []
@@ -345,6 +368,12 @@ class MtaSandbox:
             root = Path(database_path).resolve().parent
         #: Resource files, keyed by the path the script passes to fileOpen.
         self.files = _FileStore(root)
+        #: Every path `xmlLoadFile` was asked for, in call order. A document
+        #: parsed once per entity and a document parsed once look identical
+        #: from their answers, and only differ here.
+        self.xml_loads: list[str] = []
+        #: Parsed nodes, so a Lua handle can index back to its element.
+        self._xml_nodes: list[ElementTree.Element] = []
         #: Failures to inject at the MTA API boundary.
         self.faults = Faults()
         #: When set, `fileCreate` fails the way a read-only directory makes it.
@@ -424,8 +453,8 @@ class MtaSandbox:
     # ----------------------------------------------------------------- clocks
 
     def advance(self, milliseconds: int) -> None:
-        """Move the fake clock forward without firing timers."""
-        self._tick += milliseconds
+        """Move the tick clock forward without firing timers."""
+        self._tick_offset += milliseconds
 
     def advance_days(self, days: float) -> None:
         """Move the wall clock `getRealTime` reports, leaving ticks alone."""
@@ -456,7 +485,7 @@ class MtaSandbox:
             for timer in pending:
                 if timer.cancelled:
                     continue
-                self._tick += timer.interval_ms
+                self._tick_offset += timer.interval_ms
                 timer.callback(*timer.args)
                 fired += 1
                 if timer.repeats > 0:
@@ -707,8 +736,18 @@ class MtaSandbox:
 
         # --- runtime --------------------------------------------------------
         def get_tick_count() -> int:
-            self._tick += 1
-            return self._tick
+            # Real elapsed milliseconds plus whatever a test pushed it by.
+            # A counter that only ever adds one per call reads like a clock and
+            # is not one: code that times its own work with it -- which the F7
+            # snapshot and the Card Picker both now do -- would report the
+            # number of calls it made rather than how long it took, and the
+            # instrumentation would be untestable here.
+            elapsed = int((time.perf_counter() - self._tick_origin) * 1000)
+            value = elapsed + self._tick_offset
+            if value <= self._tick_floor:
+                value = self._tick_floor + 1
+            self._tick_floor = value
+            return value
 
         def output_debug_string(message: str, level: int = 3, *_rest: Any) -> bool:
             self.recorder.debug.append(DebugLine(str(message), int(level)))
@@ -871,14 +910,96 @@ class MtaSandbox:
         g.fetchRemote = fetch_remote
         g.abortRemoteRequest = lambda _handle=None: True
 
-        # XML: only the "not there" answer, which is what MTA returns for a map
-        # file no test fixture provides. Anything richer belongs to whichever
-        # ticket actually reads map XML.
-        g.xmlLoadFile = lambda _path=None, _readonly=None: False
+        # XML, over the same files `fileOpen` reads, so a fixture map is one
+        # document to both APIs. A path with nothing behind it still answers
+        # `false`, which is what MTA returns for a map file that is not there.
+        def xml_load_file(path: str = "", _readonly: Any = None) -> Any:
+            self.xml_loads.append(str(path))
+            try:
+                data = self.files[str(path)]
+            except KeyError:
+                return False
+            try:
+                root = ElementTree.fromstring(data.decode("utf-8"))
+            except ElementTree.ParseError:
+                return False
+            return self._xml_node(root)
+
+        def xml_node_get_children(node: Any = None, index: Any = None) -> Any:
+            element = self._xml_element(node)
+            if element is None:
+                return False
+            children = list(element)
+            if index is not None:
+                # MTA's second argument picks one child, zero-based.
+                position = int(index)
+                if not 0 <= position < len(children):
+                    return False
+                return self._xml_node(children[position])
+            return self.lua.table_from(
+                [self._xml_node(child) for child in children]
+            )
+
+        def xml_node_get_name(node: Any = None) -> Any:
+            element = self._xml_element(node)
+            return element.tag if element is not None else False
+
+        def xml_node_get_attribute(node: Any = None, name: str = "") -> Any:
+            element = self._xml_element(node)
+            if element is None:
+                return False
+            # MTA answers `false` for an attribute that is not set.
+            return element.get(str(name), False)
+
+        g.xmlLoadFile = xml_load_file
         g.xmlUnloadFile = lambda _node=None: True
+        g.xmlNodeGetChildren = xml_node_get_children
+        g.xmlNodeGetName = xml_node_get_name
+        g.xmlNodeGetAttribute = xml_node_get_attribute
 
         self._install_file_globals(g)
         self._install_client_globals(g)
+
+    def _xml_node(self, element: ElementTree.Element) -> Any:
+        """A Lua handle for one parsed XML element.
+
+        Kept as an index rather than as the element itself, because lupa hands
+        out a fresh wrapper per crossing and the identity of a Python object
+        that went through Lua is not something to key on.
+        """
+        self._xml_nodes.append(element)
+        return self.lua.table_from(
+            {
+                "__element": True,
+                "type": "xml-node",
+                "__xml": len(self._xml_nodes) - 1,
+            }
+        )
+
+    def _xml_element(self, node: Any) -> ElementTree.Element | None:
+        if lua_type(node) != "table":
+            return None
+        index = node["__xml"]
+        if index is None:
+            return None
+        return self._xml_nodes[int(index)]
+
+    def write_map_file(self, virtual_path: str, entities: Mapping[str, str]) -> None:
+        """Write a saved map the way the Map Editor leaves one.
+
+        `entities` maps an `ankigtaEntityId` to the element type it was saved
+        as. The map's own identity element is written from the path's map id,
+        which the caller passes as the `ankigta_map_identity` key.
+        """
+        parts = [
+            f'  <{kind} ankigtaEntityId="{entity_id}" />'
+            if kind != "ankigta_map_identity"
+            else f'  <ankigta_map_identity ankigtaMapId="{entity_id}" />'
+            for entity_id, kind in entities.items()
+        ]
+        self.files[virtual_path] = (
+            "<map>\n" + "\n".join(parts) + "\n</map>\n"
+        ).encode("utf-8")
 
     def database_file(self, path: str) -> str:
         """Where `dbConnect("sqlite", path)` actually opens.

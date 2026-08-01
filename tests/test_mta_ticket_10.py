@@ -47,14 +47,18 @@ def test_missing_detection_uses_saved_map_identity_not_runtime_destruction() -> 
     destroy_handler = function_body(identity, "MapIdentity.handleEditorElementDestroyed")
 
     assert "MapIdentity.refreshEntityPresence" in identity
-    assert "xmlLoadFile" in function_body(identity, "mapFileContainsEntity")
-    assert "ankigtaEntityId" in function_body(identity, "mapFileContainsEntity")
-    assert "ankigtaMapId" in function_body(identity, "mapFileContainsEntity")
+    # The saved map file is now read whole, once per document, rather than
+    # searched per entity (ticket 30). What the refresh concludes from it is
+    # asserted on behaviour in `tests/test_entity_presence_refresh.py`.
+    map_file = function_body(identity, "readMapFileIdentities")
+    assert "xmlLoadFile" in map_file
+    assert "ankigtaEntityId" in map_file
+    assert "ankigtaMapId" in map_file
     assert "Store.markEntityMissing" in identity
     assert "Store.clearEntityMissing" in identity
     assert "Store.markEntityMissing" not in destroy_handler
     snapshot = function_body(identity, "MapIdentity.linkSnapshot")
-    assert snapshot.index("isIdentityCollision") < snapshot.index(
+    assert snapshot.index("rowIsIdentityCollision") < snapshot.index(
         'row.entity_state == "entity_missing"'
     )
 
