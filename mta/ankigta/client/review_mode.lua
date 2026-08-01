@@ -6,6 +6,7 @@ local REVIEW_REVEAL_REQUEST_EVENT = "ankigta:revealAnswer"
 local REVIEW_RATE_REQUEST_EVENT = "ankigta:submitRating"
 local REVIEW_RESULT_EVENT = "ankigta:reviewResult"
 local REVIEW_CLOSED_EVENT = "ankigta:reviewClosed"
+local REVIEW_RETURN_REQUEST_EVENT = "ankigta:returnToCard"
 local AUTHORIZATION_EVENT = "ankigta:setAuthorized"
 
 local RATINGS = {"again", "hard", "good", "easy"}
@@ -43,6 +44,11 @@ local Review = {
     warning = false,
     focused = true,
     closeAfterRating = true,
+    -- Set when the card navigated its main frame somewhere else. Rating stays
+    -- available: the player still knows which card they were answering.
+    externalPage = false,
+    cardAudioEnabled = true,
+    muteGameWorld = false,
     browser = false,
     identity = false,
     ratingBounds = {},
@@ -114,7 +120,23 @@ function reviewModeState()
         result = Review.result,
         warning = Review.warning,
         focused = Review.focused,
+        externalPage = Review.externalPage,
+        cardAudioEnabled = Review.cardAudioEnabled,
+        muteGameWorld = Review.muteGameWorld,
     }
+end
+
+--- Card audio and world audio are separate controls.
+-- Muting a noisy card should not also silence the game, and playing in silence
+-- should not force card audio off.
+function setReviewAudio(cardAudioEnabled, muteGameWorld)
+    Review.cardAudioEnabled = cardAudioEnabled ~= false
+    Review.muteGameWorld = muteGameWorld == true
+    if isElement(Review.browser) then
+        setBrowserVolume(Review.browser, Review.cardAudioEnabled and 1 or 0)
+    end
+    setWorldSoundEnabled(0, not Review.muteGameWorld)
+    return true
 end
 
 local function closeReviewMode(reason)
@@ -133,6 +155,7 @@ local function closeReviewMode(reason)
     Review.warning = false
     Review.submitted = false
     Review.side = "question"
+    Review.externalPage = false
     triggerServerEvent(
         REVIEW_CLOSED_EVENT,
         resourceRoot,
@@ -187,6 +210,37 @@ function renderReviewMode()
 
     Review.ratingBounds = {}
     local barY = y + height - RATING_BAR_HEIGHT
+
+    if Review.externalPage then
+        -- Optional, and never automatic: the card may have navigated somewhere
+        -- the player actually wanted to read.
+        local returnWidth = 220
+        Review.ratingBounds.returnToCard = {
+            x + width - returnWidth - 8,
+            y + 8,
+            returnWidth,
+            28,
+        }
+        dxDrawRectangle(
+            x + width - returnWidth - 8,
+            y + 8,
+            returnWidth,
+            28,
+            tocolor(48, 48, 48, 235)
+        )
+        dxDrawText(
+            "Вернуться к карточке",
+            x + width - returnWidth - 8,
+            y + 8,
+            x + width - 8,
+            y + 36,
+            tocolor(235, 235, 235, 255),
+            1,
+            "default-bold",
+            "center",
+            "center"
+        )
+    end
     if Review.side ~= "answer" then
         local label = "Показать ответ"
         Review.ratingBounds.reveal = {x, barY, width, RATING_BAR_HEIGHT}
@@ -274,6 +328,15 @@ function handleReviewClick(button, state, _absoluteX, _absoluteY, cursorX, curso
         Review.focused = true
         return
     end
+    if withinBounds(Review.ratingBounds.returnToCard, cursorX, cursorY) then
+        triggerServerEvent(
+            REVIEW_RETURN_REQUEST_EVENT,
+            resourceRoot,
+            Review.identity or false,
+            Review.side
+        )
+        return
+    end
     if Review.side ~= "answer" then
         if withinBounds(Review.ratingBounds.reveal, cursorX, cursorY) then
             triggerServerEvent(
@@ -354,6 +417,7 @@ addEventHandler(REVIEW_SIDE_EVENT, resourceRoot, function(payload)
     end
     Review.side = payload.side == "answer" and "answer" or "question"
     Review.warning = payload.warning or false
+    Review.externalPage = false
     if isElement(Review.browser) then
         loadBrowserURL(Review.browser, payload.url)
     end
@@ -382,6 +446,34 @@ addEventHandler(REVIEW_RESULT_EVENT, resourceRoot, function(outcome)
         return
     end
     Review.warning = "Оценка отклонена: " .. tostring(outcome.category or "unknown")
+end)
+
+addEventHandler("onClientBrowserNavigate", root, function(url, isBlocked)
+    if not Review.active or source ~= Review.browser then
+        return
+    end
+    if isBlocked then
+        Review.warning = "Переход заблокирован настройками MTA"
+        return
+    end
+    -- MTA reports navigation after the fact; it cannot be cancelled from Lua
+    -- (prototype 0006). Rating stays enabled -- the player still knows which
+    -- card they were answering.
+    if type(url) == "string" and not string.find(url, "/render/", 1, true) then
+        Review.externalPage = true
+        Review.warning = "Открыта внешняя страница"
+    end
+end)
+
+addEventHandler("onClientBrowserLoadingFailed", root, function(url, errorCode)
+    if not Review.active or source ~= Review.browser then
+        return
+    end
+    -- A card that fails to render is still a card that can be rated.
+    Review.warning = string.format(
+        "Ошибка загрузки карточки (%s)",
+        tostring(errorCode or url or "unknown")
+    )
 end)
 
 addEventHandler("onClientBrowserCreated", root, function()

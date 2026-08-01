@@ -127,6 +127,8 @@ class MtaSandbox:
         self.loaded_urls: list[str] = []
         self.requested_domains: list[str] = []
         self.browser_available = True
+        self.browser_volume = 1.0
+        self.world_sound_enabled = True
         self._install_globals()
 
     # ---------------------------------------------------------------- loading
@@ -556,6 +558,16 @@ class MtaSandbox:
         g.createBrowser = create_browser
         g.loadBrowserURL = load_browser_url
         g.requestBrowserDomains = request_browser_domains
+        def set_browser_volume(_browser: Any, volume: float) -> bool:
+            self.browser_volume = float(volume)
+            return True
+
+        def set_world_sound_enabled(group: int, enabled: Any, *_rest: Any) -> bool:
+            self.world_sound_enabled = enabled is True
+            return True
+
+        g.setBrowserVolume = set_browser_volume
+        g.setWorldSoundEnabled = set_world_sound_enabled
         g.focusBrowser = lambda _browser=None: True
         g.isBrowserFocused = lambda _browser=None: True
         g.cancelEvent = lambda *_args: True

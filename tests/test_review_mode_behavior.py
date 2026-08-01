@@ -546,3 +546,129 @@ def test_a_failed_capability_is_reported_without_a_url(server: MtaSandbox) -> No
     assert len(issued) == 1
     assert issued[0].args[1] is False
     assert issued[0].args[2] == "protocol_error"
+
+
+# --- ticket 21: best-effort CEF, media and the External Card Page -------------
+
+
+def navigate(sandbox: MtaSandbox, url: str, blocked: bool = False) -> None:
+    sandbox.trigger("onClientBrowserNavigate", sandbox.browsers[0], url, blocked)
+
+
+def test_navigating_away_creates_an_external_page_but_keeps_rating(
+    client: MtaSandbox,
+) -> None:
+    open_card(client)
+    reveal(client)
+
+    navigate(client, "https://example.org/reference")
+    render(client)
+
+    assert state(client).externalPage is True
+    # The player still knows which card they were answering.
+    for rating in ("again", "hard", "good", "easy"):
+        assert client.eval(f"ANKIGTA.ReviewMode.ratingBounds.{rating}") is not None
+    click(client, *rating_centre(client, "good"))
+    assert [
+        event
+        for event in client.recorder.server_events
+        if event.name == "ankigta:submitRating"
+    ]
+
+
+def test_staying_on_the_issued_render_is_not_an_external_page(
+    client: MtaSandbox,
+) -> None:
+    open_card(client)
+
+    navigate(client, "http://127.0.0.1:51234/render/token/index.html")
+
+    assert state(client).externalPage is False
+
+
+def test_a_blocked_navigation_is_reported_as_a_warning(client: MtaSandbox) -> None:
+    open_card(client)
+
+    navigate(client, "https://blocked.example", blocked=True)
+
+    assert state(client).externalPage is False
+    assert "заблокир" in state(client).warning.lower()
+
+
+def test_return_to_card_is_offered_only_after_navigating_away(
+    client: MtaSandbox,
+) -> None:
+    open_card(client)
+    render(client)
+    assert client.eval("ANKIGTA.ReviewMode.ratingBounds.returnToCard") is None
+
+    navigate(client, "https://example.org")
+    render(client)
+    assert client.eval("ANKIGTA.ReviewMode.ratingBounds.returnToCard") is not None
+
+
+def test_return_to_card_asks_for_a_fresh_capability_for_the_current_side(
+    client: MtaSandbox,
+) -> None:
+    open_card(client)
+    reveal(client)
+    navigate(client, "https://example.org")
+    render(client)
+
+    bounds = client.eval("ANKIGTA.ReviewMode.ratingBounds.returnToCard")
+    click(client, bounds[1] + bounds[3] / 2, bounds[2] + bounds[4] / 2)
+
+    requests = [
+        event
+        for event in client.recorder.server_events
+        if event.name == "ankigta:returnToCard"
+    ]
+    assert len(requests) == 1
+    assert requests[0].args[-1] == "answer", "the side must survive the detour"
+
+
+def test_a_fresh_capability_clears_the_external_page_state(
+    client: MtaSandbox,
+) -> None:
+    open_card(client)
+    navigate(client, "https://example.org")
+    assert state(client).externalPage is True
+
+    reveal(client, "http://127.0.0.1:51234/render/token3/index.html")
+
+    assert state(client).externalPage is False
+
+
+def test_a_failed_load_warns_without_disabling_rating(client: MtaSandbox) -> None:
+    open_card(client)
+    reveal(client)
+
+    client.trigger(
+        "onClientBrowserLoadingFailed",
+        client.browsers[0],
+        "http://127.0.0.1:51234/render/token/index.html",
+        -105,
+    )
+    render(client)
+
+    assert "ошибка" in state(client).warning.lower()
+    click(client, *rating_centre(client, "good"))
+    assert [
+        event
+        for event in client.recorder.server_events
+        if event.name == "ankigta:submitRating"
+    ], "a card that fails to render is still a card that can be rated"
+
+
+def test_card_audio_and_world_audio_are_separate_controls(
+    client: MtaSandbox,
+) -> None:
+    open_card(client)
+
+    client.eval("function() return setReviewAudio(false, false) end")()
+    assert client.browser_volume == 0.0
+    assert client.world_sound_enabled is True, "muting the card must not mute GTA"
+
+    client.eval("function() return setReviewAudio(true, true) end")()
+    assert client.browser_volume == 1.0
+    assert client.world_sound_enabled is False

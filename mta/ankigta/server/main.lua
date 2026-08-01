@@ -33,6 +33,7 @@ local REVIEW_RATE_REQUEST_EVENT = "ankigta:submitRating"
 local REVIEW_RESULT_EVENT = "ankigta:reviewResult"
 local REVIEW_CLOSED_EVENT = "ankigta:reviewClosed"
 local RENDER_ISSUED_EVENT = "ankigta:renderIssued"
+local REVIEW_RETURN_REQUEST_EVENT = "ankigta:returnToCard"
 local PICK_ENTITY_REQUEST_EVENT = "ankigta:pickEntity"
 local PICK_ENTITY_RESULT_EVENT = "ankigta:pickEntityResult"
 -- Ticket 05 uses this only to observe a disposable map-created element.
@@ -1264,6 +1265,29 @@ addEventHandler(REVIEW_RESULT_EVENT, resourceRoot, function(outcome)
         REVIEW_RESULT_EVENT,
         resourceRoot,
         outcome
+    )
+end)
+
+addEvent(REVIEW_RETURN_REQUEST_EVENT, true)
+addEventHandler(REVIEW_RETURN_REQUEST_EVENT, resourceRoot, function(
+    cardIdentity,
+    side
+)
+    if not client or source ~= resourceRoot then
+        return
+    end
+    if not openReview or openReview.player ~= client then
+        return
+    end
+    if not sameCardIdentity(openReview.cardIdentity, cardIdentity) then
+        return
+    end
+    -- A fresh capability, because the previous one has expired or been spent
+    -- by whatever the card navigated to.
+    ANKIGTA.CompanionGateway.requestRender(
+        client,
+        openReview.cardIdentity,
+        side == "answer" and "answer" or "question"
     )
 end)
 
