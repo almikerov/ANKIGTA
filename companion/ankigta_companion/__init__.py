@@ -6,7 +6,7 @@ import atexit
 from pathlib import Path
 
 from .collection_identity import CollectionIdentityService
-from .collection_identity_ui import register_collection_identity_settings
+from .collection_identity_ui import announce_collection_identity
 from .connection_settings_ui import (
     prompt_initial_connection_setup,
     register_connection_settings,
@@ -15,12 +15,11 @@ from .lifecycle import CompanionAddon
 
 
 addon: CompanionAddon | None = None
-collection_settings_action: object | None = None
 connection_settings_action: object | None = None
 
 
 def _start_inside_anki() -> None:
-    global addon, collection_settings_action, connection_settings_action
+    global addon, connection_settings_action
     from aqt import appVersion, gui_hooks, mw
     from aqt.qt import QTimer
 
@@ -37,9 +36,13 @@ def _start_inside_anki() -> None:
             user_files / "collection-registry.json"
         ),
         connection_settings_path=user_files / "connection-settings.json",
+        # No menu item: a collection that needs an answer raises its dialog when
+        # it is observed, and one that does not needs nothing at all.
+        announce_identity=lambda identity: announce_collection_identity(
+            addon, identity
+        ),
     )
     addon.start()
-    collection_settings_action = register_collection_identity_settings(lambda: addon)
     connection_settings_action = register_connection_settings(lambda: addon)
     QTimer.singleShot(
         0,

@@ -55,3 +55,45 @@ def test_wrong_collection_ui_asks_to_open_the_bound_collection(
         "Откройте ранее выбранную Bound Anki Collection."
     ]
     assert addon.bind_calls == []
+
+
+def test_only_a_state_that_needs_a_person_raises_a_dialog() -> None:
+    """The menu item is gone, so this predicate is the whole trigger.
+
+    Adopting the first collection is silent. Speaking on every observation
+    would have replaced a button nobody pressed with a dialog everybody has to
+    dismiss.
+    """
+    from ankigta_companion.collection_identity_ui import (
+        announce_collection_identity,
+    )
+
+    shown: list[CollectionIdentityState] = []
+
+    def record(_addon: object, identity: object) -> None:
+        shown.append(identity.state)  # type: ignore[attr-defined]
+
+    import ankigta_companion.collection_identity_ui as ui
+
+    original = ui.show_collection_identity_settings
+    ui.show_collection_identity_settings = (  # type: ignore[assignment]
+        lambda addon: record(addon, current[0])
+    )
+    current: list[CollectionIdentityObservation] = []
+    try:
+        for state in CollectionIdentityState:
+            identity = CollectionIdentityObservation(
+                state=state,
+                collection_uuid="11111111-1111-4111-8111-111111111111",
+            )
+            current[:] = [identity]
+            announce_collection_identity(None, identity)
+    finally:
+        ui.show_collection_identity_settings = original  # type: ignore[assignment]
+
+    assert set(shown) == {
+        CollectionIdentityState.COPY_DECISION_REQUIRED,
+        CollectionIdentityState.WRONG_COLLECTION,
+        CollectionIdentityState.ERROR,
+    }
+    assert CollectionIdentityState.BOUND not in shown

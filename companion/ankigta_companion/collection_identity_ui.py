@@ -1,15 +1,35 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from .collection_identity import (
     CollectionCopyDecision,
+    CollectionIdentityObservation,
     CollectionIdentityState,
 )
 
 if TYPE_CHECKING:
     from .lifecycle import CompanionAddon
+
+
+def announce_collection_identity(
+    addon: CompanionAddon | None,
+    identity: CollectionIdentityObservation,
+) -> None:
+    """Speak only when the state needs a person.
+
+    Adopting the first collection is silent, so the states worth a dialog are
+    the three that cannot be answered without one: a copy that has to be told
+    apart from its original, a different collection than the one being studied,
+    and an identity that could not be written down.
+    """
+    if identity.state not in {
+        CollectionIdentityState.COPY_DECISION_REQUIRED,
+        CollectionIdentityState.WRONG_COLLECTION,
+        CollectionIdentityState.ERROR,
+    }:
+        return
+    show_collection_identity_settings(addon)
 
 
 def show_collection_identity_settings(addon: CompanionAddon | None) -> None:
@@ -95,20 +115,3 @@ def show_collection_identity_settings(addon: CompanionAddon | None) -> None:
     )
     if answer is QMessageBox.StandardButton.Yes:
         addon.bind_current_collection(identity.collection_uuid)
-
-
-def register_collection_identity_settings(
-    addon_provider: Callable[[], CompanionAddon | None],
-) -> object:
-    from aqt import mw
-    from aqt.qt import QAction
-
-    action = QAction(
-        "ANKIGTA: Bound Anki Collection…",
-        mw,
-    )
-    action.triggered.connect(
-        lambda _checked=False: show_collection_identity_settings(addon_provider())
-    )
-    mw.form.menuTools.addAction(action)
-    return action

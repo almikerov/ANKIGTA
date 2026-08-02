@@ -99,7 +99,14 @@ class CompanionAddon:
         card_picker: CardPickerService | None = None,
         session_coordinator: SessionCoordinator | None = None,
         study_lifecycle: StudyLifecycle | None = None,
+        announce_identity: Callable[
+            [CollectionIdentityObservation], None
+        ] | None = None,
     ) -> None:
+        # Raised where the state is observed rather than parked behind a menu
+        # item: a collection that needs an answer has to say so when it turns
+        # up, and one that does not needs no button at all.
+        self._announce_identity = announce_identity
         self._main_window = main_window
         self._hooks = hooks
         self._anki_version = anki_version
@@ -210,6 +217,8 @@ class CompanionAddon:
                 ),
             )
         )
+        if identity is not None and self._announce_identity is not None:
+            self._announce_identity(identity)
 
     def _on_profile_will_close(self) -> None:
         if self._study_lifecycle is not None:
