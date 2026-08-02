@@ -51,22 +51,31 @@ def test_pick_entity_resource_and_manual_checklist_are_declared() -> None:
         assert scenario in checklist
 
 
-def test_client_pick_entity_has_modal_raycast_and_exact_cleanup_contract() -> None:
+def test_client_pick_entity_has_modal_aim_and_exact_cleanup_contract() -> None:
+    """The aim is the cursor, and MTA is the one that casts the ray.
+
+    This used to require `processLineOfSight` and `getCameraMatrix`, which
+    aimed down the camera's own axis: usable while standing in the Map Editor
+    and nowhere else. `onClientClick` already casts from the camera through the
+    cursor and hands back what it hit, so a second cast here would be a second
+    answer to a question MTA has answered -- and the two would disagree the
+    moment the cursor left the centre of the screen.
+    """
     pick = source(CLIENT_PICK)
 
     assert 'local PICK_ENTITY_REQUEST_EVENT = "ankigta:pickEntity"' in pick
     assert 'local PICK_ENTITY_RESULT_EVENT = "ankigta:pickEntityResult"' in pick
-    assert "processLineOfSight(" in pick
-    assert "getCameraMatrix()" in pick
+    assert "processLineOfSight(" not in pick, "MTA already cast this ray"
+    assert 'addEventHandler("onClientClick"' in pick
     assert "isElementStreamedIn(element)" in pick
     assert '"object"' in pick and '"vehicle"' in pick and '"ped"' in pick
-    assert 'getElementData(element, "ankigtaEntityId")' in pick
-    assert 'getElementData(element, "me:ID")' in pick
+    assert 'nonEmptyData(element, "ankigtaEntityId")' in pick
+    assert 'nonEmptyData(element, "me:ID")' in pick
     assert "toggleControl(" in pick
     assert "isControlEnabled(" in pick
     assert "showCursor(" in pick
     assert "restoreInputState" in pick
-    assert "processLineOfSight" in function_body(pick, "pickRaycastTarget")
+    assert "clickedElement" in function_body(pick, "targetUnderCursor")
     assert "isElementStreamedIn" in function_body(pick, "isEligibleTarget")
     assert "restoreInputState" in function_body(pick, "finishPickEntity")
     assert 'bindKey("escape", "down"' in pick

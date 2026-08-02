@@ -51,8 +51,15 @@ local function captureInputState()
         previousControls[control] = isControlEnabled(control)
         toggleControl(control, false)
     end
+    -- The cursor *is* the aim. `onClientClick` raycasts from the camera
+    -- through the cursor and hands back what it hit, so the player points at
+    -- the object rather than turning the whole camera onto it -- which is the
+    -- only way this is usable outside the Map Editor, in freeroam.
+    --
+    -- It is also load-bearing: MTA raises `onClientClick` from the cursor
+    -- position, so with the cursor hidden the click never arrived at all.
     previousCursor = isCursorShowing()
-    showCursor(false)
+    showCursor(true)
 end
 
 local function restoreInputState()
@@ -63,6 +70,21 @@ local function restoreInputState()
     showCursor(previousCursor)
 end
 
+local function nonEmptyData(element, key)
+    local value = getElementData(element, key)
+    return type(value) == "string" and value ~= ""
+end
+
+--- May the player point at this, and is it already ours?
+--
+-- `me:ID` is the gate, because it is what the stock Map Editor writes and what
+-- makes an object durable: its identity is in a `.map` file rather than in a
+-- session. An `ankigtaEntityId` on top of that means we have already adopted
+-- it; without one the object is merely *adoptable*, and saying so is the point
+-- -- refusing it was what made a map full of objects show one row.
+--
+-- Objects another resource spawned carry neither, and stay out: nothing would
+-- bring the same object back after a restart to link the card to.
 local function isEligibleTarget(element)
     if not isElement(element) then
         return false, "target_not_an_element"
@@ -74,58 +96,35 @@ local function isEligibleTarget(element)
     if not SUPPORTED_ENTITY_TYPES[entityType] then
         return false, "target_type_not_supported"
     end
-    if not getElementData(element, "ankigtaEntityId")
-        or getElementData(element, "ankigtaEntityId") == ""
-    then
+    if not nonEmptyData(element, "me:ID") then
         return false, "target_not_managed"
     end
-    if not getElementData(element, "me:ID")
-        or getElementData(element, "me:ID") == ""
-    then
-        return false, "target_not_managed"
-    end
-    return true
+    return true, nonEmptyData(element, "ankigtaEntityId") and "adopted"
+        or "adoptable"
 end
 
 function isPickEntityActive()
     return active
 end
 
-local function pickRaycastTarget()
-    local cameraX, cameraY, cameraZ, targetX, targetY, targetZ =
-        getCameraMatrix()
-    if not cameraX or not targetX then
-        return false, "camera_unavailable"
-    end
-
-    local hit, _, _, _, hitElement = processLineOfSight(
-        cameraX,
-        cameraY,
-        cameraZ,
-        targetX,
-        targetY,
-        targetZ,
-        true,
-        true,
-        true,
-        true,
-        true,
-        false,
-        false,
-        false,
-        localPlayer
-    )
-    if not hit or not isElement(hitElement) then
+--- What the player clicked on, or why nothing was taken.
+--
+-- MTA has already done the work: it casts from the camera through the cursor
+-- and hands the hit element to `onClientClick`. Casting again from our own
+-- guess at the aim would be a second answer to a question already answered,
+-- and the two would disagree the moment the cursor left the screen centre.
+local function targetUnderCursor(clickedElement)
+    if not isElement(clickedElement) then
         return false, "target_not_visible"
     end
-    local eligible, reason = isEligibleTarget(hitElement)
+    local eligible, kind = isEligibleTarget(clickedElement)
     if not eligible then
-        return false, reason
+        return false, kind
     end
-    return hitElement
+    return clickedElement, kind
 end
 
-local function finishPickEntity(success, reason, mapId, entityId)
+local function finishPickEntity(success, reason, mapId, entityId, element)
     if not active then
         return
     end
@@ -140,7 +139,10 @@ local function finishPickEntity(success, reason, mapId, entityId)
         reason,
         mapId,
         entityId,
-        purpose
+        purpose,
+        -- Only an object nobody has adopted yet travels as an element: it has
+        -- no identity to be named by until a card gives it one.
+        element or false
     )
 end
 
@@ -152,11 +154,11 @@ function handlePickEntityError(reason)
     finishPickEntity(false, reason or "pick_failed")
 end
 
-local function submitPickEntity()
+local function submitPickEntity(clickedElement)
     if not active or awaitingResponse then
         return
     end
-    local target, reason = pickRaycastTarget()
+    local target, reason = targetUnderCursor(clickedElement)
     if not target then
         handlePickEntityError(reason)
         return
@@ -170,12 +172,16 @@ local function submitPickEntity()
     )
 end
 
-local function clickPickEntity(button, state)
+-- `onClientClick(button, state, screenX, screenY, worldX, worldY, worldZ,
+-- clickedElement)`. The last one is what the cursor was over, or `false`.
+local function clickPickEntity(
+    button, state, _screenX, _screenY, _worldX, _worldY, _worldZ, clickedElement
+)
     if not active or button ~= "left" or state ~= "down" then
         return
     end
     cancelEvent()
-    submitPickEntity()
+    submitPickEntity(clickedElement)
 end
 
 function startPickEntity(mode)
@@ -204,10 +210,12 @@ addEventHandler(PICK_ENTITY_RESULT_EVENT, resourceRoot, function(
     success,
     reason,
     mapId,
-    entityId
+    entityId,
+    _purpose,
+    element
 )
     if success == true then
-        finishPickEntity(true, reason, mapId, entityId)
+        finishPickEntity(true, reason, mapId, entityId, element)
     else
         handlePickEntityError(reason)
     end

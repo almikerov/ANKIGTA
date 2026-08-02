@@ -30,6 +30,7 @@ local LINK_CARD_REQUEST_EVENT = "ankigta:linkCardToEntity"
 local UNLINK_CARD_REQUEST_EVENT = "ankigta:unlinkCardFromEntity"
 local REPLACE_CARD_REQUEST_EVENT = "ankigta:replaceCardForEntity"
 local RELINK_ENTITY_REQUEST_EVENT = "ankigta:relinkEntity"
+local ADOPT_ENTITY_REQUEST_EVENT = "ankigta:adoptEntity"
 local UNDO_REQUEST_EVENT = "ankigta:undo"
 local REDO_REQUEST_EVENT = "ankigta:redo"
 local PICK_ENTITY_START_EVENT = "ankigta:pickEntityStart"
@@ -64,6 +65,10 @@ local notice = false
 -- Set when Pick Entity was started to choose a relink target.
 local relinkSourceMapId = nil
 local relinkSourceEntityId = nil
+-- An object the stock Map Editor placed that ANKIGTA has not adopted yet. It
+-- has no `(mapId, entityId)` to be selected by, so it is held as the element
+-- itself until a card gives it an identity.
+local adoptionTarget = nil
 -- Set where a selection arrives from the world, read and cleared by the next
 -- render. One-shot on purpose: a filter typed *after* the pick is the player's
 -- latest word and must survive.
@@ -461,6 +466,10 @@ local function push()
             mapId = selectedMapId or false,
             entityId = selectedEntityId or false,
             cardId = selectedCard and selectedCard.cardId or false,
+            -- An object waiting to be adopted has no row to point at, so the
+            -- page is told it exists rather than left to infer it from a
+            -- selection that is deliberately empty.
+            adopting = isElement(adoptionTarget) or false,
         },
         history = {
             canUndo = lastSnapshot and lastSnapshot.history
@@ -868,9 +877,24 @@ local function cardIdentity()
 end
 
 function actions.link()
-    local entry = selectedEntry()
     local identity = cardIdentity()
-    if not entry or not identity then
+    if not identity then
+        return
+    end
+    -- An object with no identity yet is adopted by the act of linking: the
+    -- card is what it is for, so the card is what brings it into the store.
+    if isElement(adoptionTarget) then
+        triggerServerEvent(
+            ADOPT_ENTITY_REQUEST_EVENT,
+            resourceRoot,
+            adoptionTarget,
+            identity
+        )
+        adoptionTarget = nil
+        return
+    end
+    local entry = selectedEntry()
+    if not entry then
         return
     end
     triggerServerEvent(
@@ -1079,9 +1103,16 @@ end)
 
 addEvent(PICK_ENTITY_FINISHED_EVENT, false)
 addEventHandler(PICK_ENTITY_FINISHED_EVENT, resourceRoot, function(
-    success, reason, mapId, entityId, mode
+    success, reason, mapId, entityId, mode, element
 )
-    if success == true then
+    if success == true and isElement(element) then
+        -- Placed by the editor, not adopted yet. There is no row to select, so
+        -- the object waits here until a card says what it is for.
+        adoptionTarget = element
+        selectedMapId = nil
+        selectedEntityId = nil
+    elseif success == true then
+        adoptionTarget = nil
         selectedMapId = mapId
         selectedEntityId = entityId
         selectionArrivedFromOutside = true

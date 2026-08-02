@@ -329,7 +329,10 @@
       !entity || !LINK_CHANGEABLE[entity.linkState];
     document.getElementById("relink").disabled =
       !entity || entity.linkState !== "Entity missing";
-    document.getElementById("link").disabled = !entity || !selected.cardId;
+    /* An object picked in the world but not adopted yet has no row to be the
+     * selected entity, and linking is exactly what adopts it. */
+    document.getElementById("link").disabled =
+      (!entity && !selected.adopting) || !selected.cardId;
     document.getElementById("replace").disabled =
       !entity || !selected.cardId || !LINK_CHANGEABLE[entity.linkState];
     document.getElementById("copy-decision").hidden =

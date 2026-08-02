@@ -39,6 +39,7 @@ local REVIEW_RESULT_EVENT = "ankigta:reviewResult"
 local REVIEW_CLOSED_EVENT = "ankigta:reviewClosed"
 local RENDER_ISSUED_EVENT = "ankigta:renderIssued"
 local REVIEW_RETURN_REQUEST_EVENT = "ankigta:returnToCard"
+local ADOPT_ENTITY_REQUEST_EVENT = "ankigta:adoptEntity"
 local PICK_ENTITY_REQUEST_EVENT = "ankigta:pickEntity"
 local PICK_ENTITY_RESULT_EVENT = "ankigta:pickEntityResult"
 local RECOVERY_STATE_EVENT = "ankigta:databaseRecovery"
@@ -436,13 +437,28 @@ function validatePickEntity(player, entityElement, mode)
     end
     local persistentId = getElementData(entityElement, "ankigtaEntityId")
     local editorId = getElementData(entityElement, "me:ID")
-    if type(persistentId) ~= "string" or persistentId == ""
-        or type(editorId) ~= "string" or editorId == ""
-    then
+    -- `me:ID` is the gate: it is what the stock Map Editor writes, and it is
+    -- what makes the object durable enough to hang a card on. An object no
+    -- editor placed has nothing to bring it back after a restart.
+    if type(editorId) ~= "string" or editorId == "" then
         return false, "entity_not_managed"
     end
     if isElementStreamedIn and not isElementStreamedIn(entityElement) then
         return false, "entity_not_streamed"
+    end
+    -- Placed by the editor but never adopted: offered as itself rather than
+    -- refused. Adoption is what linking a card does next, and refusing here is
+    -- what made a map full of editor objects show a single row.
+    if type(persistentId) ~= "string" or persistentId == "" then
+        if mode == "relink" then
+            return false, "relink_target_not_adopted"
+        end
+        return {
+            adoptable = true,
+            element = entityElement,
+            entityType = entityType,
+            purpose = "pick",
+        }
     end
 
     local row, readError =
@@ -1224,11 +1240,58 @@ addEventHandler(PICK_ENTITY_REQUEST_EVENT, resourceRoot, function(
         PICK_ENTITY_RESULT_EVENT,
         resourceRoot,
         true,
-        "selected",
-        target.mapId,
-        target.entityId,
-        target.purpose
+        target.adoptable and "adoptable" or "selected",
+        target.mapId or false,
+        target.entityId or false,
+        target.purpose,
+        -- The element itself, for the one case where there is no identity yet
+        -- to name it by. The panel holds it until a card says what it is for.
+        target.element or false
     )
+end)
+
+--- Adopt an object the stock Map Editor placed, by linking a card to it.
+--
+-- The card is the reason the object becomes a Map Entity, so the two arrive
+-- together rather than as an empty adoption followed by a link that may never
+-- come. The identity is durable only once the map is saved, which is what
+-- `Pending Map Save` says on the row and why it is not called linked yet.
+addEvent(ADOPT_ENTITY_REQUEST_EVENT, true)
+addEventHandler(ADOPT_ENTITY_REQUEST_EVENT, resourceRoot, function(
+    entityElement,
+    cardIdentity
+)
+    if not client or source ~= resourceRoot then
+        return
+    end
+    local target, reason = validatePickEntity(client, entityElement, "pick")
+    if not target or not target.adoptable then
+        triggerClientEvent(
+            client,
+            PENDING_NOTICE_EVENT,
+            resourceRoot,
+            "notice.adoptFailed",
+            reason or "entity_already_adopted"
+        )
+        return
+    end
+    local adopted, adoptError = prepareObjectPendingMapSave(
+        client,
+        entityElement,
+        type(cardIdentity) == "table" and cardIdentity.collectionUuid or nil,
+        type(cardIdentity) == "table" and cardIdentity.cardId or nil
+    )
+    if not adopted then
+        triggerClientEvent(
+            client,
+            PENDING_NOTICE_EVENT,
+            resourceRoot,
+            "notice.adoptFailed",
+            adoptError
+        )
+        return
+    end
+    sendF7Snapshot(client)
 end)
 
 addEvent(RECOVERY_REQUEST_EVENT, true)
