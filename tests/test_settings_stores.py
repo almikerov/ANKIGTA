@@ -938,8 +938,16 @@ def test_the_client_is_told_the_settings_the_server_owns(tmp_path: Any) -> None:
     for script in manifest_scripts("shared", "server"):
         server.load(script)
     publish(server, port=32145)
-    server.add_study_player()
+    player = server.add_study_player()
     server.trigger("onResourceStart")
+    # The client asks, rather than the server pushing at its own start. On a
+    # restart this side comes up first, and a client whose scripts have not
+    # started has registered no events, so a push then is simply lost.
+    server.trigger(
+        "ankigta:requestAuthorization",
+        server.eval("resourceRoot"),
+        client=player,
+    )
     payload = settings_payload(server)
     server.close()
 

@@ -148,8 +148,13 @@ def test_runtime_lookup_requires_one_persisted_match_and_loaded_resource_owner()
     lookup = function_body(store, "Store.findMapEntityByRuntimeElement")
 
     assert "Store.listMapEntities()" in lookup
-    assert "entity_id == persistentId" in lookup
-    assert "entity_id == editorId" in lookup
+    # Three durable names, not two. `me:ID` is only written while the stock
+    # editor has the map open, so an object in a map that is merely *loaded*
+    # is known by the `id` its `.map` file gave it.
+    assert "persistentId" in lookup
+    assert "editorId" in lookup
+    assert "getElementID(entityElement)" in lookup
+    assert "names[row.entity_id]" in lookup
     assert "map_entity_ambiguous" in lookup
     assert "getResourceFromName" in lookup
     assert "getResourceRootElement" in lookup

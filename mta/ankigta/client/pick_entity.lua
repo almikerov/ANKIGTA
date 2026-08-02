@@ -77,14 +77,17 @@ end
 
 --- May the player point at this, and is it already ours?
 --
--- `me:ID` is the gate, because it is what the stock Map Editor writes and what
--- makes an object durable: its identity is in a `.map` file rather than in a
--- session. An `ankigtaEntityId` on top of that means we have already adopted
--- it; without one the object is merely *adoptable*, and saying so is the point
--- -- refusing it was what made a map full of objects show one row.
+-- The gate is a durable name, and there are two kinds of one. `me:ID` is what
+-- the stock Map Editor writes, but only while the map is open in it. The `id`
+-- attribute of a `.map` file -- `getElementID` -- is there whenever the map is
+-- loaded at all, which is the case for a player merely spawned in freeroam.
+-- Requiring the editor's one was what made a map full of objects offer none.
 --
--- Objects another resource spawned carry neither, and stay out: nothing would
--- bring the same object back after a restart to link the card to.
+-- An `ankigtaEntityId` on top means we have already adopted it; without one
+-- the object is merely *adoptable*, and saying so is the point.
+--
+-- An object a script spawned has neither name and stays out: nothing would
+-- find the same object again after a restart for the card to still mean.
 local function isEligibleTarget(element)
     if not isElement(element) then
         return false, "target_not_an_element"
@@ -96,7 +99,10 @@ local function isEligibleTarget(element)
     if not SUPPORTED_ENTITY_TYPES[entityType] then
         return false, "target_type_not_supported"
     end
-    if not nonEmptyData(element, "me:ID") then
+    local mapFileId = getElementID(element)
+    local hasDurableName = nonEmptyData(element, "me:ID")
+        or (type(mapFileId) == "string" and mapFileId ~= "")
+    if not hasDurableName then
         return false, "target_not_managed"
     end
     return true, nonEmptyData(element, "ankigtaEntityId") and "adopted"

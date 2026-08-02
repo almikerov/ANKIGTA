@@ -1135,6 +1135,73 @@ function Store.createMapEntityCopy(
     })
 end
 
+--- Take in an object that already has a durable name of its own.
+--
+-- Nothing is written into anybody's `.map` file. An element loaded from one
+-- carries the file's `id` attribute, which is exactly the durable identity the
+-- store needs, so adoption is only a matter of writing down what the object
+-- already is: which resource owns it, what it is called there, and where it
+-- was authored. `me:ID` is not required and cannot be -- the stock Map Editor
+-- writes that only while the map is open in it, and a player in freeroam is
+-- not in it.
+function Store.adoptMapEntity(value)
+    if not Store.ready then
+        return false, Store.errorCategory or "storage_unavailable"
+    end
+    if type(value) ~= "table"
+        or type(value.mapId) ~= "string" or value.mapId == ""
+        or type(value.entityId) ~= "string" or value.entityId == ""
+        or type(value.resourceName) ~= "string" or value.resourceName == ""
+    then
+        return false, "invalid_map_entity"
+    end
+    if value.entityType ~= "object"
+        and value.entityType ~= "vehicle"
+        and value.entityType ~= "ped"
+    then
+        return false, "target_type_not_supported"
+    end
+    local existing = Store.getMapEntity(value.mapId, value.entityId)
+    if existing then
+        return existing
+    end
+    local written, writeError = transaction(Store.connection, {
+        {
+            "INSERT OR IGNORE INTO maps (map_id, resource_name, map_name)"
+                .. " VALUES (?, ?, ?)",
+            {value.mapId, value.resourceName, value.mapName or value.mapId},
+        },
+        {
+            [[
+                INSERT INTO map_entities (
+                    map_id, entity_id, entity_type, model,
+                    authored_x, authored_y, authored_z,
+                    rotation_x, rotation_y, rotation_z,
+                    interior, dimension
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ]],
+            {
+                value.mapId,
+                value.entityId,
+                value.entityType,
+                math.floor(tonumber(value.model) or 0),
+                tonumber(value.x) or 0,
+                tonumber(value.y) or 0,
+                tonumber(value.z) or 0,
+                tonumber(value.rotationX) or 0,
+                tonumber(value.rotationY) or 0,
+                tonumber(value.rotationZ) or 0,
+                math.floor(tonumber(value.interior) or 0),
+                math.floor(tonumber(value.dimension) or 0),
+            },
+        },
+    })
+    if not written then
+        return false, writeError
+    end
+    return Store.getMapEntity(value.mapId, value.entityId)
+end
+
 function Store.updateMapLocator(mapId, mapLocator)
     if not Store.ready
         or type(mapId) ~= "string"
@@ -2137,10 +2204,20 @@ function Store.findMapEntityByRuntimeElement(entityElement)
     local entityType = getElementType(entityElement)
     local persistentId = getElementData(entityElement, "ankigtaEntityId")
     local editorId = getElementData(entityElement, "me:ID")
-    if type(persistentId) ~= "string" or persistentId == "" then
-        return false, "entity_not_managed"
+    -- The `id` a `.map` file gave the element. MTA fills it when it loads the
+    -- map, so it is there for a player who is merely spawned in the world --
+    -- where `me:ID`, which the stock editor writes only while editing, is not.
+    local mapFileId = getElementID(entityElement)
+    if type(mapFileId) ~= "string" then
+        mapFileId = ""
     end
-    if type(editorId) ~= "string" or editorId == "" then
+    local names = {}
+    for _, name in ipairs({persistentId, editorId, mapFileId}) do
+        if type(name) == "string" and name ~= "" then
+            names[name] = true
+        end
+    end
+    if not next(names) then
         return false, "entity_not_managed"
     end
 
@@ -2150,9 +2227,7 @@ function Store.findMapEntityByRuntimeElement(entityElement)
     end
     local matches = {}
     for _, row in ipairs(rows) do
-        if row.entity_type == entityType
-            and (row.entity_id == persistentId or row.entity_id == editorId)
-        then
+        if row.entity_type == entityType and names[row.entity_id] then
             table.insert(matches, row)
         end
     end

@@ -85,11 +85,19 @@ def sent(sandbox: MtaSandbox, name: str) -> list[Any]:
     ]
 
 
-def test_an_editor_object_nobody_adopted_is_offered_rather_than_refused(
+def test_an_object_from_a_loaded_map_is_offered_although_no_editor_is_open(
     client: MtaSandbox,
 ) -> None:
-    """The rule that made a map full of objects show one row."""
-    fresh = client.add_world_element("object", **{"me:ID": "editor-7"})
+    """The real case: spawned in freeroam, on a map somebody built earlier.
+
+    `me:ID` is written by the stock Map Editor and only while the map is open
+    in it. Requiring it meant a player merely walking around a map full of
+    objects was offered none of them -- the gate is the `id` the `.map` file
+    gave the element, which is there whenever the map is loaded at all.
+    """
+    fresh = client.add_world_element(
+        "object", map_id="object (sw_hedstones) (1)"
+    )
 
     act(client, "pickEntity", {"mode": "pick"})
     click_on(client, fresh)
@@ -99,9 +107,9 @@ def test_an_editor_object_nobody_adopted_is_offered_rather_than_refused(
         "an object the stock editor placed was refused before the server was "
         "even asked about it"
     )
-    # Compared by what the editor wrote on it: two lupa wrappers around one
+    # Compared by the name the map file gave it: two lupa wrappers around one
     # Lua table are not the same Python object.
-    assert asked[-1].args[0]["me:ID"] == "editor-7"
+    assert asked[-1].args[0]["__id"] == "object (sw_hedstones) (1)"
 
 
 def test_an_object_no_editor_placed_is_still_refused(client: MtaSandbox) -> None:

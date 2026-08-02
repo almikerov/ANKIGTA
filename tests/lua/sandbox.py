@@ -930,6 +930,9 @@ class MtaSandbox:
         )
         g.resource = resource
         g.resourceRoot = resource_root
+        # Kept for `add_world_element`, which parents what it builds here
+        # so the ownership walk finds a resource that owns it.
+        self._resource_root = resource_root
         g.root = self.lua.table_from({"type": "root"})
         g.getResourceName = lambda _resource=None: "ankigta"
         g.getThisResource = lambda: resource
@@ -1199,6 +1202,8 @@ class MtaSandbox:
         interior: int = 0,
         dimension: int = 0,
         streamed: bool = True,
+        map_id: str = "",
+        model: int = 1337,
         **element_data: Any,
     ) -> Any:
         """A Map Editor-created element the client can find and read.
@@ -1210,10 +1215,17 @@ class MtaSandbox:
             {
                 "__element": True,
                 "__streamed": streamed,
+                # The `id` a `.map` file gave it, which `getElementID` returns.
+                "__id": str(map_id or ""),
+                "__parent": getattr(self, "_resource_root", None) or False,
                 "type": kind,
                 "x": float(x),
                 "y": float(y),
                 "z": float(z),
+                "rotX": 0,
+                "rotY": 0,
+                "rotZ": 0,
+                "model": int(model),
                 "interior": int(interior),
                 "dimension": int(dimension),
             }
@@ -1490,6 +1502,20 @@ class MtaSandbox:
             if lua_type(e) == "table"
             else (self.player_dimension if e == LOCAL_PLAYER else 0)
         )
+        g.getElementModel = lambda e=None, *_r: (
+            e["model"] if lua_type(e) == "table" else 0
+        ) or 0
+        g.getElementRotation = lambda e=None, *_r: (
+            (e["rotX"] or 0, e["rotY"] or 0, e["rotZ"] or 0)
+            if lua_type(e) == "table"
+            else (0, 0, 0)
+        )
+        # Every element the tests build belongs to this resource, which is what
+        # the ownership walk in `findMapEntityByRuntimeElement` checks.
+        g.getResources = lambda: self.lua.table_from([resource])
+        g.setElementData = lambda e, key, value, *_r: (
+            e.__setitem__(str(key), value) if lua_type(e) == "table" else None
+        ) or True
         g.setElementPosition = set_element_position
         g.setElementInterior = set_element_interior
         g.setElementDimension = set_element_dimension
@@ -1515,6 +1541,16 @@ class MtaSandbox:
         g.getElementData = lambda element, key, *_rest: (
             element[str(key)] if lua_type(element) == "table" else False
         )
+        # The `id` attribute a `.map` file gave the element. MTA fills it when
+        # it loads the map, and it is the identity that survives a restart for
+        # an object nobody is editing -- unlike `me:ID`, which the stock Map
+        # Editor only writes while the map is open in it.
+        g.getElementID = lambda element, *_rest: (
+            element["__id"] if lua_type(element) == "table" else False
+        ) or ""
+        g.getElementParent = lambda element, *_rest: (
+            element["__parent"] if lua_type(element) == "table" else False
+        ) or False
         def create_blip(x: float, y: float, z: float, *_rest: Any) -> Any:
             blip = self.lua.table_from(
                 {"__element": True, "type": "blip", "x": x, "y": y, "z": z}

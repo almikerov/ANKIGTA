@@ -63,6 +63,56 @@ local function denial(category)
     }
 end
 
+--- Which running resource loaded this element, and under what name.
+--
+-- The exact inverse of the walk `Store.findMapEntityByRuntimeElement` does to
+-- check ownership, so the pair that goes in is the pair that comes back out.
+-- An element no resource owns has nothing to be looked up by after a restart.
+local function owningResource(element)
+    for _, resource in ipairs(getResources() or {}) do
+        local root = getResourceRootElement(resource)
+        local ancestor = element
+        while isElement(ancestor) do
+            if ancestor == root then
+                return getResourceName(resource)
+            end
+            ancestor = getElementParent(ancestor)
+        end
+    end
+    return nil
+end
+
+--- Everything the store needs to write an object down, read off the object.
+local function adoptionRecord(element)
+    local entityId = getElementID(element)
+    if type(entityId) ~= "string" or entityId == "" then
+        -- No `id` in any `.map` file, so nothing would find it again.
+        return false, "entity_has_no_durable_id"
+    end
+    local resourceName = owningResource(element)
+    if not resourceName then
+        return false, "entity_has_no_owning_resource"
+    end
+    local x, y, z = getElementPosition(element)
+    local rotationX, rotationY, rotationZ = getElementRotation(element)
+    return {
+        -- One map per resource: a `.map` names its elements uniquely, and the
+        -- resource is what the ownership walk can check.
+        mapId = resourceName,
+        mapName = resourceName,
+        resourceName = resourceName,
+        entityId = entityId,
+        entityType = getElementType(element),
+        model = getElementModel(element),
+        x = x, y = y, z = z,
+        rotationX = rotationX or 0,
+        rotationY = rotationY or 0,
+        rotationZ = rotationZ or 0,
+        interior = getElementInterior(element) or 0,
+        dimension = getElementDimension(element) or 0,
+    }
+end
+
 local function playerAuthorization(player)
     if not isElement(player) or getElementType(player) ~= "player" then
         return false, denial("authentication_required")
@@ -436,11 +486,17 @@ function validatePickEntity(player, entityElement, mode)
         return false, "entity_not_managed"
     end
     local persistentId = getElementData(entityElement, "ankigtaEntityId")
+    -- The gate is a durable name, and there are two kinds. `me:ID` is what the
+    -- stock Map Editor writes, but only while the map is open in it. The `id`
+    -- attribute of a `.map` file is there whenever the map is loaded at all,
+    -- which is the case for a player merely spawned in the world -- and that
+    -- is where this is used. Requiring the editor's one is what made a map
+    -- full of objects offer none of them.
     local editorId = getElementData(entityElement, "me:ID")
-    -- `me:ID` is the gate: it is what the stock Map Editor writes, and it is
-    -- what makes the object durable enough to hang a card on. An object no
-    -- editor placed has nothing to bring it back after a restart.
-    if type(editorId) ~= "string" or editorId == "" then
+    local mapFileId = getElementID(entityElement)
+    local hasDurableName = (type(editorId) == "string" and editorId ~= "")
+        or (type(mapFileId) == "string" and mapFileId ~= "")
+    if not hasDurableName then
         return false, "entity_not_managed"
     end
     if isElementStreamedIn and not isElementStreamedIn(entityElement) then
@@ -1254,8 +1310,21 @@ end)
 --
 -- The card is the reason the object becomes a Map Entity, so the two arrive
 -- together rather than as an empty adoption followed by a link that may never
--- come. The identity is durable only once the map is saved, which is what
--- `Pending Map Save` says on the row and why it is not called linked yet.
+-- come.
+--
+-- Nothing is written into anybody's `.map`. The object already has a durable
+-- name there -- the `id` attribute MTA hands back as `getElementID` -- so the
+-- store only has to write down what the object already is.
+local function failAdoption(player, reason)
+    triggerClientEvent(
+        player,
+        PENDING_NOTICE_EVENT,
+        resourceRoot,
+        "notice.adoptFailed",
+        reason
+    )
+end
+
 addEvent(ADOPT_ENTITY_REQUEST_EVENT, true)
 addEventHandler(ADOPT_ENTITY_REQUEST_EVENT, resourceRoot, function(
     entityElement,
@@ -1265,32 +1334,35 @@ addEventHandler(ADOPT_ENTITY_REQUEST_EVENT, resourceRoot, function(
         return
     end
     local target, reason = validatePickEntity(client, entityElement, "pick")
-    if not target or not target.adoptable then
-        triggerClientEvent(
-            client,
-            PENDING_NOTICE_EVENT,
-            resourceRoot,
-            "notice.adoptFailed",
-            reason or "entity_already_adopted"
-        )
-        return
+    if not target then
+        return failAdoption(client, reason)
     end
-    local adopted, adoptError = prepareObjectPendingMapSave(
+    if not target.adoptable then
+        return failAdoption(client, "entity_already_adopted")
+    end
+    local record, recordError = adoptionRecord(entityElement)
+    if not record then
+        return failAdoption(client, recordError)
+    end
+    local row, adoptError = ANKIGTA.Store.adoptMapEntity(record)
+    if not row then
+        return failAdoption(client, adoptError)
+    end
+    -- Remembered on the element so the next pick resolves without the walk,
+    -- and so a second Link on the same object is recognised as a replacement
+    -- rather than adopting it twice.
+    setElementData(entityElement, "ankigtaEntityId", record.entityId)
+
+    local linked, linkError = linkCardToEntity(
         client,
-        entityElement,
-        type(cardIdentity) == "table" and cardIdentity.collectionUuid or nil,
-        type(cardIdentity) == "table" and cardIdentity.cardId or nil
+        record.mapId,
+        record.entityId,
+        cardIdentity
     )
-    if not adopted then
-        triggerClientEvent(
-            client,
-            PENDING_NOTICE_EVENT,
-            resourceRoot,
-            "notice.adoptFailed",
-            adoptError
-        )
-        return
+    if not linked then
+        return failAdoption(client, linkError)
     end
+    invalidateStudyDependents(client, false, cardIdentity, "link")
     sendF7Snapshot(client)
 end)
 
@@ -1358,9 +1430,13 @@ addEventHandler("onResourceStart", resourceRoot, function()
     ANKIGTA.MapIdentity.recoverPersistedCollisions()
     ANKIGTA.MapIdentity.refreshEntityPresence()
 
-    for _, player in ipairs(getElementsByType("player")) do
-        sendAuthorization(player)
-    end
+    -- Deliberately nothing is pushed to players here. On a restart this side
+    -- comes up first, and a client that has not started its own scripts yet
+    -- has registered no events, so every push lands as "event is not added
+    -- clientside" and is simply lost. Each client asks for what it needs from
+    -- its own `onClientResourceStart` -- authorization, settings and the
+    -- recovery state all have a request -- and asking is the half that can
+    -- know it is ready.
 end)
 
 -- Review Mode ---------------------------------------------------------------

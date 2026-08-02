@@ -46,6 +46,12 @@ local PAGE_URL = "http://mta/local/client/panel/index.html"
 local authorized = false
 local guiBrowser = nil
 local browser = nil
+-- Where the cursor and the panel were when the drag began, declared up here
+-- because `closePanel` clears it. Declared below its first use, `dragFrom = nil`
+-- in `closePanel` compiled as a *global* assignment and left the real one set:
+-- the panel then jumped by the old delta the next time it opened with the
+-- button held, which is the panel drifting on its own.
+local dragFrom = nil
 local pageReady = false
 local cursorOwned = false
 local cursorWasShowing = false
@@ -554,11 +560,9 @@ local function openPanel()
     end
 end
 
--- Where the cursor and the panel were when the drag began. The page reports
--- only that a drag started: the cursor is MTA's to report, and a mouse button
--- released outside the page never reaches it, so the loop watches the button.
-local dragFrom = nil
-
+-- The page reports only that a drag started: the cursor is MTA's to report, and
+-- a mouse button released outside the page never reaches it, so the loop
+-- watches the button. `dragFrom` itself is declared at the top of this file.
 local function stopDrag()
     dragFrom = nil
 end

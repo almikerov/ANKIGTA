@@ -44,11 +44,29 @@ local function statusMessage(status)
     )
 end
 
+-- What the chat was last told. A status is published whenever anyone asks for
+-- one -- and the panel asks every time it opens -- so announcing each report
+-- put "Companion: connected" in the chat after almost every action. The line
+-- is worth reading when it changes and is noise when it does not, and the
+-- panel already shows the standing state at the top.
+local announced = nil
+
+local function announcement(status)
+    return tostring(status.state or "")
+        .. "/" .. tostring(status.category or "")
+        .. "/" .. tostring(status.warningCategory or "")
+end
+
 addEvent(STATUS_EVENT, true)
 addEventHandler(STATUS_EVENT, resourceRoot, function(status)
     if source ~= resourceRoot or type(status) ~= "table" then
         return
     end
+    local current = announcement(status)
+    if current == announced then
+        return
+    end
+    announced = current
     outputChatBox(statusMessage(status), 196, 224, 255)
     local warningCategory = tostring(status.warningCategory or "")
     if warningCategory ~= ""
