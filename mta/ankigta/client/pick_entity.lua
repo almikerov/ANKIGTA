@@ -190,6 +190,11 @@ function startPickEntity(mode)
     return true
 end
 
+-- Local only: the panel asks for this on the same side. Registered rather than
+-- merely handled, because `triggerEvent` on a name MTA does not know returns
+-- false and calls nothing -- silently. Without this the panel closed itself to
+-- get out of the way and then nothing happened at all.
+addEvent(PICK_ENTITY_START_EVENT, false)
 addEventHandler(PICK_ENTITY_START_EVENT, resourceRoot, function(mode)
     startPickEntity(mode)
 end)

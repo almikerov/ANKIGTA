@@ -422,6 +422,8 @@ class MtaSandbox:
         self.drawn_text: list[str] = []
         #: Every script Lua asked the panel page to run, in order.
         self.browser_javascript: list[str] = []
+        #: Names passed to `addEvent`. MTA calls no handler for anything else.
+        self._added_events: set[str] = set()
         #: Cursor position as MTA reports it: a fraction of the screen.
         self.cursor_position: tuple[float, float] = (0.5, 0.5)
         #: Which keys are held, for the loops that watch a button rather than
@@ -851,7 +853,8 @@ class MtaSandbox:
         g.isTimer = is_timer
 
         # --- events ---------------------------------------------------------
-        def add_event(_name: str, _remote: Any = None) -> bool:
+        def add_event(name: str, _remote: Any = None) -> bool:
+            self._added_events.add(str(name))
             return True
 
         def add_event_handler(
@@ -881,6 +884,15 @@ class MtaSandbox:
             self.recorder.local_events.append(
                 TriggeredEvent(str(name), source, tuple(args))
             )
+            # `CStaticFunctionDefinitions::TriggerEvent` is
+            # `if (m_pEvents->Exists(szName))` and nothing else: a name nobody
+            # passed to `addEvent` calls no handler and returns false, without
+            # a word in the log. Handlers alone are not registration, and a
+            # double that dispatches on a handler is how `pickEntityStart`
+            # shipped handled-but-unregistered -- the button closed the panel
+            # and then did nothing.
+            if not self._is_registered_event(str(name)):
+                return False
             for handler in self._handlers.get(str(name), []):
                 self._dispatch(handler, source, args)
             return True
@@ -1856,6 +1868,15 @@ class MtaSandbox:
 
     #: The call `push` writes, with the state as its one captured group.
     _PANEL_PUSH = re.compile(r"ANKIGTA\.receive\((.*)\);\s*$", re.S)
+
+    def _is_registered_event(self, name: str) -> bool:
+        """Would MTA's event registry know this name?
+
+        Two ways in: the engine registers its own, which are the `on...`
+        family, and a script registers the rest with `addEvent`. Anything else
+        is a name nobody declared, and MTA quietly calls nothing.
+        """
+        return name.startswith("on") or name in self._added_events
 
     def pushed_panel_states(self) -> list[dict[str, Any]]:
         """Every whole state Lua pushed into the panel page, in order.
