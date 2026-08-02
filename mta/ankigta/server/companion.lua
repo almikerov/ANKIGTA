@@ -1,5 +1,6 @@
 ANKIGTA = ANKIGTA or {}
 
+local STATUS_REQUEST_EVENT = "ankigta:requestCompanionStatus"
 local PROTOCOL_NAME = "ankigta-control"
 local PROTOCOL_VERSION = 1
 local HEALTH_PATH = "/v1/health"
@@ -1834,6 +1835,16 @@ addEventHandler("onPlayerLogin", root, function()
     setTimer(function()
         presentStatus(player)
     end, 100, 1)
+end)
+
+-- Asked by a surface that has just opened. Nothing is re-measured: this hands
+-- back the status already held, because the alternative is a panel guessing
+-- from silence.
+addEvent(STATUS_REQUEST_EVENT, true)
+addEventHandler(STATUS_REQUEST_EVENT, resourceRoot, function()
+    if client and source == resourceRoot then
+        presentStatus(client)
+    end
 end)
 
 function requestCompanionHealth(_port, _requestId, player)

@@ -416,3 +416,20 @@ def test_every_key_the_page_asks_for_exists_in_english() -> None:
     app = panel_file("app.js")
     for prefix in re.findall(r'"([a-z][a-zA-Z.]*\.)" \+', app):
         assert any(key.startswith(prefix) for key in known), prefix
+
+
+def test_opening_the_panel_asks_for_the_status_it_has_not_been_told(
+    client: MtaSandbox,
+) -> None:
+    """A stable connection sends nothing, and silence is not disconnection.
+
+    The gateway publishes a status when it changes and when a player logs in.
+    A panel opened at any other moment has never been told anything, and
+    treating that as `disconnected` showed the connection gate over a healthy
+    link — which reads exactly like the connection dropping again.
+    """
+    authorize(client)
+
+    press_f7(client)
+
+    assert server_events(client, "ankigta:requestCompanionStatus")

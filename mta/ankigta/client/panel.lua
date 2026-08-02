@@ -20,6 +20,7 @@ local AUTHORIZATION_REQUEST_EVENT = "ankigta:requestAuthorization"
 local CONNECT_EVENT = "ankigta:connectCompanion"
 local SETTINGS_UPDATE_EVENT = "ankigta:updateConnectionSettings"
 local START_STUDY_REQUEST_EVENT = "ankigta:startStudy"
+local STATUS_REQUEST_EVENT = "ankigta:requestCompanionStatus"
 local PAGE_URL = "http://mta/local/client/panel/index.html"
 
 local authorized = false
@@ -249,7 +250,14 @@ function togglePanel()
         return
     end
     openPanel()
+    if not isPanelOpen() then
+        return
+    end
     triggerServerEvent(F7_REQUEST_EVENT, resourceRoot)
+    -- The gateway publishes a status when it changes and when a player logs
+    -- in. A panel opened at any other moment has been told nothing, and
+    -- treating silence as disconnection showed the gate over a healthy link.
+    triggerServerEvent(STATUS_REQUEST_EVENT, resourceRoot)
 end
 
 bindKey("F7", "down", togglePanel)
