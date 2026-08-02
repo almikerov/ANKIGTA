@@ -166,15 +166,7 @@ def open_panel(sandbox: MtaSandbox) -> None:
 
 
 def pushed_state(sandbox: MtaSandbox) -> dict[str, Any]:
-    for code in reversed(sandbox.browser_javascript):
-        start, end = code.find("("), code.rfind(")")
-        if start == -1 or end == -1:
-            continue
-        try:
-            return dict(json.loads(code[start + 1 : end]))
-        except json.JSONDecodeError:
-            continue
-    raise AssertionError("the panel pushed no state")
+    return sandbox.pushed_panel_state()
 
 
 def control(sandbox: MtaSandbox, key: str) -> Any:

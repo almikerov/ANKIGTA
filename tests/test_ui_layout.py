@@ -100,15 +100,7 @@ def set_setting_action(sandbox: MtaSandbox, action: str, payload: Any) -> None:
 
 
 def pushed_section(sandbox: MtaSandbox) -> str:
-    for code in reversed(sandbox.browser_javascript):
-        start, end = code.find("("), code.rfind(")")
-        if start == -1 or end == -1:
-            continue
-        try:
-            return str(json.loads(code[start + 1 : end])["section"])
-        except (json.JSONDecodeError, KeyError):
-            continue
-    raise AssertionError("the panel pushed no state")
+    return str(sandbox.pushed_panel_state()["section"])
 
 
 @pytest.fixture
@@ -246,14 +238,7 @@ def set_setting(sandbox: MtaSandbox, key: str, value: Any) -> None:
 
 
 def settings_row(sandbox: MtaSandbox, key: str) -> Any:
-    for code in reversed(sandbox.browser_javascript):
-        start, end = code.find("("), code.rfind(")")
-        if start == -1 or end == -1:
-            continue
-        try:
-            state = json.loads(code[start + 1 : end])
-        except json.JSONDecodeError:
-            continue
+    for state in reversed(sandbox.pushed_panel_states()):
         for row in state.get("settings", {}).get("rows", []):
             if row["key"] == key:
                 return row

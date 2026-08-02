@@ -110,17 +110,7 @@ def test_every_script_in_the_manifest_is_covered_by_the_guard() -> None:
 
 def panel_state(sandbox: MtaSandbox) -> dict[str, Any]:
     """The last whole state Lua pushed into the page."""
-    import json
-
-    for code in reversed(sandbox.browser_javascript):
-        first, last = code.find("("), code.rfind(")")
-        if first == -1 or last == -1:
-            continue
-        try:
-            return dict(json.loads(code[first + 1 : last]))
-        except json.JSONDecodeError:
-            continue
-    raise AssertionError("Lua never pushed a state into the page")
+    return sandbox.pushed_panel_state()
 
 
 def open_panel_with_entities(sandbox: MtaSandbox) -> None:
@@ -563,18 +553,10 @@ def manifest_client_scripts() -> list[str]:
 
 def study_status_reaches_the_panel(sandbox: MtaSandbox, expected: str) -> bool:
     """The panel is a page, so its language arrives as a pushed state."""
-    import json
-
-    for code in reversed(sandbox.browser_javascript):
-        start, end = code.find("("), code.rfind(")")
-        if start == -1 or end == -1:
-            continue
-        try:
-            state = json.loads(code[start + 1 : end])
-        except json.JSONDecodeError:
-            continue
-        return state["locale"]["connection.connect"] == expected
-    return False
+    states = sandbox.pushed_panel_states()
+    if not states:
+        return False
+    return bool(states[-1]["locale"]["connection.connect"] == expected)
 
 
 def test_the_language_setting_moves_the_whole_interface_with_no_restart() -> None:

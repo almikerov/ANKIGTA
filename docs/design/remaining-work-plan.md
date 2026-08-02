@@ -75,11 +75,24 @@ prompt above points at the docs:
   and confirm a test fails. Two tests written during ticket 16 passed under
   mutation until they were strengthened.
 - **Make test doubles match the producer's real shape.** This has now caused
-  two shipped bugs in a row: ticket 25 iterated vehicle occupants with `ipairs`
-  because the stub returned a dense 1-based table where MTA returns a sparse
-  seat-keyed one, and ticket 23 read camelCase fields where `Store` hands back
-  raw snake_case SQLite rows. Both looked green. Before writing a double, read
-  what actually produces that value.
+  three shipped bugs in a row: ticket 25 iterated vehicle occupants with
+  `ipairs` because the stub returned a dense 1-based table where MTA returns a
+  sparse seat-keyed one; ticket 23 read camelCase fields where `Store` hands
+  back raw snake_case SQLite rows; and ticket 32 pushed `[state]` into a page
+  reading `state`, because the `toJSON` double returned the bare object where
+  MTA serialises its *argument list* and wraps. All three looked green. Before
+  writing a double, read what actually produces that value.
+
+  The third one shipped a panel that opened blank — every label rendered as
+  its own key and every section stayed hidden — with 1142 tests passing.
+  Two things let it through, and both are worth naming. The double was
+  *asymmetric with itself*: `toJSON` did not wrap and `fromJSON` did not
+  unwrap, so round-trips through storage agreed with each other and with
+  nothing else. And **seven** tests had each hand-rolled their own
+  `code.find("(")` parser to read the pushed state back, so not one of them
+  could tell the two shapes apart. A double that lies is worse the more places
+  read it by hand: the decoder now lives on `MtaSandbox` alone, and it asserts
+  the shape rather than shrugging at one it does not recognise.
 - **Never claim coverage you do not have.** Where a criterion can only be
   observed by a human, mark it `[~]` with the reason and write the checklist.
 - **`fetchRemote` callback arguments must be a pure array table.** MTA forwards
