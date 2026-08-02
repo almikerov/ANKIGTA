@@ -29,7 +29,7 @@ from tests.lua import shipped_schemas
 from tests.lua.shipped_schemas import SHIPPED_VERSIONS, rows
 
 
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 
 def server(directory: Path) -> MtaSandbox:
@@ -337,7 +337,7 @@ def test_a_version_below_the_lowest_shipped_one_is_refused_not_guessed(
 ) -> None:
     """An unknown schema is a state to report, never one to improvise on."""
     database = workspace / "ankigta.sqlite"
-    shipped_schemas.build(database, "v4")
+    shipped_schemas.build(database, "v5")
     connection = __import__("sqlite3").connect(database)
     try:
         connection.execute("UPDATE schema_meta SET version = 99 WHERE singleton = 1")
@@ -383,7 +383,7 @@ def test_a_migration_is_preceded_by_a_verified_pre_migration_backup(
 def test_a_database_already_current_takes_no_pre_migration_backup(
     workspace: Path,
 ) -> None:
-    sandbox = migrated(workspace, "v4")
+    sandbox = migrated(workspace, "v5")
     try:
         listed = sandbox.to_python(
             call(sandbox, "function() return ANKIGTA.Backup.list() end")

@@ -32,7 +32,7 @@ from tests.lua.shipped_schemas import SHIPPED_VERSIONS, rows
 from tools.package import build_mta_resource
 
 
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 DATABASE = "ankigta.sqlite"
 
 

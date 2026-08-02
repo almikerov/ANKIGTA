@@ -37,7 +37,7 @@ UUID = "11111111-1111-4111-8111-111111111111"
 MAP_SHA = "A" * 64
 
 #: Every shape a released ANKIGTA could have left on disk.
-SHIPPED_VERSIONS = ("v1", "v2", "v3legacy", "v3", "v4")
+SHIPPED_VERSIONS = ("v1", "v2", "v3legacy", "v3", "v4", "v5")
 
 
 _MAPS = """
@@ -85,7 +85,7 @@ CREATE TABLE map_entities (
 )
 """
 
-_ENTITIES_CURRENT = """
+_ENTITIES_V3 = """
 CREATE TABLE map_entities (
     map_id TEXT NOT NULL,
     entity_id TEXT NOT NULL,
@@ -103,6 +103,13 @@ CREATE TABLE map_entities (
     FOREIGN KEY (map_id) REFERENCES maps(map_id) ON DELETE CASCADE
 )
 """
+
+#: v5 widened the type so a card can hang on a marker.
+_ENTITIES_CURRENT = _ENTITIES_V3.replace(
+    "IN ('object', 'vehicle', 'ped')",
+    "IN ('object', 'vehicle', 'ped', 'marker')",
+)
+
 
 _LINKS_V3 = """
 CREATE TABLE spatial_links (
@@ -235,7 +242,7 @@ def build(path: Path, version: str, *, history: bool | None = None) -> None:
     if history is None:
         # Any build after ticket 11 creates these on open, so the shapes that
         # can still be met in the wild at that version carry them.
-        history = version in ("v3", "v4")
+        history = version in ("v3", "v4", "v5")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path)
@@ -248,7 +255,7 @@ def build(path: Path, version: str, *, history: bool | None = None) -> None:
 
 
 def _create(connection: sqlite3.Connection, version: str, *, history: bool) -> None:
-    numeric = {"v1": 1, "v2": 2, "v3legacy": 3, "v3": 3, "v4": 4}[version]
+    numeric = {"v1": 1, "v2": 2, "v3legacy": 3, "v3": 3, "v4": 4, "v5": 5}[version]
     connection.execute(
         "CREATE TABLE schema_meta ("
         "    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),"
@@ -264,14 +271,15 @@ def _create(connection: sqlite3.Connection, version: str, *, history: bool) -> N
             "v1": _ENTITIES_V1,
             "v2": _ENTITIES_V2,
             "v3legacy": _ENTITIES_V2,
-            "v3": _ENTITIES_CURRENT,
-            "v4": _ENTITIES_CURRENT,
+            "v3": _ENTITIES_V3,
+            "v4": _ENTITIES_V3,
+            "v5": _ENTITIES_CURRENT,
         }[version]
     )
     if version in ("v3legacy", "v3"):
         connection.execute(_LINKS_V3)
         connection.execute(_COLLISIONS)
-    elif version == "v4":
+    elif version in ("v4", "v5"):
         connection.execute(_LINKS_V4)
         connection.execute(_COLLISIONS)
     if history:

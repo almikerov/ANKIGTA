@@ -385,29 +385,6 @@ label {
 }
 
 
-/* --- numbered steps --------------------------------------------------- */
-
-/* Drawn by a counter rather than written in the page: the page ships no
-   readable text of its own, and a number counted is a number that stays right
-   if the columns are ever reordered. */
-.workspace { counter-reset: step; }
-.column-head h2::before {
-  counter-increment: step;
-  content: counter(step);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  margin-right: var(--space-2);
-  border-radius: 50%;
-  background: var(--accent);
-  color: var(--on-accent);
-  font-size: 12px;
-  font-weight: 700;
-}
-.column-head h2 { display: flex; align-items: center; }
-
 /* --- the Activation Zone of one entity -------------------------------- */
 
 .entity-settings {

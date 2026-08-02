@@ -51,7 +51,7 @@ local OPEN_REQUEST_EVENT = "ankigta:requestSpatialOpen"
 local POLL_INTERVAL_MS = 250
 
 --- The element types a Map Entity may be (CONTEXT.md).
-local MANAGED_TYPES = {"object", "vehicle", "ped"}
+local MANAGED_TYPES = {"object", "vehicle", "ped", "marker"}
 
 --- Kilometres per hour per unit of `getElementVelocity`.
 --

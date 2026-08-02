@@ -55,7 +55,7 @@ def test_open_creates_the_current_schema_and_seeds_tracer_entities(
 
     assert call(sandbox, "function() return ANKIGTA.Store.open() end") is True
     assert handle.ready is True
-    assert handle.schemaVersion == 4
+    assert handle.schemaVersion == 5
 
     # Opening seeds only the object tracer; the vehicle and ped tracers are
     # seeded lazily by the first runtime lookup for those types.

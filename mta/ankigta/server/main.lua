@@ -52,11 +52,18 @@ local RUNTIME_REFERENCE_ID = "ankigta-ticket05-runtime"
 
 local runtimeInstance = nil
 
+-- A marker is a thing a map author places on purpose to mean "here", which is
+-- exactly what a card wants to hang on. The prior resource allowed pickups and
+-- colshapes too; those are a spec question, this one is not.
 local SUPPORTED_ENTITY_TYPES = {
     object = true,
     vehicle = true,
     ped = true,
+    marker = true,
 }
+
+--- The same set, in the order a scan should walk it.
+local SUPPORTED_ENTITY_ORDER = {"object", "vehicle", "ped", "marker"}
 
 local function denial(category)
     return {
@@ -330,7 +337,7 @@ local function worldCandidates(player, storedRows)
     end
 
     local found = {}
-    for _, kind in ipairs({"object", "vehicle", "ped"}) do
+    for _, kind in ipairs(SUPPORTED_ENTITY_ORDER) do
         for _, element in ipairs(getElementsByType(kind)) do
             local name = getElementID(element)
             if type(name) ~= "string" or name == "" then
@@ -1482,7 +1489,7 @@ end
 --- the player pointed at. The name is derived from the element, so deriving it
 --- again over the world finds the same one -- or nothing, if it has gone.
 local function elementByAdoptionName(name)
-    for _, kind in ipairs({"object", "vehicle", "ped"}) do
+    for _, kind in ipairs(SUPPORTED_ENTITY_ORDER) do
         for _, element in ipairs(getElementsByType(kind)) do
             local candidate = getElementID(element)
             if type(candidate) ~= "string" or candidate == "" then

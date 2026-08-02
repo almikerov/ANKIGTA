@@ -1,7 +1,7 @@
 ANKIGTA = ANKIGTA or {}
 
 local DATABASE_PATH = "ankigta.sqlite"
-local CURRENT_SCHEMA_VERSION = 4
+local CURRENT_SCHEMA_VERSION = 5
 local HISTORY_LIMIT = 100
 
 -- The volume ticket 30 states its thresholds against. Nothing here is a limit:
@@ -370,7 +370,7 @@ local function createCurrentSchema(connection)
                 CREATE TABLE map_entities (
                     map_id TEXT NOT NULL,
                     entity_id TEXT NOT NULL,
-                    entity_type TEXT NOT NULL CHECK (entity_type IN ('object', 'vehicle', 'ped')),
+                    entity_type TEXT NOT NULL CHECK (entity_type IN ('object', 'vehicle', 'ped', 'marker')),
                     model INTEGER NOT NULL,
                     authored_x REAL NOT NULL,
                     authored_y REAL NOT NULL,
@@ -479,7 +479,7 @@ local function migrateVersionFour()
         {"DROP TABLE spatial_links_v3"},
         {
             "UPDATE schema_meta SET version = ? WHERE singleton = 1",
-            {CURRENT_SCHEMA_VERSION},
+            {4},
         },
     })
 end
@@ -492,6 +492,11 @@ local function needsEntityTypeMigration()
     if not ok or not rows[1] or type(rows[1].sql) ~= "string" then
         return false
     end
+    -- Only the oldest shape, which compared with `=` rather than listing the
+    -- types. Widening the list for markers is version 5's job and no earlier
+    -- migration's: claiming it here would rebuild `map_entities` on the way
+    -- through version 3, changing the schema before a later step that may yet
+    -- fail.
     return rows[1].sql:find("entity_type = 'object'", 1, true) ~= nil
 end
 
@@ -519,7 +524,7 @@ local function rebuildMapEntities()
                 CREATE TABLE map_entities_rebuilt (
                     map_id TEXT NOT NULL,
                     entity_id TEXT NOT NULL,
-                    entity_type TEXT NOT NULL CHECK (entity_type IN ('object', 'vehicle', 'ped')),
+                    entity_type TEXT NOT NULL CHECK (entity_type IN ('object', 'vehicle', 'ped', 'marker')),
                     model INTEGER NOT NULL,
                     authored_x REAL NOT NULL,
                     authored_y REAL NOT NULL,
@@ -563,6 +568,25 @@ local function rebuildMapEntities()
         return false, "map_entity_rebuild_broke_constraints"
     end
     return true
+end
+
+--- Version 5: a marker is a thing a card can hang on.
+--
+-- The shape change is `rebuildMapEntities`, which widens the type constraint.
+-- It is a version rather than a silent repair because a v4 database and a v5
+-- one differ in what they will accept, and two shapes under one number is how
+-- "already current" stops meaning anything.
+local function migrateVersionFive()
+    local rebuilt, rebuildError = rebuildMapEntities()
+    if not rebuilt then
+        return false, rebuildError
+    end
+    return transaction(Store.connection, {
+        {
+            "UPDATE schema_meta SET version = ? WHERE singleton = 1",
+            {5},
+        },
+    })
 end
 
 local function hasIdentityCollisionTable()
@@ -664,6 +688,12 @@ local MIGRATIONS = {
         from = 3,
         to = 4,
         apply = migrateVersionFour,
+    },
+    {
+        id = "map_entity_marker_type",
+        from = 4,
+        to = 5,
+        apply = migrateVersionFive,
     },
 }
 

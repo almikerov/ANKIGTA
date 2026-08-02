@@ -450,7 +450,7 @@ def test_restarting_after_an_interrupted_restore_finishes_it(
     try:
         assert opened(restarted) is True
 
-        assert status(restarted)["schemaVersion"] == 4
+        assert status(restarted)["schemaVersion"] == 5
         assert readable(workspace / "ankigta.sqlite")
         assert not (workspace / "backups" / "staging.sqlite").exists()
         # The damaged original was not tidied away by the restart.

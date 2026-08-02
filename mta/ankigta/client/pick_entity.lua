@@ -8,6 +8,8 @@ local SUPPORTED_ENTITY_TYPES = {
     ["object"] = true,
     ["vehicle"] = true,
     ["ped"] = true,
+    -- Placed to mean "here", which is what a card wants to hang on.
+    ["marker"] = true,
 }
 
 local MOVEMENT_AND_LOOK_CONTROLS = {

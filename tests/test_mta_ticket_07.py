@@ -39,7 +39,12 @@ def test_supported_editor_types_share_pending_readback_contract() -> None:
     store = source(STORE)
     main = source(MAIN)
 
-    assert "entity_type TEXT NOT NULL CHECK (entity_type IN ('object', 'vehicle', 'ped'))" in store
+    # Markers joined the three: a marker is placed to mean "here", which is
+    # what a card wants to hang on.
+    assert (
+        "entity_type TEXT NOT NULL CHECK"
+        " (entity_type IN ('object', 'vehicle', 'ped', 'marker'))"
+    ) in store
     assert "SUPPORTED_ENTITY_TYPES" in identity
     assert "MapIdentity.prepareVehiclePendingMapSave" in identity
     assert "MapIdentity.preparePedPendingMapSave" in identity
