@@ -70,7 +70,6 @@ def test_client_pick_entity_has_modal_aim_and_exact_cleanup_contract() -> None:
     assert "isElementStreamedIn(element)" in pick
     assert '"object"' in pick and '"vehicle"' in pick and '"ped"' in pick
     assert 'nonEmptyData(element, "ankigtaEntityId")' in pick
-    assert 'nonEmptyData(element, "me:ID")' in pick
     assert "toggleControl(" in pick
     assert "isControlEnabled(" in pick
     assert "showCursor(" in pick
@@ -132,7 +131,6 @@ def test_server_pick_validation_is_acl_bound_and_rejects_invalid_runtime_targets
     assert "getElementType(entityElement)" in validation
     assert "SUPPORTED_ENTITY_TYPES" in validation
     assert 'getElementData(entityElement, "ankigtaEntityId")' in validation
-    assert 'getElementData(entityElement, "me:ID")' in validation
     assert "isElementStreamedIn(entityElement)" in validation
     assert "Store.getMapEntity" in validation
     assert "entity_not_managed" in validation

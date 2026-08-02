@@ -41,6 +41,10 @@ def server(directory: Path) -> MtaSandbox:
     sandbox.load("shared/settings.lua")
     sandbox.load("server/backup.lua")
     sandbox.load("server/store.lua")
+    # The tracer fixture, asked for rather than seeded into every database:
+    # a player listing entities they never placed was it leaking out of
+    # the tests it was written for.
+    sandbox.eval("function() ANKIGTA.Store.seedTracerFixtures = true end")()
     return sandbox
 
 

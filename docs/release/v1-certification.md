@@ -93,19 +93,19 @@ value, and a test plants one to prove the scan can fail.
 These are named rather than closed. Naming them is the point: a certification
 that quietly omits a criterion is worse than one that reports it.
 
-### A clean install seeds three shipped tracer fixtures
+### A clean install seeds nothing — closed
 
-`meta.xml` loads `maps/ticket05.map` and `maps/ticket07-matrix.map`, and
-`Store.open` seeds `ticket05-map/ticket05-entity` into every new database;
-`ticket07-map`'s vehicle and ped rows are seeded the first time one is
-resolved. A user's first F7 therefore lists Map Entities they did not place.
+It used to seed `ticket05-map/ticket05-entity` into every new database, so a
+user's first F7 listed a Map Entity they had never placed, in a dimension they
+could not reach. That was carried here as an open criterion on the grounds that
+removing it would be a redesign of the identity path.
 
-Not closed here because it is not a packaging problem. `Store.singleMapEntity`
-is the seam `prepareObjectPendingMapSave` and its vehicle and ped siblings
-resolve through, so removing the fixtures is a redesign of the identity path
-that tickets 05 to 07 own, not a change to what goes in the zip. The exact set
-is pinned by `test_a_clean_install_seeds_exactly_the_fixtures_it_ships`, so it
-cannot grow without a test saying so.
+It was, and the redesign happened for its own reasons: `Store.adoptMapEntity`
+takes an object by the name its `.map` file gave it, or by where it stands, so
+nothing depends on a single seeded row being there any more. The fixture is a
+test fixture now — `Store.seedTracerFixtures` asks for it, and only tests do —
+and `test_a_clean_install_seeds_exactly_the_fixtures_it_ships` pins the set as
+empty so it cannot come back quietly.
 
 ### The reference-machine performance run
 

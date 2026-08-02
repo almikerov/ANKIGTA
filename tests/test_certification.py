@@ -121,18 +121,15 @@ def entity_keys(database: Path) -> set[tuple[str, str]]:
 
 #: What a clean install puts in the database before the user does anything.
 #:
-#: This is ticket 05's tracer fixture, and it is shipped — `meta.xml` loads
-#: `maps/ticket05.map` and `Store.open` seeds its row. It is load-bearing
-#: rather than a leftover: `Store.singleMapEntity` is what
-#: `prepareObjectPendingMapSave` and its vehicle and ped siblings resolve
-#: through, so removing it is a redesign of the identity seam rather than a
-#: packaging change. Ticket 07's matrix map is shipped too and seeds its rows
-#: the first time a vehicle or a ped is resolved.
+#: Nothing, and that is the point.
 #:
-#: Named here so a clean install's contents are stated rather than incidental,
-#: and so this set cannot grow without a test saying so. The v1 certification
-#: record carries it as an open criterion with this reason.
-SEEDED_ENTITIES = {("ticket05-map", "ticket05-entity")}
+#: It used to seed `ticket05-map/ticket05-entity`, so a player's first F7
+#: listed a Map Entity they had never placed, in a dimension they could not
+#: reach. The v1 record carried that as an open criterion. The fixture is a
+#: test fixture now: `Store.seedTracerFixtures` asks for it, and only tests do.
+#:
+#: Pinned as empty so it cannot come back quietly.
+SEEDED_ENTITIES: set[tuple[str, str]] = set()
 
 
 def integrity(database: Path) -> str:

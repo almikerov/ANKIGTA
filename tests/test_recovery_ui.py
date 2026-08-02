@@ -71,6 +71,11 @@ def start_server(directory: Path) -> MtaSandbox:
     sandbox = MtaSandbox(database_path=str(directory / "ankigta.sqlite"))
     for script in manifest_scripts("shared", "server"):
         sandbox.load(script)
+    # These tests need a Map Entity to survive a restore, and the tracer is a
+    # convenient one. Asked for rather than seeded into every database: a
+    # player's first F7 listing entities they never placed was that fixture
+    # leaking out of the tests it was written for.
+    sandbox.eval("function() ANKIGTA.Store.seedTracerFixtures = true end")()
     sandbox.trigger("onResourceStart")
     return sandbox
 

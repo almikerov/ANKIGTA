@@ -943,10 +943,12 @@ function Store.open()
         return fail("schema_verification_failed", tostring(Store.schemaVersion))
     end
 
-    local seeded, seedError = ensureTracerEntity()
-    if not seeded then
-        closeConnection()
-        return fail("tracer_entity_create_failed", seedError)
+    if Store.seedTracerFixtures then
+        local seeded, seedError = ensureTracerEntity()
+        if not seeded then
+            closeConnection()
+            return fail("tracer_entity_create_failed", seedError)
+        end
     end
 
     Store.ready = true

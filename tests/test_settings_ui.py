@@ -98,6 +98,7 @@ def server(tmp_path: Path) -> Iterator[MtaSandbox]:
     sandbox = MtaSandbox(database_path=str(tmp_path / "ankigta.sqlite"))
     for script in SERVER_STORE_SCRIPTS:
         sandbox.load(script)
+    sandbox.execute("ANKIGTA.Store.seedTracerFixtures = true")
     sandbox.execute("ANKIGTA.Store.open()")
     try:
         yield sandbox

@@ -112,14 +112,25 @@ def test_an_object_from_a_loaded_map_is_offered_although_no_editor_is_open(
     assert asked[-1].args[0]["__id"] == "object (sw_hedstones) (1)"
 
 
-def test_an_object_no_editor_placed_is_still_refused(client: MtaSandbox) -> None:
-    """Nothing would bring it back after a restart for the card to mean."""
-    spawned = client.add_world_element("object")
+def test_an_object_no_map_file_named_is_taken_by_where_it_stands(
+    client: MtaSandbox,
+) -> None:
+    """A freeroam vehicle has no name in any file, and is still takeable.
+
+    The prior resource keyed on what a thing is and where it stands, which is
+    why it could take one. The trade is real and is not hidden: move the thing
+    and the name changes. A `.map` id, where there is one, is preferred for
+    exactly that reason.
+    """
+    spawned = client.add_world_element("vehicle", x=12.0, y=20.0, z=3.0)
 
     act(client, "pickEntity", {"mode": "pick"})
     click_on(client, spawned)
 
-    assert not sent(client, "ankigta:pickEntity")
+    assert sent(client, "ankigta:pickEntity"), (
+        "an element with no map-file name must still be offered -- naming it "
+        "by where it stands is what the old resource did"
+    )
 
 
 def test_the_cursor_is_the_aim_so_this_works_outside_the_map_editor(

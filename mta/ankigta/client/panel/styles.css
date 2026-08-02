@@ -56,10 +56,17 @@ html, body {
   color: var(--text);
 }
 
+/* A column, not a three-row grid. The notice and two of the three sections are
+   `hidden` at any moment, and a `display: none` child leaves the grid
+   entirely -- so the row template shifted under whatever was left and the
+   visible section landed in the `auto` row instead of the `1fr` one. It then
+   took only the height of its own content and left the rest of the panel
+   empty, which is the panel looking half-drawn. Flex sizes what is actually
+   there rather than counting children. */
 .shell {
   height: 100%;
-  display: grid;
-  grid-template-rows: 56px auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -70,6 +77,7 @@ html, body {
 /* --- top bar ---------------------------------------------------------- */
 
 .topbar {
+  flex: 0 0 56px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -127,7 +135,7 @@ html, body {
 
 /* --- sections --------------------------------------------------------- */
 
-.section { min-height: 0; overflow: hidden; }
+.section { flex: 1 1 auto; min-height: 0; overflow: hidden; }
 .section[hidden] { display: none; }
 
 /* --- controls --------------------------------------------------------- */

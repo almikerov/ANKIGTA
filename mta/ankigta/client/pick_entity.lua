@@ -99,12 +99,9 @@ local function isEligibleTarget(element)
     if not SUPPORTED_ENTITY_TYPES[entityType] then
         return false, "target_type_not_supported"
     end
-    local mapFileId = getElementID(element)
-    local hasDurableName = nonEmptyData(element, "me:ID")
-        or (type(mapFileId) == "string" and mapFileId ~= "")
-    if not hasDurableName then
-        return false, "target_not_managed"
-    end
+    -- Every element of a supported type can be named: by its `.map` id where
+    -- it has one, and by where it stands where it has not. So the question is
+    -- no longer whether it may be taken but whether it already has been.
     return true, nonEmptyData(element, "ankigtaEntityId") and "adopted"
         or "adoptable"
 end

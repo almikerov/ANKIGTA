@@ -25,6 +25,11 @@ def store(tmp_path: Path) -> Iterator[tuple[MtaSandbox, Any]]:
     # migrates, so it is loaded here in the order meta.xml declares.
     sandbox.load("server/backup.lua")
     sandbox.load("server/store.lua")
+    # These tests want a Map Entity to already exist, and the tracer fixture is
+    # a convenient one. It is asked for here rather than seeded into every
+    # database that opens: a player's first F7 listing entities they never
+    # placed was the fixture leaking out of the tests it was written for.
+    sandbox.eval("function() ANKIGTA.Store.seedTracerFixtures = true end")()
     handle = sandbox.eval("ANKIGTA.Store")
     try:
         yield sandbox, handle

@@ -82,17 +82,67 @@ local function owningResource(element)
     return nil
 end
 
+--- A name for an element that has none of its own.
+--
+-- The prior resource keyed on what an element *is and where it stands* --
+-- type, model, position, rotation, interior -- and disambiguated identical
+-- twins by their ordinal among themselves. That is why it could take a
+-- freeroam vehicle, which no `.map` file ever named, and it is the right
+-- answer: an object that has not moved is the same object.
+--
+-- The trade is honest and worth stating: move the thing and the name changes,
+-- so the card is left pointing at where it used to be. A `.map` id, where
+-- there is one, does not have that weakness, so it wins.
+local function positionalName(element)
+    local x, y, z = getElementPosition(element)
+    if type(x) ~= "number" then
+        return nil
+    end
+    local rotationX, rotationY, rotationZ = getElementRotation(element)
+    local descriptor = table.concat({
+        getElementType(element),
+        tostring(getElementModel(element) or 0),
+        string.format("%.3f", x),
+        string.format("%.3f", y),
+        string.format("%.3f", z),
+        string.format("%.2f", tonumber(rotationX) or 0),
+        string.format("%.2f", tonumber(rotationY) or 0),
+        string.format("%.2f", tonumber(rotationZ) or 0),
+        tostring(getElementInterior(element)),
+    }, "|")
+    -- Twins stand in the same place with the same model, so the descriptor
+    -- alone would name them both. The ordinal is which of them this is.
+    local ordinal = 0
+    for _, candidate in ipairs(getElementsByType(getElementType(element))) do
+        local otherX, otherY, otherZ = getElementPosition(candidate)
+        if type(otherX) == "number"
+            and getElementModel(candidate) == getElementModel(element)
+            and string.format("%.3f", otherX) == string.format("%.3f", x)
+            and string.format("%.3f", otherY) == string.format("%.3f", y)
+            and string.format("%.3f", otherZ) == string.format("%.3f", z)
+        then
+            ordinal = ordinal + 1
+            if candidate == element then
+                break
+            end
+        end
+    end
+    return "at_" .. md5(descriptor .. "|" .. tostring(math.max(ordinal, 1)))
+end
+
 --- Everything the store needs to write an object down, read off the object.
 local function adoptionRecord(element)
+    -- The name in a `.map` file if there is one, because it survives the
+    -- object being moved; otherwise where the object stands, which is what
+    -- lets a freeroam vehicle be taken at all.
     local entityId = getElementID(element)
     if type(entityId) ~= "string" or entityId == "" then
-        -- No `id` in any `.map` file, so nothing would find it again.
+        entityId = positionalName(element)
+    end
+    if type(entityId) ~= "string" or entityId == "" then
         return false, "entity_has_no_durable_id"
     end
-    local resourceName = owningResource(element)
-    if not resourceName then
-        return false, "entity_has_no_owning_resource"
-    end
+    local resourceName = owningResource(element) or "world"
     local x, y, z = getElementPosition(element)
     local rotationX, rotationY, rotationZ = getElementRotation(element)
     return {
@@ -486,19 +536,10 @@ function validatePickEntity(player, entityElement, mode)
         return false, "entity_not_managed"
     end
     local persistentId = getElementData(entityElement, "ankigtaEntityId")
-    -- The gate is a durable name, and there are two kinds. `me:ID` is what the
-    -- stock Map Editor writes, but only while the map is open in it. The `id`
-    -- attribute of a `.map` file is there whenever the map is loaded at all,
-    -- which is the case for a player merely spawned in the world -- and that
-    -- is where this is used. Requiring the editor's one is what made a map
-    -- full of objects offer none of them.
-    local editorId = getElementData(entityElement, "me:ID")
-    local mapFileId = getElementID(entityElement)
-    local hasDurableName = (type(editorId) == "string" and editorId ~= "")
-        or (type(mapFileId) == "string" and mapFileId ~= "")
-    if not hasDurableName then
-        return false, "entity_not_managed"
-    end
+    -- No name is demanded of the element. One can always be made: the `id` its
+    -- `.map` file gave it where there is one, and otherwise where it stands.
+    -- Demanding `me:ID`, which the stock editor writes only while it has the
+    -- map open, is what made a whole world offer nothing.
     if isElementStreamedIn and not isElementStreamedIn(entityElement) then
         return false, "entity_not_streamed"
     end
