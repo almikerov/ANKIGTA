@@ -33,6 +33,9 @@ local RELINK_ENTITY_REQUEST_EVENT = "ankigta:relinkEntity"
 local TELEPORT_REQUEST_EVENT = "ankigta:teleportToEntity"
 local ENTITY_METADATA_REQUEST_EVENT = "ankigta:updateEntityMetadata"
 local ADOPT_ENTITY_REQUEST_EVENT = "ankigta:adoptEntity"
+local NOTE_READ_REQUEST_EVENT = "ankigta:requestNote"
+local NOTE_UPDATE_REQUEST_EVENT = "ankigta:updateNote"
+local NOTE_SNAPSHOT_EVENT = "ankigta:noteSnapshot"
 local UNDO_REQUEST_EVENT = "ankigta:undo"
 local REDO_REQUEST_EVENT = "ankigta:redo"
 local PICK_ENTITY_START_EVENT = "ankigta:pickEntityStart"
@@ -68,6 +71,11 @@ local lastCards = nil
 local selectedMapId = nil
 local selectedEntityId = nil
 local selectedCard = nil
+-- The note behind the selected card, as the companion last reported it, and
+-- the reason it could not be read. Held here rather than on the page for the
+-- same reason the selection is: the page is a view.
+local selectedNote = false
+local noteError = false
 local notice = false
 -- Set when Pick Entity was started to choose a relink target.
 local relinkSourceMapId = nil
@@ -559,6 +567,9 @@ local function push()
             decks = deckNames(lastCards),
             deckFilter = lastCards and lastCards.deckFilter or false,
         },
+        -- What the selected card actually says, once it has been read.
+        note = selectedNote or false,
+        noteError = noteError or false,
         notice = notice,
         settings = {rows = settingsRows()},
     }
@@ -969,18 +980,6 @@ function actions.searchCards(payload)
     )
 end
 
-function actions.selectCard(payload)
-    if type(payload.cardId) ~= "string" or payload.cardId == "" then
-        selectedCard = nil
-    else
-        selectedCard = {
-            cardId = payload.cardId,
-            collectionUuid = tostring(payload.collectionUuid or ""),
-        }
-    end
-    push()
-end
-
 local function cardIdentity()
     if not selectedCard then
         return nil
@@ -989,6 +988,41 @@ local function cardIdentity()
         collectionUuid = selectedCard.collectionUuid,
         cardId = tonumber(selectedCard.cardId),
     }
+end
+
+function actions.selectCard(payload)
+    -- A different card means the note on screen belongs to nobody until the
+    -- new one arrives. Leaving the old one up would let a save write the
+    -- fields of one card onto another.
+    selectedNote = false
+    noteError = false
+    if type(payload.cardId) ~= "string" or payload.cardId == "" then
+        selectedCard = nil
+    else
+        selectedCard = {
+            cardId = payload.cardId,
+            collectionUuid = tostring(payload.collectionUuid or ""),
+        }
+        triggerServerEvent(
+            NOTE_READ_REQUEST_EVENT, resourceRoot, cardIdentity()
+        )
+    end
+    push()
+end
+
+--- Write the inspector's fields and tags back to Anki.
+function actions.saveNote(payload)
+    local identity = cardIdentity()
+    if not identity or type(payload.fields) ~= "table" then
+        return
+    end
+    triggerServerEvent(
+        NOTE_UPDATE_REQUEST_EVENT,
+        resourceRoot,
+        identity,
+        payload.fields,
+        type(payload.tags) == "table" and payload.tags or {}
+    )
 end
 
 function actions.link()
@@ -1277,6 +1311,23 @@ addEventHandler(OPEN_SETTINGS_EVENT, resourceRoot, function()
         end
     end
     actions.openSettings()
+end)
+
+addEvent(NOTE_SNAPSHOT_EVENT, true)
+addEventHandler(NOTE_SNAPSHOT_EVENT, resourceRoot, function(ok, payload, reason)
+    if source ~= resourceRoot then
+        return
+    end
+    if ok == true and type(payload) == "table" then
+        -- A read answers with the card, an update with the note alone.
+        selectedNote = type(payload.card) == "table" and payload.card.note
+            or payload.note
+        noteError = false
+    else
+        selectedNote = false
+        noteError = reason or "unexpected_error"
+    end
+    push()
 end)
 
 addEvent(SETTINGS_SNAPSHOT_EVENT, true)

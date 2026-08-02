@@ -7,6 +7,7 @@ local HEALTH_PATH = "/v1/health"
 local CARD_SEARCH_PATH = "/v1/cards/search"
 local CARD_READ_PATH = "/v1/cards/read"
 local CARD_STATES_PATH = "/v1/cards/states"
+local NOTE_UPDATE_PATH = "/v1/notes/update"
 local CARD_STATE_REFRESHED_EVENT = "ankigta:cardStateRefreshed"
 local CARD_STATES_REFRESHED_EVENT = "ankigta:cardStatesRefreshed"
 local STUDY_STATE_EVENT = "ankigta:studyStateChanged"
@@ -47,6 +48,11 @@ local Gateway = {
     sessionPending = {},
     reviewGeneration = 0,
     reviewPending = {},
+    -- One table for operations that answer to one caller and need none of the
+    -- special handling the older ones grew. Each of those carries its own copy
+    -- of this plumbing; new ones do not have to.
+    plainGeneration = 0,
+    plainPending = {},
     -- reviewTransactionId -> last known outcome. A Review Transaction is
     -- identified independently of the transport request that carries it, so a
     -- retried request reuses the same id and can never become a second review.
@@ -1327,6 +1333,154 @@ function Gateway.requestCardState(player, cardIdentity)
         return false, "fetch_rejected"
     end
     return true, requestId
+end
+
+--- Ask the companion something, and hand the answer to one callback.
+--
+-- The operations above each carry their own copy of this: a generation, a
+-- pending table, a timeout, a callback that checks the envelope, and the
+-- fetch itself. That was five copies before this existed and would have been
+-- seven after. What they have that this does not is per-kind failure
+-- reporting to the client, which is why they are left alone rather than
+-- rewritten underneath working behaviour.
+--
+-- `settle(ok, payloadOrCategory)` is called exactly once: on the answer, on a
+-- refusal, or on the timeout, and never twice for the same request.
+local function companionRequest(player, path, body, settle)
+    local effective, category = ANKIGTA.ConnectionConfig.loadEffective()
+    if not effective then
+        settle(false, category)
+        return false, category
+    end
+    Gateway.plainGeneration = Gateway.plainGeneration + 1
+    local requestId = string.format(
+        "op-%d-%d", getTickCount(), Gateway.plainGeneration
+    )
+    local request = {
+        generation = Gateway.plainGeneration,
+        settled = false,
+        handle = false,
+        settle = settle,
+    }
+    Gateway.plainPending[requestId] = request
+
+    local function finish(ok, value)
+        if request.settled then
+            return
+        end
+        request.settled = true
+        Gateway.plainPending[requestId] = nil
+        settle(ok, value)
+    end
+
+    setTimer(function()
+        if request.settled then
+            return
+        end
+        if request.handle then
+            abortRemoteRequest(request.handle)
+        end
+        finish(false, "timeout")
+    end, REQUEST_TIMEOUT_MS, 1)
+
+    body.protocol = PROTOCOL_NAME
+    body.protocolVersion = PROTOCOL_VERSION
+    body.requestId = requestId
+    local envelope = encodeJson(body)
+    if not envelope then
+        finish(false, "protocol_error")
+        return false, "json_encode_failed"
+    end
+    local headers = {
+        ["Accept"] = "application/json",
+        ["Content-Type"] = "application/json; charset=utf-8",
+    }
+    if type(effective.token) == "string" and effective.token ~= "" then
+        headers["Authorization"] = "Bearer " .. effective.token
+    end
+    request.handle = fetchRemote(
+        string.format("http://127.0.0.1:%d%s", effective.port, path),
+        {
+            method = "POST",
+            postData = envelope,
+            postIsBinary = false,
+            headers = headers,
+            queueName = "ankigta-op",
+            connectionAttempts = 1,
+            connectTimeout = 4000,
+            maxRedirects = 0,
+        },
+        function(responseBody, info)
+            if type(info) ~= "table" or not isJsonContentType(info.headers) then
+                finish(false, "protocol_error")
+                return
+            end
+            local response = decodeJson(responseBody)
+            if type(response) ~= "table"
+                or response.protocol ~= PROTOCOL_NAME
+                or response.protocolVersion ~= PROTOCOL_VERSION
+                or response.requestId ~= requestId
+                or type(response.ok) ~= "boolean"
+            then
+                finish(false, "protocol_error")
+                return
+            end
+            if not response.ok then
+                finish(
+                    false,
+                    type(response.error) == "table"
+                        and response.error.category
+                        or "unexpected_error"
+                )
+                return
+            end
+            finish(true, response.payload)
+        end
+    )
+    if not request.handle then
+        finish(false, "transport_error")
+        return false, "fetch_rejected"
+    end
+    return true, requestId
+end
+
+--- Change the fields and tags of the note behind a card.
+function Gateway.requestNoteUpdate(player, cardIdentity, fields, tags, settle)
+    if not canPresentTo(player) then
+        settle(false, "forbidden")
+        return false, "forbidden"
+    end
+    if type(cardIdentity) ~= "table"
+        or type(cardIdentity.collectionUuid) ~= "string"
+        or tonumber(cardIdentity.cardId) == nil
+    then
+        settle(false, "invalid_anki_card_identity")
+        return false, "invalid_anki_card_identity"
+    end
+    return companionRequest(player, NOTE_UPDATE_PATH, {
+        collectionUuid = cardIdentity.collectionUuid,
+        cardId = tonumber(cardIdentity.cardId),
+        fields = fields,
+        tags = tags,
+    }, settle)
+end
+
+--- Read one card, with the note behind it, for the inspector.
+function Gateway.requestNoteRead(player, cardIdentity, settle)
+    if not canPresentTo(player) then
+        settle(false, "forbidden")
+        return false, "forbidden"
+    end
+    if type(cardIdentity) ~= "table"
+        or tonumber(cardIdentity.cardId) == nil
+    then
+        settle(false, "invalid_anki_card_identity")
+        return false, "invalid_anki_card_identity"
+    end
+    return companionRequest(player, CARD_READ_PATH, {
+        collectionUuid = cardIdentity.collectionUuid,
+        cardId = tonumber(cardIdentity.cardId),
+    }, settle)
 end
 
 -- Card states and the next card ----------------------------------------------

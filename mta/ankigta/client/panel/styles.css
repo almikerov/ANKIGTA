@@ -427,3 +427,36 @@ label {
 .replace-summary dt { color: var(--muted); font-size: 11px; }
 .replace-summary dd { margin: 0; font-size: 13px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+
+
+/* --- the card itself -------------------------------------------------- */
+
+.inspector {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-top: 1px solid var(--line-soft);
+  padding-top: var(--space-2);
+  /* Its own scroll: a note type with eight fields must not push the card list
+     out of the column it shares. */
+  max-height: 46%;
+  overflow: auto;
+}
+.inspector[hidden] { display: none; }
+.inspector-head { display: flex; align-items: baseline; justify-content: space-between; }
+.inspector-head h3 { margin: 0; font-size: 12px; color: var(--muted); }
+.inspector-head .hint { color: var(--muted); font-size: 11px; }
+.inspector-fields { display: flex; flex-direction: column; gap: var(--space-2); }
+.inspector-field { gap: var(--space-1); }
+.inspector-field textarea {
+  font: inherit;
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  background: var(--bg);
+  color: var(--text);
+}
+.inspector-field textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.inspector-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }

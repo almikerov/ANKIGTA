@@ -108,6 +108,24 @@
           <button type="submit" class="primary" data-i18n="cardPicker.search"></button>
         </form>
         <div class="rows" id="cards" role="list"></div>
+        <div class="inspector" id="inspector" hidden>
+          <div class="inspector-head">
+            <h3 data-i18n="inspector.title"></h3>
+            <span class="hint" id="inspector-state"></span>
+          </div>
+          <div class="inspector-fields" id="inspector-fields"></div>
+          <label class="inspector-tags">
+            <span data-i18n="inspector.tags"></span>
+            <input type="text" id="inspector-tags"
+                   data-i18n-placeholder="inspector.tagsHint" />
+          </label>
+          <div class="inspector-actions">
+            <span class="field-error" id="inspector-error" role="alert"></span>
+            <button type="button" id="save-note" class="primary"
+                    data-i18n="inspector.save"></button>
+          </div>
+        </div>
+
         <div class="column-actions">
           <button type="button" id="link" class="primary" data-i18n="cardPicker.link"></button>
           <button type="button" id="replace" data-i18n="f7.replaceCard"></button>

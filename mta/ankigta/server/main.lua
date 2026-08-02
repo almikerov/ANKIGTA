@@ -40,6 +40,9 @@ local REVIEW_CLOSED_EVENT = "ankigta:reviewClosed"
 local RENDER_ISSUED_EVENT = "ankigta:renderIssued"
 local REVIEW_RETURN_REQUEST_EVENT = "ankigta:returnToCard"
 local ADOPT_ENTITY_REQUEST_EVENT = "ankigta:adoptEntity"
+local NOTE_READ_REQUEST_EVENT = "ankigta:requestNote"
+local NOTE_UPDATE_REQUEST_EVENT = "ankigta:updateNote"
+local NOTE_SNAPSHOT_EVENT = "ankigta:noteSnapshot"
 local ENTITY_METADATA_REQUEST_EVENT = "ankigta:updateEntityMetadata"
 local PICK_ENTITY_REQUEST_EVENT = "ankigta:pickEntity"
 local PICK_ENTITY_RESULT_EVENT = "ankigta:pickEntityResult"
@@ -1623,6 +1626,62 @@ addEventHandler(ENTITY_METADATA_REQUEST_EVENT, resourceRoot, function(
         return
     end
     sendF7Snapshot(client)
+end)
+
+--- The note behind a card, for the inspector.
+--
+-- Asked for when a card is selected rather than carried on every search: a
+-- page of fifty cards would pay fifty note reads for the one that gets looked
+-- at.
+local function sendNote(player, ok, payload)
+    triggerClientEvent(
+        player,
+        NOTE_SNAPSHOT_EVENT,
+        resourceRoot,
+        ok == true,
+        ok == true and payload or false,
+        ok ~= true and tostring(payload) or false
+    )
+end
+
+addEvent(NOTE_READ_REQUEST_EVENT, true)
+addEventHandler(NOTE_READ_REQUEST_EVENT, resourceRoot, function(cardIdentity)
+    if not client or source ~= resourceRoot then
+        return
+    end
+    local player = client
+    ANKIGTA.CompanionGateway.requestNoteRead(
+        player,
+        cardIdentity,
+        function(ok, value)
+            sendNote(player, ok, value)
+        end
+    )
+end)
+
+addEvent(NOTE_UPDATE_REQUEST_EVENT, true)
+addEventHandler(NOTE_UPDATE_REQUEST_EVENT, resourceRoot, function(
+    cardIdentity, fields, tags
+)
+    if not client or source ~= resourceRoot then
+        return
+    end
+    local player = client
+    ANKIGTA.CompanionGateway.requestNoteUpdate(
+        player,
+        cardIdentity,
+        type(fields) == "table" and fields or {},
+        type(tags) == "table" and tags or {},
+        function(ok, value)
+            sendNote(player, ok, value)
+            if not ok then
+                triggerClientEvent(
+                    player, PENDING_NOTICE_EVENT, resourceRoot,
+                    "notice.noteUpdateFailed", tostring(value)
+                )
+            end
+        end
+    )
 end)
 
 addEvent(RECOVERY_REQUEST_EVENT, true)
