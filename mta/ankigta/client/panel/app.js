@@ -30,7 +30,13 @@
     for (var i = 0; i < nodes.length; i += 1) {
       nodes[i].textContent = t(nodes[i].getAttribute("data-i18n"));
     }
+    var hints = document.querySelectorAll("[data-i18n-placeholder]");
+    for (var j = 0; j < hints.length; j += 1) {
+      hints[j].placeholder = t(hints[j].getAttribute("data-i18n-placeholder"));
+    }
   }
+
+  var selected = {mapId: false, entityId: false, cardId: false};
 
   /* A link state is a stable technical value; only its display follows the
    * language, and its tone is set here rather than in the string table. */
@@ -73,6 +79,7 @@
       row.appendChild(primary);
 
       row.appendChild(element("span", "type", entry.type));
+      row.appendChild(element("span", "runtime", t(entry.runtimeKey)));
 
       var state = element("span", "state");
       var tone = TONES[entry.linkState];
@@ -83,8 +90,56 @@
       );
       row.appendChild(state);
 
+      if (entry.mapId === selected.mapId && entry.entityId === selected.entityId) {
+        row.className = "row selected";
+      }
+      bindSelect(row, entry);
       host.appendChild(row);
     }
+  }
+
+  /* A row identifies itself by the pair the server knows it by, never by its
+   * index: the list re-sorts whenever the snapshot changes, and an index would
+   * quietly start pointing at a different Map Entity. */
+  function bindSelect(row, entry) {
+    row.addEventListener("click", function () {
+      send("select", {mapId: entry.mapId, entityId: entry.entityId});
+    });
+  }
+
+  function renderCards(picker) {
+    var host = document.getElementById("cards");
+    host.textContent = "";
+    var cards = (picker && picker.cards) || [];
+    if (cards.length === 0) {
+      host.appendChild(element("p", "empty", t("cardPicker.column.card")));
+      return;
+    }
+    for (var i = 0; i < cards.length; i += 1) {
+      var card = cards[i];
+      var row = element("button", "row card");
+      row.type = "button";
+      row.setAttribute("role", "listitem");
+
+      var primary = element("div", "primary-cell");
+      primary.appendChild(element("strong", null, card.question || card.cardId));
+      primary.appendChild(element("span", "sub", card.deck));
+      row.appendChild(primary);
+      row.appendChild(element("span", "type", card.state));
+
+      if (card.cardId === selected.cardId) row.className = "row card selected";
+      bindSelectCard(row, card);
+      host.appendChild(row);
+    }
+  }
+
+  function bindSelectCard(row, card) {
+    row.addEventListener("click", function () {
+      send("selectCard", {
+        cardId: card.cardId,
+        collectionUuid: card.collectionUuid
+      });
+    });
   }
 
   function renderConnection(connection) {
@@ -132,6 +187,26 @@
     });
   }
 
+  var LINK_CHANGEABLE = {"Active Spatial Link": true, "Card missing": true};
+
+  function findSelected(entities) {
+    for (var i = 0; i < (entities || []).length; i += 1) {
+      if (entities[i].mapId === selected.mapId
+          && entities[i].entityId === selected.entityId) {
+        return entities[i];
+      }
+    }
+    return null;
+  }
+
+  function renderNotice(notice) {
+    var node = document.getElementById("notice");
+    if (!notice) { node.hidden = true; return; }
+    node.textContent = t(notice.key).replace("%s", notice.detail || "");
+    node.className = "notice warning";
+    node.hidden = false;
+  }
+
   function show(section) {
     document.getElementById("section-connection").hidden = section !== "connection";
     document.getElementById("section-entities").hidden = section !== "entities";
@@ -143,21 +218,77 @@
     document.documentElement.lang = state.language || "en";
     applyLocale();
     renderConnection(state.connection || {state: "disconnected"});
+    selected = state.selected || {mapId: false, entityId: false, cardId: false};
     renderStudy(state.study || {active: false, resumable: false});
     renderRows(state.entities);
-    document.getElementById("entity-count").textContent =
-      (state.entities || []).length;
+    renderCards(state.cardPicker);
+    renderNotice(state.notice);
+    document.getElementById("entity-count").textContent = state.entityFilter
+      ? t("f7.filterResult")
+          .replace("%d", (state.entities || []).length)
+          .replace("%d", state.entityTotal)
+      : (state.entities || []).length;
+    var filter = document.getElementById("filter");
+    if (filter.value !== state.entityFilter) filter.value = state.entityFilter || "";
+
+    var history = state.history || {};
+    document.getElementById("undo").disabled = !history.canUndo;
+    document.getElementById("redo").disabled = !history.canRedo;
+
+    /* Disabled rather than hidden: a control that vanishes is a control the
+     * player has to rediscover, and its absence says nothing about why. */
+    var entity = findSelected(state.entities);
+    document.getElementById("recheck").disabled =
+      !entity || !entity.recheckAvailable;
+    document.getElementById("unlink").disabled =
+      !entity || !LINK_CHANGEABLE[entity.linkState];
+    document.getElementById("relink").disabled =
+      !entity || entity.linkState !== "Entity missing";
+    document.getElementById("link").disabled = !entity || !selected.cardId;
+    document.getElementById("replace").disabled =
+      !entity || !selected.cardId || !LINK_CHANGEABLE[entity.linkState];
+    document.getElementById("copy-decision").hidden =
+      !entity || !entity.copyCollision;
+
     show(state.section);
   }
 
   document.getElementById("close").addEventListener("click", function () {
     send("close");
   });
+  document.getElementById("settings").addEventListener("click", function () {
+    send("openSettings");
+  });
   document.getElementById("connect").addEventListener("click", function () {
     send("connect");
   });
   document.getElementById("start-study").addEventListener("click", function () {
     send("startStudy");
+  });
+  var SIMPLE = {
+    "pick-entity": ["pickEntity", {mode: "pick"}],
+    "recheck": ["recheck", {}],
+    "unlink": ["unlink", {}],
+    "relink": ["pickEntity", {mode: "relink"}],
+    "undo": ["undo", {}],
+    "redo": ["redo", {}],
+    "link": ["link", {}],
+    "replace": ["replaceCard", {}],
+    "copy-original": ["copyDecision", {decision: "original_or_renamed"}],
+    "copy-new": ["copyDecision", {decision: "new_copy"}]
+  };
+  Object.keys(SIMPLE).forEach(function (id) {
+    document.getElementById(id).addEventListener("click", function () {
+      send(SIMPLE[id][0], SIMPLE[id][1]);
+    });
+  });
+  document.getElementById("filter-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    send("filter", {text: document.getElementById("filter").value});
+  });
+  document.getElementById("search").addEventListener("submit", function (event) {
+    event.preventDefault();
+    send("searchCards", {query: "", deck: document.getElementById("deck").value});
   });
   document.getElementById("save-connection").addEventListener("click", function () {
     var port = parseInt(document.getElementById("port").value, 10);

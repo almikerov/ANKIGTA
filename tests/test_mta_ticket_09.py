@@ -60,7 +60,7 @@ def test_link_mutations_are_atomic_and_identity_checked() -> None:
 def test_missing_card_is_visible_but_not_eligible_and_ui_requires_confirmation() -> None:
     identity = source(RESOURCE / "server" / "map_identity.lua")
     server = source(RESOURCE / "server" / "main.lua")
-    client = source(RESOURCE / "client" / "f7.lua")
+    client = source(RESOURCE / "client" / "panel.lua")
 
     snapshot = function_body(identity, "MapIdentity.linkSnapshot")
     assert "Card missing" in snapshot
@@ -68,12 +68,12 @@ def test_missing_card_is_visible_but_not_eligible_and_ui_requires_confirmation()
     assert "activation = false" in snapshot
     assert "statistics = false" in snapshot
     assert "markers = false" in snapshot
-    f7_keys = string_constants(RESOURCE / "client" / "f7.lua")
-    assert "f7.unlink" in f7_keys
-    assert "f7.replaceCard" in f7_keys
-    assert "oldCardIdentity" in client
-    assert "newCardIdentity" in client
-    assert "confirmation" in client.lower()
+    f7_keys = string_constants(RESOURCE / "client" / "panel.lua")
+    assert "ankigta:unlinkCardFromEntity" in f7_keys
+    assert "ankigta:replaceCardForEntity" in f7_keys
+    assert "entry.link.cardIdentity" in client
+    assert "cardIdentity()" in client
+    assert "selectedEntry" in client
     assert "SESSION_INVALIDATED_EVENT" in server
 
 

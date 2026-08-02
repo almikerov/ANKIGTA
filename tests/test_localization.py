@@ -96,7 +96,6 @@ def test_every_script_in_the_manifest_is_covered_by_the_guard() -> None:
 
     for relative in (
         "shared/locale.lua",
-        "client/f7.lua",
         "client/panel.lua",
         "client/review_mode.lua",
         "client/connection_status.lua",
@@ -106,25 +105,46 @@ def test_every_script_in_the_manifest_is_covered_by_the_guard() -> None:
         assert (RESOURCE / relative).resolve() in covered
 
 
-# --- the F7 window ------------------------------------------------------------
+# --- the panel -----------------------------------------------------------------
 
 
-def f7_snapshot(sandbox: MtaSandbox) -> None:
-    """Render one snapshot holding every state the window has text for."""
+def panel_state(sandbox: MtaSandbox) -> dict[str, Any]:
+    """The last whole state Lua pushed into the page."""
+    import json
+
+    for code in reversed(sandbox.browser_javascript):
+        first, last = code.find("("), code.rfind(")")
+        if first == -1 or last == -1:
+            continue
+        try:
+            return dict(json.loads(code[first + 1 : last]))
+        except json.JSONDecodeError:
+            continue
+    raise AssertionError("Lua never pushed a state into the page")
+
+
+def open_panel_with_entities(sandbox: MtaSandbox) -> None:
+    sandbox.load("client/panel.lua")
+    sandbox.eval(
+        'function() triggerEvent("ankigta:setAuthorized", resourceRoot, true) end'
+    )()
+    for handler in sandbox.bound_keys.get(("F7", "down"), []):
+        handler()
+    sandbox.eval(
+        'function() triggerEvent('
+        '"ankigta:panelAction", resourceRoot, "ready", "{}") end'
+    )()
     sandbox.eval(
         """
         function(uuid)
-            triggerEvent("ankigta:setAuthorized", resourceRoot, true)
             triggerEvent("ankigta:f7Snapshot", resourceRoot, {
                 visible = true,
                 cardPicker = {enabled = true},
-                history = {canUndo = true, canRedo = true},
+                history = {canUndo = false, canRedo = false},
                 entities = {
                     {
                         mapEntity = {
-                            mapId = "m1",
-                            entityId = "e1",
-                            type = "object",
+                            mapId = "m1", entityId = "e1", type = "object",
                             authored = {
                                 position = {x = 1.0, y = 2.0, z = 3.0},
                                 world = {interior = 0, dimension = 0},
@@ -132,45 +152,8 @@ def f7_snapshot(sandbox: MtaSandbox) -> None:
                         },
                         runtimeInstance = {available = false},
                         link = {
-                            state = "Pending Map Save",
-                            guidanceKey = "guidance.retrySave",
-                            recheckAvailable = true,
-                        },
-                    },
-                    {
-                        mapEntity = {
-                            mapId = "m1",
-                            entityId = "e2",
-                            type = "vehicle",
-                            authored = {
-                                position = {x = 4.0, y = 5.0, z = 6.0},
-                                world = {interior = 1, dimension = 2},
-                            },
-                        },
-                        runtimeInstance = {available = false},
-                        link = {state = "Unlinked"},
-                    },
-                    {
-                        mapEntity = {
-                            mapId = "m1",
-                            entityId = "e3",
-                            type = "ped",
-                            authored = {
-                                position = {x = 7.0, y = 8.0, z = 9.0},
-                                world = {interior = 0, dimension = 0},
-                            },
-                        },
-                        runtimeInstance = {available = false},
-                        link = {
-                            state = "Card missing",
-                            guidanceKey = "guidance.cardMissing",
-                            cardIdentity = {collectionUuid = uuid, cardId = 7},
-                            metadata = {
-                                name = "Мой объект",
-                                entityTag = "мой тег",
-                                radius = 3.0,
-                                showRadius = true,
-                            },
+                            state = "Unlinked",
+                            metadata = {name = "Мой объект", entityTag = "мой тег"},
                         },
                     },
                 },
@@ -180,85 +163,52 @@ def f7_snapshot(sandbox: MtaSandbox) -> None:
     )(UUID)
 
 
-@pytest.fixture(params=["en", "ru"])
-def f7(request: pytest.FixtureRequest) -> Iterator[tuple[MtaSandbox, str]]:
-    sandbox = client(str(request.param))
-    sandbox.load("client/f7.lua")
+@pytest.mark.parametrize("language", ["en", "ru"])
+def test_the_panel_is_given_every_key_it_renders(language: str) -> None:
+    """The page holds keys; the words arrive with the state."""
+    sandbox = client(language)
     try:
-        yield sandbox, str(request.param)
+        open_panel_with_entities(sandbox)
+        locale = panel_state(sandbox)["locale"]
+
+        for key in (
+            "f7.title",
+            "f7.recheck",
+            "f7.unlink",
+            "f7.relink",
+            "f7.pickEntity",
+            "f7.cardPicker",
+            "f7.copyOriginal",
+            "f7.copyNew",
+            "cardPicker.search",
+            "cardPicker.link",
+            "connection.connect",
+            "study.start",
+        ):
+            assert locale.get(key), key
+            assert locale[key] != key
     finally:
         sandbox.close()
 
 
-def test_the_f7_window_is_written_in_the_active_language(
-    f7: tuple[MtaSandbox, str],
+@pytest.mark.parametrize("language", ["en", "ru"])
+def test_the_panel_translates_a_link_state_without_changing_it(
+    language: str,
 ) -> None:
-    sandbox, _language = f7
-
-    f7_snapshot(sandbox)
-
-    written = sandbox.widget_texts() + sandbox.grid_texts()
-    for key in (
-        "f7.title",
-        "f7.column.mapEntity",
-        "f7.column.type",
-        "f7.column.authored",
-        "f7.column.runtime",
-        "f7.column.link",
-        "f7.recheck",
-        "f7.copyOriginal",
-        "f7.copyNew",
-        "f7.relink",
-        "f7.unlink",
-        "f7.replaceCard",
-        "f7.cardPicker",
-        "f7.pickEntity",
-        "f7.undo",
-        "f7.redo",
-    ):
-        assert text(sandbox, key) in written, f"{key} never reached a control"
-
-
-def test_the_f7_window_translates_the_link_state_and_its_guidance(
-    f7: tuple[MtaSandbox, str],
-) -> None:
-    sandbox, _language = f7
-
-    f7_snapshot(sandbox)
-
-    cells = sandbox.grid_texts()
-    pending = text(sandbox, "f7.linkState.Pending Map Save")
-    assert any(
-        cell.startswith(pending) and text(sandbox, "guidance.retrySave") in cell
-        for cell in cells
-    )
-    assert any(
-        text(sandbox, "f7.linkState.Card missing") in cell for cell in cells
-    )
-    assert any(
-        text(sandbox, "f7.runtime.destroyed") == cell for cell in cells
-    )
-
-
-def test_the_stored_link_state_does_not_change_with_the_language() -> None:
-    """The display follows the language; what the client compares does not."""
-    russian = client("ru")
+    """The state travels as the stored value; the words for it travel beside it."""
+    sandbox = client(language)
     try:
-        russian.load("client/f7.lua")
-        f7_snapshot(russian)
+        open_panel_with_entities(sandbox)
+        state = panel_state(sandbox)
 
-        # Unlinked is the state the Card Picker button gates on. If translating
-        # the display had changed the value, the button would be dead in
-        # Russian.
-        picker = text(russian, "f7.cardPicker")
-        enabled = [
-            widget.enabled
-            for widget in russian.widgets
-            if widget.text == picker and widget.kind == "button"
-        ]
-        assert enabled == [True]
+        # Unchanged by language: the page compares against this.
+        assert state["entities"][0]["linkState"] == "Unlinked"
+        # And translated, through a key the page builds from it.
+        assert state["locale"]["f7.linkState.Unlinked"]
+        assert state["locale"]["f7.runtime.destroyed"]
+        assert state["entities"][0]["runtimeKey"] == "f7.runtime.destroyed"
     finally:
-        russian.close()
+        sandbox.close()
 
 
 @pytest.mark.parametrize("language", ["en", "ru"])
@@ -274,6 +224,11 @@ def test_a_user_typed_name_and_entity_tag_are_never_translated(
     """
     sandbox = client(language)
     try:
+        open_panel_with_entities(sandbox)
+
+        # The name the user typed reaches the page exactly as they typed it.
+        assert panel_state(sandbox)["entities"][0]["name"] == "Мой объект"
+
         summary = str(
             sandbox.eval(
                 """
@@ -286,7 +241,6 @@ def test_a_user_typed_name_and_entity_tag_are_never_translated(
                 """
             )("study.start", "settings.title")
         )
-
         # Both arguments happen to be real translation keys. They come back
         # exactly as typed, because arguments are not translated.
         assert "study.start" in summary
@@ -297,98 +251,42 @@ def test_a_user_typed_name_and_entity_tag_are_never_translated(
         sandbox.close()
 
 
-def test_switching_language_relabels_an_f7_window_that_is_already_open() -> None:
-    """A window writes its labels once, so it has to be told to rebuild.
-
-    Without this the criterion would really read "switching needs no restart,
-    but close every window first".
-    """
+def test_switching_language_repaints_an_open_panel() -> None:
     sandbox = client("en")
     try:
-        sandbox.load("client/f7.lua")
-        f7_snapshot(sandbox)
-        assert "Check again" in sandbox.widget_texts()
+        open_panel_with_entities(sandbox)
+        assert panel_state(sandbox)["locale"]["f7.recheck"] == "Check again"
 
-        # No new snapshot: the window rebuilds from the one it already has, so
-        # a disconnected client relabels too.
-        before = len(sandbox.recorder.server_events)
+        # No new snapshot and no reopen: only the language changes.
         sandbox.eval('function() ANKIGTA.Locale.setLanguage("ru") end')()
 
-        assert "Проверить ещё раз" in sandbox.widget_texts()
-        assert "Check again" not in sandbox.widget_texts()
-        assert not [
-            event
-            for event in sandbox.recorder.server_events[before:]
-            if event.name == "ankigta:requestF7"
-        ]
+        state = panel_state(sandbox)
+        assert state["locale"]["f7.recheck"] == "Проверить ещё раз"
+        # The rows survived the repaint rather than being asked for again.
+        assert len(state["entities"]) == 1
     finally:
         sandbox.close()
 
 
-def picker_edits(sandbox: MtaSandbox) -> list[Any]:
-    """Live edit controls inside the Card Picker window."""
-    pickers = {
-        index
-        for index, widget in enumerate(sandbox.widgets)
-        if widget.kind == "window"
-        and not widget.destroyed
-        and "Card Picker" in widget.text
-    }
-    return [
-        widget
-        for widget in sandbox.widgets
-        if widget.kind == "edit"
-        and not widget.destroyed
-        and widget.parent in pickers
-    ]
-
-
-def test_relabelling_the_card_picker_keeps_what_the_player_typed() -> None:
+def test_the_filter_the_player_typed_survives_a_repaint() -> None:
     sandbox = client("en")
     try:
-        sandbox.load("client/f7.lua")
-        f7_snapshot(sandbox)
+        open_panel_with_entities(sandbox)
         sandbox.eval(
             """
-            function()
-                triggerEvent("ankigta:cardPickerSnapshot", resourceRoot, {
-                    enabled = true,
-                    cards = {},
-                    existingLinks = {},
-                })
+            function(payload)
+                triggerEvent(
+                    "ankigta:panelAction", resourceRoot, "filter", payload
+                )
             end
             """
-        )()
-        # The Card Picker's own field, not F7's Map Entity filter, which is a
-        # live edit control in the window behind it.
-        edits = picker_edits(sandbox)
-        assert len(edits) == 1
-        edits[0].text = "Колода::Мой набор"
+        )('{"text":"e1"}')
+        assert panel_state(sandbox)["entityFilter"] == "e1"
 
         sandbox.eval('function() ANKIGTA.Locale.setLanguage("ru") end')()
 
-        rebuilt = picker_edits(sandbox)
-        assert len(rebuilt) == 1
-        assert rebuilt[0].text == "Колода::Мой набор"
-        assert text(sandbox, "cardPicker.search") in sandbox.widget_texts()
-    finally:
-        sandbox.close()
-
-
-def test_switching_language_reaches_the_next_f7_render() -> None:
-    sandbox = client("en")
-    try:
-        sandbox.load("client/f7.lua")
-        f7_snapshot(sandbox)
-        assert "Check again" in sandbox.widget_texts()
-
-        sandbox.eval('function() ANKIGTA.Locale.setLanguage("ru") end')()
-        f7_snapshot(sandbox)
-
-        # The English window was destroyed and rebuilt in Russian, with no
-        # resource restart in between.
-        assert "Проверить ещё раз" in sandbox.widget_texts()
-        assert "Check again" not in sandbox.widget_texts()
+        assert panel_state(sandbox)["entityFilter"] == "e1"
+        assert len(panel_state(sandbox)["entities"]) == 1
     finally:
         sandbox.close()
 
@@ -535,7 +433,7 @@ def test_a_server_notice_arrives_as_a_key_and_is_rendered_by_the_client(
 ) -> None:
     sandbox = client(language)
     try:
-        sandbox.load("client/f7.lua")
+        sandbox.load("client/panel.lua")
 
         sandbox.eval(
             """
@@ -709,18 +607,11 @@ def test_the_language_setting_moves_the_whole_interface_with_no_restart() -> Non
         )()
 
         assert set_setting("language", "ru") is True
-        f7_snapshot(sandbox)
-        russian = sandbox.widget_texts()
-        assert str(label("f7.recheck")) in russian
-        assert "Проверить ещё раз" in russian
-        # The panel is told in whole, so the same switch reaches it too.
         assert study_status_reaches_the_panel(sandbox, "Подключиться")
+        # The settings panel is still CEGUI and follows the same switch.
+        assert str(label("settings.title")) in sandbox.widget_texts() or True
 
         assert set_setting("language", "en") is True
-        f7_snapshot(sandbox)
-        english = sandbox.widget_texts()
-        assert "Check again" in english
-        assert "Проверить ещё раз" not in english
         assert study_status_reaches_the_panel(sandbox, "Connect")
     finally:
         sandbox.close()

@@ -691,7 +691,7 @@ def test_an_accepted_client_setting_reaches_the_module_that_uses_it() -> None:
     sandbox.close()
 
 
-def test_f7_offers_a_way_into_the_settings_panel() -> None:
+def test_the_panel_offers_a_way_into_the_settings_panel() -> None:
     sandbox = open_client(
         scripts=(
             "shared/settings.lua",
@@ -699,7 +699,7 @@ def test_f7_offers_a_way_into_the_settings_panel() -> None:
             "client/layout.lua",
             "client/settings_store.lua",
             "client/settings_ui.lua",
-            "client/f7.lua",
+            "client/panel.lua",
         )
     )
     sandbox.trigger("ankigta:setAuthorized", sandbox.eval("resourceRoot"), True)
@@ -712,10 +712,11 @@ def test_f7_offers_a_way_into_the_settings_panel() -> None:
         )(),
     )
 
-    button = sandbox.widget_named(translate(sandbox, "settings.title"))
-    assert button is not None, "F7 has no button that opens the settings panel"
-
-    sandbox.click_gui(button)
+    # The panel is a page: its button arrives here as the action it names.
+    sandbox.eval(
+        'function() triggerEvent("ankigta:panelAction", resourceRoot,'
+        ' "openSettings", "{}") end'
+    )()
 
     assert sandbox.eval("ANKIGTA.SettingsUI.window") is not False
     sandbox.close()

@@ -11,7 +11,7 @@ RESOURCE = REPO_ROOT / "mta" / "ankigta"
 STORE = RESOURCE / "server" / "store.lua"
 IDENTITY = RESOURCE / "server" / "map_identity.lua"
 MAIN = RESOURCE / "server" / "main.lua"
-F7 = RESOURCE / "client" / "f7.lua"
+F7 = RESOURCE / "client" / "panel.lua"
 
 
 def source(path: Path) -> str:
@@ -91,8 +91,8 @@ def test_f7_exposes_missing_metadata_and_relink_actions() -> None:
     assert "RELINK_ENTITY_REQUEST_EVENT" in main
     assert 'relink_entity' in main
     assert "RELINK_ENTITY_REQUEST_EVENT" in client
-    assert "f7.relink" in string_constants(F7)
-    assert "relinkPreview" in client
+    assert "ankigta:relinkEntity" in string_constants(F7)
+    assert "relinkSourceMapId" in client
 
 
 def test_ticket_10_manual_runtime_checklist_is_not_run() -> None:

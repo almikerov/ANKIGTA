@@ -19,7 +19,7 @@ EDF = RESOURCE / "ankigta.edf"
 META = RESOURCE / "meta.xml"
 SERVER_IDENTITY = RESOURCE / "server" / "map_identity.lua"
 SERVER_MAIN = RESOURCE / "server" / "main.lua"
-CLIENT_F7 = RESOURCE / "client" / "f7.lua"
+CLIENT_F7 = RESOURCE / "client" / "panel.lua"
 SERVER_STORE = RESOURCE / "server" / "store.lua"
 
 
@@ -77,8 +77,8 @@ def test_pending_map_save_is_visible_but_ineligible_until_read_back() -> None:
     assert "pendingByEntity[entityKey(row.map_id, row.entity_id)]" in snapshot
     assert "link = ANKIGTA.MapIdentity.linkSnapshot(row)" in entity_contract
     f7_keys = string_constants(CLIENT_F7)
-    assert "f7.column.link" in f7_keys
-    assert "f7.recheck" in f7_keys
+    assert "guidanceKey = entry.link.guidanceKey" in _source(CLIENT_F7)
+    assert "ankigta:recheckPendingMapSave" in f7_keys
 
 
 def test_auto_observer_and_manual_recheck_share_independent_read_back() -> None:
@@ -248,8 +248,8 @@ def test_f7_manual_recheck_is_acl_guarded_and_repeats_only_read_back() -> None:
     assert "createMapIdentity(" not in manual_read_back
     assert "triggerServerEvent(" in client
     assert "RECHECK_REQUEST_EVENT" in client
-    assert "pendingMapId" in client
-    assert "pendingEntityId" in client
+    assert "actions.recheck" in client
+    assert "selectedEntityId" in client
 
 
 def test_automatic_activation_refreshes_open_f7_through_a_server_only_event() -> None:
@@ -318,7 +318,7 @@ def test_pending_guidance_is_honest_after_failed_read_back() -> None:
 
     assert "pending.lastReadBackOutcome" in snapshot
     assert 'guidanceKey = "guidance.retrySave"' in snapshot
-    assert "entry.link.guidanceKey" in client
+    assert "guidanceKey = entry.link.guidanceKey" in client
 
     # The guidance is a key now, so honesty is a property of what it resolves
     # to. Both languages have to name the stock Save and the recheck action,

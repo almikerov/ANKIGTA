@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 RESOURCE = REPO_ROOT / "mta" / "ankigta"
 SERVER_MAIN = RESOURCE / "server" / "main.lua"
 SERVER_STORE = RESOURCE / "server" / "store.lua"
-CLIENT_F7 = RESOURCE / "client" / "f7.lua"
+CLIENT_F7 = RESOURCE / "client" / "panel.lua"
 META = RESOURCE / "meta.xml"
 MAP = RESOURCE / "maps" / "ticket05.map"
 
@@ -439,7 +439,7 @@ def test_client_source_keeps_map_entity_visible_without_runtime_instance() -> No
     f7_keys = string_constants(CLIENT_F7)
     assert "f7.runtime.destroyed" in f7_keys
     assert "f7.runtime.notStreamed" in f7_keys
-    assert "mapEntity.mapId .." in client
+    assert "mapId = mapEntity.mapId" in client
     assert 'id="ankigta-ticket05-runtime"' in map_source
 
 
@@ -455,17 +455,18 @@ def test_client_reauthorizes_after_resource_restart_before_opening_f7() -> None:
     )
     assert 'addEventHandler("onClientResourceStart", resourceRoot' in client
     assert "triggerServerEvent(AUTHORIZATION_REQUEST_EVENT, resourceRoot)" in client
-    assert "if not authorized then" in _function_body(client, "requestF7")
+    assert "if not authorized then" in _function_body(client, "togglePanel")
 
 
 def test_f7_restores_only_the_cursor_state_it_acquired() -> None:
     client = _source(CLIENT_F7)
-    close_f7 = _function_body(client, "closeF7")
-    render_snapshot = _function_body(client, "renderSnapshot")
 
-    assert "cursorOwned = false" in client
-    assert "cursorWasShowing = false" in client
-    assert "if cursorOwned then" in close_f7
-    assert "showCursor(cursorWasShowing)" in close_f7
-    assert "cursorWasShowing = isCursorShowing()" in render_snapshot
-    assert "cursorOwned = true" in render_snapshot
+    assert "releaseCursor()" in _function_body(client, "closePanel")
+    # Taking and giving back are separate steps, so the panel can decline to
+    # take a cursor that was already showing and hand back what it found.
+    take = _function_body(client, "takeCursor")
+    assert "cursorWasShowing = isCursorShowing()" in take
+    assert "cursorOwned = true" in take
+    release = _function_body(client, "releaseCursor")
+    assert "showCursor(cursorWasShowing)" in release
+    assert "if not cursorOwned then" in release

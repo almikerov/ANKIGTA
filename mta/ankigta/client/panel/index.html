@@ -26,6 +26,7 @@
       <button type="button" id="start-study" class="primary" hidden
               data-i18n="study.start"></button>
     </div>
+    <button type="button" id="settings" class="quiet" data-i18n="settings.title"></button>
     <button type="button" id="close" class="quiet" data-i18n="common.close"></button>
   </header>
 
@@ -55,11 +56,51 @@
   </section>
 
   <section class="section entities" id="section-entities" hidden>
-    <div class="entities-head">
-      <h2 data-i18n="f7.title"></h2>
-      <span class="count" id="entity-count"></span>
+    <div class="workspace">
+
+      <div class="column">
+        <div class="column-head">
+          <h2 data-i18n="f7.title"></h2>
+          <span class="count" id="entity-count"></span>
+        </div>
+        <form class="search" id="filter-form">
+          <input type="text" id="filter" data-i18n-placeholder="f7.filter" />
+          <button type="submit" data-i18n="f7.filterApply"></button>
+        </form>
+        <div class="rows" id="rows" role="list"></div>
+        <div class="column-actions">
+          <button type="button" id="pick-entity" data-i18n="f7.pickEntity"></button>
+          <button type="button" id="recheck" data-i18n="f7.recheck"></button>
+          <button type="button" id="unlink" data-i18n="f7.unlink"></button>
+          <button type="button" id="relink" data-i18n="f7.relink"></button>
+        </div>
+        <div class="column-actions" id="copy-decision" hidden>
+          <span class="hint" data-i18n="f7.copyDecisionHint"></span>
+          <button type="button" id="copy-original" data-i18n="f7.copyOriginal"></button>
+          <button type="button" id="copy-new" data-i18n="f7.copyNew"></button>
+        </div>
+      </div>
+
+      <div class="column">
+        <div class="column-head">
+          <h2 data-i18n="cardPicker.title"></h2>
+          <div class="history">
+            <button type="button" id="undo" data-i18n="f7.undo"></button>
+            <button type="button" id="redo" data-i18n="f7.redo"></button>
+          </div>
+        </div>
+        <form class="search" id="search">
+          <input type="text" id="deck" data-i18n-placeholder="cardPicker.column.deck" />
+          <button type="submit" class="primary" data-i18n="cardPicker.search"></button>
+        </form>
+        <div class="rows" id="cards" role="list"></div>
+        <div class="column-actions">
+          <button type="button" id="link" class="primary" data-i18n="cardPicker.link"></button>
+          <button type="button" id="replace" data-i18n="f7.replaceCard"></button>
+        </div>
+      </div>
+
     </div>
-    <div class="rows" id="rows" role="list"></div>
   </section>
 
 </div>

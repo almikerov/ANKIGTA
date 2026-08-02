@@ -8,7 +8,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 STORE = REPO_ROOT / "mta" / "ankigta" / "server" / "store.lua"
 MAIN = REPO_ROOT / "mta" / "ankigta" / "server" / "main.lua"
-F7 = REPO_ROOT / "mta" / "ankigta" / "client" / "f7.lua"
+F7 = REPO_ROOT / "mta" / "ankigta" / "client" / "panel.lua"
 TICKET = REPO_ROOT / ".scratch" / "ankigta-v1" / "issues" / "11-persistent-change-history.md"
 
 

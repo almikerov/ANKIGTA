@@ -10,6 +10,7 @@ words that find one standing in front of you.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Iterator
 
 import pytest
@@ -26,7 +27,7 @@ def f7() -> Iterator[MtaSandbox]:
     sandbox.load("shared/settings.lua")
     sandbox.load("shared/locale.lua")
     sandbox.load("client/layout.lua")
-    sandbox.load("client/f7.lua")
+    sandbox.load("client/panel.lua")
     sandbox.eval('function() ANKIGTA.Locale.setLanguage("en") end')()
     try:
         yield sandbox
@@ -93,7 +94,7 @@ def matching(
         """
         function(entities, query)
             local kept = {}
-            for _, entry in ipairs(ANKIGTA.F7.matching(entities, query)) do
+            for _, entry in ipairs(ANKIGTA.Panel.matching(entities, query)) do
                 kept[#kept + 1] = entry.mapEntity.entityId
             end
             return kept
@@ -109,6 +110,12 @@ def render(sandbox: MtaSandbox, entries: list[dict[str, Any]]) -> None:
         """
         function(entities)
             triggerEvent("ankigta:setAuthorized", resourceRoot, true)
+            if not isPanelOpen() then
+                togglePanel()
+                triggerEvent(
+                    "ankigta:panelAction", resourceRoot, "ready", "{}"
+                )
+            end
             triggerEvent("ankigta:f7Snapshot", resourceRoot, {
                 contractVersion = 1,
                 visible = true,
@@ -121,33 +128,68 @@ def render(sandbox: MtaSandbox, entries: list[dict[str, Any]]) -> None:
     )(to_lua(sandbox, entries))
 
 
-def grid_entity_ids(sandbox: MtaSandbox) -> list[str]:
-    """The `mapId / entityId` cell of every live grid row.
+def act(
+    sandbox: MtaSandbox, action: str, payload: dict[str, Any] | None = None
+) -> None:
+    sandbox.eval(
+        """
+        function(name, payload)
+            triggerEvent("ankigta:panelAction", resourceRoot, name, payload)
+        end
+        """
+    )(action, json.dumps(payload or {}))
 
-    Matched on the map's own id, because one of the column headings also
-    contains a slash.
-    """
-    return [cell for cell in sandbox.grid_texts() if cell.startswith("m1 / ")]
+
+def select(sandbox: MtaSandbox, entity_id: str, *, map_id: str = "m1") -> None:
+    act(sandbox, "select", {"mapId": map_id, "entityId": entity_id})
+
+
+def panel_state(sandbox: MtaSandbox) -> dict[str, Any]:
+    """The last whole state Lua pushed into the page."""
+    import json
+
+    for code in reversed(sandbox.browser_javascript):
+        first, last = code.find("("), code.rfind(")")
+        if first == -1 or last == -1:
+            continue
+        try:
+            return dict(json.loads(code[first + 1 : last]))
+        except json.JSONDecodeError:
+            continue
+    raise AssertionError("Lua never pushed a state into the page")
+
+
+def grid_entity_ids(sandbox: MtaSandbox) -> list[str]:
+    """The `mapId / entityId` of every row the page was given."""
+    return [
+        f"{row['mapId']} / {row['entityId']}"
+        for row in panel_state(sandbox)["entities"]
+    ]
 
 
 def apply_filter(sandbox: MtaSandbox, query: str) -> None:
     """Type into the filter box and press the button, as the player does."""
-    edit = sandbox.live_widgets("edit")[0]
-    sandbox.widgets[edit].text = query
-    sandbox.click_widget("Filter")
+    sandbox.eval(
+        """
+        function(payload)
+            triggerEvent(
+                "ankigta:panelAction", resourceRoot, "filter", payload
+            )
+        end
+        """
+    )(json.dumps({"text": query}))
 
 
 def filter_box_text(sandbox: MtaSandbox) -> str:
-    return str(sandbox.widgets[sandbox.live_widgets("edit")[0]].text)
+    return str(panel_state(sandbox)["entityFilter"])
 
 
 def selected_entity_id(sandbox: MtaSandbox) -> str | None:
-    """The `mapId / entityId` of the selected grid row, or `None` if none is."""
-    grid = sandbox.widgets[sandbox.live_widgets("gridlist")[0]]
-    if grid.selected_row < 0:
+    """The `mapId / entityId` the panel holds as selected, or `None`."""
+    selected = panel_state(sandbox)["selected"]
+    if not selected.get("entityId"):
         return None
-    row = grid.rows[grid.selected_row]
-    return str(row[min(row)])
+    return f"{selected['mapId']} / {selected['entityId']}"
 
 
 def pick_entity_finished(
@@ -277,7 +319,11 @@ def test_the_window_says_how_much_it_is_hiding(f7: MtaSandbox) -> None:
 
     apply_filter(f7, "keep")
 
-    assert "Showing 1 of 3" in f7.widget_texts()
+    state = panel_state(f7)
+    assert len(state["entities"]) == 1
+    assert state["entityTotal"] == 3
+    # The page turns the pair into "Showing 1 of 3"; the key is in the table.
+    assert state["locale"]["f7.filterResult"]
 
 
 def test_clearing_the_filter_brings_the_rows_back(f7: MtaSandbox) -> None:
@@ -323,7 +369,7 @@ def test_the_dropped_filter_leaves_the_box_and_the_grid_agreeing(
     render(f7, entities)
 
     assert filter_box_text(f7) == ""
-    assert "Showing 2 of 2" in f7.widget_texts()
+    assert len(panel_state(f7)["entities"]) == 2
 
 
 def test_a_filter_that_keeps_the_selection_survives(f7: MtaSandbox) -> None:
@@ -389,13 +435,9 @@ def test_a_cancelled_relink_pick_leaves_the_filter_alone(f7: MtaSandbox) -> None
     pick_entity_finished(f7, "gone")
     render(f7, entities)
 
-    grid = f7.live_widgets("gridlist")[0]
-    f7.widgets[grid].selected_row = 0
-    f7.click_widget(grid)
+    select(f7, "gone")
     apply_filter(f7, "spare")
-    assert f7.widgets[f7.find_widget("Relink entity", "button")].enabled is True
-    f7.click_widget("Relink entity")
-    f7.click_widget("Pick target")
+    act(f7, "pickEntity", {"mode": "relink"})
 
     pick_entity_cancelled(f7, mode="relink")
     render(f7, entities)
@@ -412,23 +454,17 @@ def test_a_relink_in_progress_reveals_its_hidden_source(f7: MtaSandbox) -> None:
     entities = [missing, entry("free", name="spare")]
     render(f7, entities)
 
-    grid = f7.live_widgets("gridlist")[0]
-    f7.widgets[grid].selected_row = 0
-    f7.click_widget(grid)
-    f7.click_widget("Relink entity")
-    f7.click_widget("Pick target")
+    select(f7, "gone")
+    act(f7, "pickEntity", {"mode": "relink"})
 
-    # The player typed this before starting the relink; it hides the source.
-    render(f7, entities)
+    # The player typed this before the target came back; it hides the source.
     apply_filter(f7, "spare")
     pick_entity_finished(f7, "free", mode="relink")
     render(f7, entities)
 
-    assert grid_entity_ids(f7) == ["m1 / gone", "m1 / free"]
-    assert f7.widgets[f7.find_widget("Relink entity", "button")].enabled is True
-
-    f7.click_widget("Relink entity")
-    assert f7.widgets[f7.find_widget("Confirm", "button")].enabled is True
+    # Both are on screen: the source the relink came from and the target it is
+    # going to. Hiding either strands the operation half-done.
+    assert set(grid_entity_ids(f7)) == {"m1 / gone", "m1 / free"}
 
 
 def test_a_hidden_pending_entity_still_has_its_action(f7: MtaSandbox) -> None:
@@ -443,5 +479,14 @@ def test_a_hidden_pending_entity_still_has_its_action(f7: MtaSandbox) -> None:
 
     apply_filter(f7, "keep")
 
-    recheck = f7.widgets[f7.find_widget("Check again", "button")]
-    assert recheck.enabled is True
+    # The row is visible, so the page can offer its action: enabling lives on
+    # the page now, and what Lua owes it is the row and its recheckAvailable.
+    # The filter hides the pending row, and the action still knows its target:
+    # `recheck` acts on the selection, not on what happens to be listed.
+    select(f7, "b")
+    act(f7, "recheck")
+    assert [
+        event
+        for event in f7.recorder.server_events
+        if event.name == "ankigta:recheckPendingMapSave"
+    ]

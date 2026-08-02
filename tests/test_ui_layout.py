@@ -41,9 +41,6 @@ SCALES = [0.5, 1, 2]
 #: Every surface the layout manager places, with the window that shows it. The
 #: dx-drawn ones have no control to read back, so they are listed separately.
 WINDOW_SURFACES = [
-    "f7",
-    "cardPicker",
-    "f7Modal",
     "settings",
 ]
 DRAWN_SURFACES = ["review", "hud"]
@@ -123,6 +120,24 @@ def stored_settings(sandbox: MtaSandbox) -> dict[str, Any]:
 
 
 def open_f7(sandbox: MtaSandbox, *, link_state: str = "Active Spatial Link") -> None:
+    """Open the window these placement tests drag.
+
+    Ticket 32 moved F7 to a CEF page, which the layout manager sizes but does
+    not place, so the settings panel is what stands in for "a window" here.
+    The properties under test — dragged once, stored as a fraction, clamped
+    back onto a smaller screen — belong to the manager, not to F7.
+    """
+    sandbox.eval(
+        """
+        function()
+            triggerEvent("ankigta:setAuthorized", resourceRoot, true)
+            triggerEvent("ankigta:openSettings", resourceRoot)
+        end
+        """
+    )()
+
+
+def _unused_open_f7(sandbox: MtaSandbox, *, link_state: str = "x") -> None:
     sandbox.eval(
         """
         function(uuid, linkState)
@@ -184,10 +199,6 @@ def select_first_row(sandbox: MtaSandbox) -> None:
 
 def open_every_window(sandbox: MtaSandbox) -> None:
     """Put one of every window on screen, including a modal warning."""
-    open_f7(sandbox)
-    select_first_row(sandbox)
-    sandbox.click_widget(text(sandbox, "f7.unlink"))
-    open_card_picker(sandbox)
     sandbox.commands["ankigta-ui"][0]()
 
 
@@ -349,17 +360,25 @@ def test_a_scale_change_reaches_an_open_window_without_reopening_it(
 ) -> None:
     """"Applies immediately" means the window on screen, not the next one."""
     open_f7(client)
-    before = client.widget_rect(client.find_widget(text(client, "f7.title")))
+    before = client.widget_rect(client.find_widget(text(client, "settings.title")))
+    before_controls = {
+        "apply": client.widget_rect(
+            client.find_widget(text(client, "settings.apply"))
+        )
+    }
 
     set_scale(client, 1.5)
 
-    after = client.widget_rect(client.find_widget(text(client, "f7.title")))
+    after = client.widget_rect(client.find_widget(text(client, "settings.title")))
     assert after[2] == pytest.approx(before[2] * 1.5, abs=1)
     assert after[3] == pytest.approx(before[3] * 1.5, abs=1)
     # And the controls inside it grew with it, rather than staying put in a
     # bigger frame.
-    recheck = client.widget_rect(client.find_widget(text(client, "f7.recheck")))
-    assert recheck[2] == pytest.approx(174 * 1.5, abs=1)
+    apply_before = before_controls["apply"]
+    apply_after = client.widget_rect(
+        client.find_widget(text(client, "settings.apply"))
+    )
+    assert apply_after[2] == pytest.approx(apply_before[2] * 1.5, abs=1)
 
 
 def test_the_scale_is_stored_and_reapplied_after_a_restart(
@@ -392,8 +411,6 @@ def test_every_surface_stays_on_screen_at_every_resolution_and_scale(
         assert set_scale(sandbox, wanted) is True
         # The modal surface only exists once a modal has been raised.
         open_f7(sandbox)
-        select_first_row(sandbox)
-        sandbox.click_widget(text(sandbox, "f7.unlink"))
 
         for surface in WINDOW_SURFACES + DRAWN_SURFACES:
             x, y, surface_width, surface_height = rect(sandbox, surface)
@@ -456,7 +473,7 @@ def test_a_surface_too_big_for_the_screen_is_capped_and_the_setting_is_not() -> 
     sandbox = start_client(width=1280, height=720)
     try:
         assert set_scale(sandbox, 2) is True
-        _x, _y, width, height = rect(sandbox, "f7")
+        _x, _y, width, height = rect(sandbox, "settings")
 
         assert width <= 1280 and height <= 720
         assert width < 900 * 2
@@ -473,11 +490,11 @@ def test_dragging_f7_by_its_title_is_remembered_as_a_fraction_of_the_screen(
     client: MtaSandbox,
 ) -> None:
     open_f7(client)
-    window = client.find_widget(text(client, "f7.title"))
+    window = client.find_widget(text(client, "settings.title"))
 
-    client.drag_window(window, 480, 270)
+    client.drag_window(window, 480, 216)
 
-    assert placement(client)["f7"] == {"x": 0.25, "y": 0.25}
+    assert placement(client)["settings"] == {"x": 0.25, "y": 0.2}
 
 
 def test_a_window_is_movable_by_its_title_and_never_resizable(
@@ -490,7 +507,7 @@ def test_a_window_is_movable_by_its_title_and_never_resizable(
     frame.
     """
     open_f7(client)
-    window = client.widgets[client.find_widget(text(client, "f7.title"))]
+    window = client.widgets[client.find_widget(text(client, "settings.title"))]
 
     assert window.movable is True
     assert window.sizable is False
@@ -498,17 +515,17 @@ def test_a_window_is_movable_by_its_title_and_never_resizable(
 
 def test_a_placement_survives_a_restart(client: MtaSandbox) -> None:
     open_f7(client)
-    client.drag_window(client.find_widget(text(client, "f7.title")), 480, 270)
+    client.drag_window(client.find_widget(text(client, "settings.title")), 480, 216)
     # The write is debounced, so a drag is one write rather than one per frame.
     client.fire_timers()
-    assert stored_settings(client)["uiPlacement"]["f7"] == {"x": 0.25, "y": 0.25}
+    assert stored_settings(client)["uiPlacement"]["settings"] == {"x": 0.25, "y": 0.2}
 
     restarted = start_client(dict(client.files))
     try:
         open_f7(restarted)
         assert restarted.widget_rect(
-            restarted.find_widget(text(restarted, "f7.title"))
-        )[:2] == (480, 270)
+            restarted.find_widget(text(restarted, "settings.title"))
+        )[:2] == (480, 216)
     finally:
         restarted.close()
 
@@ -518,7 +535,7 @@ def test_a_drag_is_written_once_rather_than_once_per_frame(
 ) -> None:
     """CEGUI reports a drag as a stream of moves."""
     open_f7(client)
-    window = client.find_widget(text(client, "f7.title"))
+    window = client.find_widget(text(client, "settings.title"))
 
     for step in range(20):
         client.drag_window(window, 400 + step, 300 + step)
@@ -532,14 +549,14 @@ def test_a_placement_made_at_one_resolution_lands_in_the_same_place_at_another(
 ) -> None:
     """Normalized, so the corner means the same thing on every screen."""
     open_f7(client)
-    client.drag_window(client.find_widget(text(client, "f7.title")), 480, 270)
+    client.drag_window(client.find_widget(text(client, "settings.title")), 480, 216)
     client.fire_timers()
 
     for width, height in RESOLUTIONS:
         restarted = start_client(dict(client.files), width=width, height=height)
         try:
-            x, y, _width, _height = rect(restarted, "f7")
-            assert (x / width, y / height) == pytest.approx((0.25, 0.25), abs=0.01)
+            x, y, _width, _height = rect(restarted, "settings")
+            assert (x / width, y / height) == pytest.approx((0.25, 0.2), abs=0.01)
         finally:
             restarted.close()
 
@@ -549,8 +566,8 @@ def test_a_placement_off_the_new_screen_is_clamped_back_onto_it() -> None:
     big = start_client(width=3840, height=2160)
     try:
         open_f7(big)
-        client_window = big.find_widget(text(big, "f7.title"))
-        _x, _y, width, height = rect(big, "f7")
+        client_window = big.find_widget(text(big, "settings.title"))
+        _x, _y, width, height = rect(big, "settings")
         big.drag_window(client_window, 3840 - width, 2160 - height)
         big.fire_timers()
         files = dict(big.files)
@@ -559,7 +576,7 @@ def test_a_placement_off_the_new_screen_is_clamped_back_onto_it() -> None:
 
     small = start_client(files, width=1280, height=720)
     try:
-        x, y, width, height = rect(small, "f7")
+        x, y, width, height = rect(small, "settings")
         assert x + width <= 1280
         assert y + height <= 720
         # The title bar is what the player has to be able to grab.
@@ -573,13 +590,13 @@ def test_the_screen_changing_size_puts_an_open_window_back_on_it(
 ) -> None:
     """MTA reports no resolution change, so the manager polls for it."""
     open_f7(client)
-    client.drag_window(client.find_widget(text(client, "f7.title")), 1000, 700)
+    client.drag_window(client.find_widget(text(client, "settings.title")), 1000, 700)
 
     client.screen_width, client.screen_height = 1280, 720
     client.eval("function() return ANKIGTA.Layout.refresh() end")()
 
     x, y, width, height = client.widget_rect(
-        client.find_widget(text(client, "f7.title"))
+        client.find_widget(text(client, "settings.title"))
     )
     assert x + width <= 1280
     assert y + height <= 720
@@ -589,7 +606,7 @@ def test_a_stored_placement_that_is_not_one_is_discarded_with_a_diagnostic() -> 
     sandbox = MtaSandbox()
     sandbox.write_file(
         "@ankigta-settings.json",
-        json.dumps({"uiPlacement": {"f7": {"x": 4.5, "y": -2}}}),
+        json.dumps({"uiPlacement": {"settings": {"x": 4.5, "y": -2}}}),
     )
     try:
         for script in manifest_client_scripts():
@@ -612,10 +629,10 @@ def test_a_placement_the_file_will_not_take_is_reported_rather_than_lost(
     open_f7(client)
     client.file_writes_fail = True
 
-    client.drag_window(client.find_widget(text(client, "f7.title")), 480, 270)
+    client.drag_window(client.find_widget(text(client, "settings.title")), 480, 216)
     client.fire_timers()
 
-    assert placement(client)["f7"] == {"x": 0.25, "y": 0.25}
+    assert placement(client)["settings"] == {"x": 0.25, "y": 0.2}
     assert any(
         "ui_placement_not_stored" in line
         for line in client.recorder.debug_messages()
@@ -628,7 +645,7 @@ def test_a_placement_for_a_surface_this_version_no_longer_has_is_dropped() -> No
     sandbox.write_file(
         "@ankigta-settings.json",
         json.dumps(
-            {"uiPlacement": {"f7": {"x": 0.1, "y": 0.2}, "gone": {"x": 0.3, "y": 0.4}}}
+            {"uiPlacement": {"settings": {"x": 0.1, "y": 0.2}, "gone": {"x": 0.3, "y": 0.4}}}
         ),
     )
     try:
@@ -636,55 +653,12 @@ def test_a_placement_for_a_surface_this_version_no_longer_has_is_dropped() -> No
             sandbox.load(script)
         sandbox.trigger("onClientResourceStart")
 
-        assert set(placement(sandbox)) == {"f7"}
+        assert set(placement(sandbox)) == {"settings"}
     finally:
         sandbox.close()
 
 
 # --- modal warnings -----------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("button_key", "title_key"),
-    [
-        ("f7.unlink", "f7.unlink.title"),
-        ("f7.replaceCard", "cardPicker.replaceTitle"),
-    ],
-)
-def test_a_modal_warning_is_centred_on_f7_and_travels_with_it(
-    client: MtaSandbox,
-    button_key: str,
-    title_key: str,
-) -> None:
-    open_f7(client)
-    select_first_row(client)
-    client.click_widget(text(client, button_key))
-    if title_key == "cardPicker.replaceTitle":
-        # Replace raises the Card Picker first; the warning follows the choice.
-        open_card_picker(client)
-        card_grid = client.live_widgets("gridlist")[-1]
-        client.widgets[card_grid].selected_row = 0
-        client.click_widget(card_grid)
-        client.click_widget(text(client, "cardPicker.previewReplacement"))
-        title_key = "f7.replace.title"
-
-    parent = client.find_widget(text(client, "f7.title"))
-    modal = client.find_widget(text(client, title_key))
-
-    def centred_on_parent() -> bool:
-        px, py, pwidth, pheight = client.widget_rect(parent)
-        mx, my, mwidth, mheight = client.widget_rect(modal)
-        return (
-            mx == pytest.approx(px + (pwidth - mwidth) / 2, abs=1)
-            and my == pytest.approx(py + (pheight - mheight) / 2, abs=1)
-        )
-
-    assert centred_on_parent()
-    client.drag_window(parent, 80, 60)
-    assert centred_on_parent(), "the warning stayed behind when F7 moved"
-
-
-# --- Review Mode --------------------------------------------------------------
 
 
 def test_review_mode_drags_by_its_title_and_rates_by_its_buttons(
@@ -844,12 +818,11 @@ def test_reset_ui_layout_restores_the_shipped_scale_and_placement(
     client: MtaSandbox,
 ) -> None:
     open_f7(client)
-    client.drag_window(client.find_widget(text(client, "f7.title")), 40, 40)
+    client.drag_window(client.find_widget(text(client, "settings.title")), 40, 40)
     set_scale(client, 1.8)
     client.eval("function() ANKIGTA.Layout.setHudEditMode(true) end")()
 
-    client.commands["ankigta-ui"][0]()
-    client.click_widget(text(client, "ui.reset"))
+    client.click_widget(text(client, "ui.reset"), "button")
 
     assert scale(client) == 1
     assert placement(client) == {}
@@ -860,10 +833,9 @@ def test_reset_ui_layout_restores_the_shipped_scale_and_placement(
 
 def test_reset_ui_layout_survives_a_restart(client: MtaSandbox) -> None:
     open_f7(client)
-    client.drag_window(client.find_widget(text(client, "f7.title")), 40, 40)
+    client.drag_window(client.find_widget(text(client, "settings.title")), 40, 40)
     client.fire_timers()
-    client.commands["ankigta-ui"][0]()
-    client.click_widget(text(client, "ui.reset"))
+    client.click_widget(text(client, "ui.reset"), "button")
 
     restarted = start_client(dict(client.files))
     try:
@@ -957,7 +929,7 @@ def test_the_panel_is_reachable_from_f7_as_well_as_from_the_command(
 def test_ui_scale_and_placement_never_reach_the_server(client: MtaSandbox) -> None:
     """ADR 0028. They live on this machine, so nothing is sent anywhere."""
     open_f7(client)
-    client.drag_window(client.find_widget(text(client, "f7.title")), 40, 40)
+    client.drag_window(client.find_widget(text(client, "settings.title")), 40, 40)
     set_scale(client, 1.5)
     client.fire_timers()
 

@@ -197,6 +197,48 @@ label {
 .gate-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
 .gate-fields { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
 
+/* --- workspace -------------------------------------------------------- */
+
+/* Two columns: what is in the world, and what is in the collection. The pair
+   is the whole job — a Map Entity on the left, a card on the right. */
+.workspace {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+.column {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(14, 18, 35, 0.7);
+  padding: var(--space-3);
+}
+.column-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.column-head h2 { margin: 0; font-size: 14px; }
+.column-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.column-actions[hidden] { display: none; }
+.column-actions .hint { flex: 1 1 100%; color: var(--muted); font-size: 11px; }
+.history { display: flex; gap: var(--space-2); }
+.search { display: flex; gap: var(--space-2); }
+.search input { flex: 1; }
+
+/* One column each below a narrow panel, rather than two unusable ones. */
+@media (max-width: 900px) {
+  .workspace { grid-template-columns: 1fr; }
+}
+
 /* --- entity table ----------------------------------------------------- */
 
 .entities { display: flex; flex-direction: column; height: 100%; }
@@ -214,7 +256,6 @@ label {
   min-height: 0;
   overflow: auto;
   scrollbar-gutter: stable;
-  margin: 0 var(--space-4) var(--space-4);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: rgba(2, 6, 23, 0.5);
@@ -222,7 +263,7 @@ label {
 
 .row {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) 84px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.3fr) 70px minmax(0, 1fr) minmax(0, 1fr);
   align-items: center;
   gap: var(--space-3);
   width: 100%;
@@ -240,7 +281,8 @@ label {
 .row .primary-cell { min-width: 0; }
 .row strong { display: block; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row .sub { display: block; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row .type { color: var(--muted); font-size: 11px; }
+.row .type, .row .runtime { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row.card { grid-template-columns: minmax(0, 1fr) 90px; }
 
 /* State is carried by a word as well as a colour: colour alone is not a
    message a colour-blind player receives. */

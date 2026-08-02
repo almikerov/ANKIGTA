@@ -15,7 +15,7 @@ RESOURCE = REPO_ROOT / "mta" / "ankigta"
 IDENTITY = RESOURCE / "server" / "map_identity.lua"
 STORE = RESOURCE / "server" / "store.lua"
 MAIN = RESOURCE / "server" / "main.lua"
-F7 = RESOURCE / "client" / "f7.lua"
+F7 = RESOURCE / "client" / "panel.lua"
 META = RESOURCE / "meta.xml"
 
 
@@ -95,9 +95,9 @@ def test_copy_decision_is_visible_in_f7_and_new_copy_has_no_link_transfer() -> N
     meta = source(META)
 
     f7_keys = string_constants(F7)
-    assert "f7.copyDecisionHint" in f7_keys
-    assert "f7.copyOriginal" in f7_keys
-    assert "f7.copyNew" in f7_keys
+    assert "ankigta:resolveMapCopyDecision" in f7_keys
+    assert "original_or_renamed" in f7_keys
+    assert "new_copy" in f7_keys
     assert "COPY_DECISION_REQUEST_EVENT" in client
     assert "copyCollision" in main
     assert "resolveCopyDecision" in main

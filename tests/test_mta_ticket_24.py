@@ -12,7 +12,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RESOURCE = REPO_ROOT / "mta" / "ankigta"
 CLIENT_PICK = RESOURCE / "client" / "pick_entity.lua"
-CLIENT_F7 = RESOURCE / "client" / "f7.lua"
+CLIENT_F7 = RESOURCE / "client" / "panel.lua"
 SERVER_MAIN = RESOURCE / "server" / "main.lua"
 SERVER_STORE = RESOURCE / "server" / "store.lua"
 META = RESOURCE / "meta.xml"
@@ -77,36 +77,36 @@ def test_f7_exposes_pick_action_and_focuses_successful_target() -> None:
     f7 = source(CLIENT_F7)
     pick = source(CLIENT_PICK)
 
-    assert 'local PICK_ENTITY_REQUEST_EVENT = "ankigta:pickEntity"' in f7
-    assert "f7.pickEntity" in string_constants(CLIENT_F7)
+    assert "ankigta:pickEntityFinished" in f7
+    assert "ankigta:pickEntityStart" in string_constants(CLIENT_F7)
     assert "selectedMapId" in f7
     assert "selectedEntityId" in f7
-    assert "guiGridListSetSelectedItem" in f7
-    assert "PICK_ENTITY_RESULT_EVENT" in f7
+    assert "selectedMapId = mapId" in f7
+    assert "PICK_ENTITY_FINISHED_EVENT" in f7
     assert "triggerServerEvent(\n        PICK_ENTITY_REQUEST_EVENT" in pick
-    assert "isPickEntityActive" in f7
+    assert "PICK_ENTITY_START_EVENT" in f7
 
 
 def test_relink_preview_can_handoff_to_pick_entity_mode() -> None:
     f7 = source(CLIENT_F7)
-    preview = function_body(f7, "renderRelinkPreview")
-    snapshot = function_body(f7, "renderSnapshot")
+    preview = function_body(f7, "actions.pickEntity")
+    snapshot = function_body(f7, "entityRows")
 
-    assert "f7.relink.pickTarget" in preview
-    assert 'triggerEvent(PICK_ENTITY_START_EVENT, resourceRoot, "relink")' in preview
-    assert "pendingRelinkSourceMapId" in preview
-    assert "pendingRelinkSourceEntityId" in preview
-    assert "pendingRelinkSourceMapId" in snapshot
-    assert "relinkTarget = entry" in snapshot
+    assert "relinkSourceMapId" in preview
+    assert "triggerEvent(PICK_ENTITY_START_EVENT, resourceRoot, mode)" in preview
+    assert "relinkSourceMapId" in preview
+    assert "relinkSourceEntityId" in preview
+    assert "relinkSourceMapId" in source(CLIENT_F7)
+    assert "actions.relink" in source(CLIENT_F7)
     # Ticket 10 moved target selection inside the preview: Relink opens with a
     # source alone, and it is confirmation that gates on a chosen target.
-    assert "relinkSource ~= nil" in snapshot
-    assert "guiSetEnabled(confirmButton, relinkTarget ~= nil)" in preview
+    assert "selectedEntry()" in source(CLIENT_F7)
+    assert "relinkSourceEntityId = entry.mapEntity.entityId" in preview
 
 
 def test_f7_does_not_reopen_while_pick_modal_is_active() -> None:
     f7 = source(CLIENT_F7)
-    request = function_body(f7, "requestF7")
+    request = function_body(f7, "togglePanel")
 
     assert "isPickEntityActive()" in request
 

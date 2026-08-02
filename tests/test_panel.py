@@ -433,3 +433,147 @@ def test_opening_the_panel_asks_for_the_status_it_has_not_been_told(
     press_f7(client)
 
     assert server_events(client, "ankigta:requestCompanionStatus")
+
+
+# --- the workspace actions ----------------------------------------------------
+
+
+def linked_snapshot(sandbox: MtaSandbox) -> None:
+    sandbox.eval(
+        """
+        function(uuid)
+            triggerEvent("ankigta:f7Snapshot", resourceRoot, {
+                visible = true,
+                cardPicker = {enabled = true},
+                history = {canUndo = true, canRedo = true},
+                entities = {
+                    {
+                        mapEntity = {
+                            mapId = "m1", entityId = "e1", type = "object",
+                            authored = {
+                                position = {x = 1.0, y = 2.0, z = 3.0},
+                                world = {interior = 0, dimension = 0},
+                            },
+                        },
+                        runtimeInstance = {available = true},
+                        link = {
+                            state = "Active Spatial Link",
+                            recheckAvailable = true,
+                            cardIdentity = {collectionUuid = uuid, cardId = 7},
+                        },
+                    },
+                },
+            })
+        end
+        """
+    )(UUID)
+
+
+def open_workspace(sandbox: MtaSandbox) -> None:
+    authorize(sandbox)
+    announce(sandbox, state="connected")
+    press_f7(sandbox)
+    page_ready(sandbox)
+    linked_snapshot(sandbox)
+    act(sandbox, "select", {"mapId": "m1", "entityId": "e1"})
+
+
+def test_every_workspace_action_reaches_the_event_it_always_did(
+    client: MtaSandbox,
+) -> None:
+    """The panel replaces the windows; it does not replace the protocol."""
+    open_workspace(client)
+
+    act(client, "unlink")
+    act(client, "recheck")
+    act(client, "copyDecision", {"decision": "new_copy"})
+    act(client, "undo")
+    act(client, "redo")
+    act(client, "searchCards", {"query": "", "deck": "Chinese"})
+
+    for name in (
+        "ankigta:unlinkCardFromEntity",
+        "ankigta:recheckPendingMapSave",
+        "ankigta:resolveMapCopyDecision",
+        "ankigta:undo",
+        "ankigta:redo",
+        "ankigta:requestCardPicker",
+    ):
+        assert server_events(client, name), name
+
+
+def test_an_action_with_nothing_selected_sends_nothing(client: MtaSandbox) -> None:
+    """A button that acts on "whatever was last in the list" is how a
+    confirmation ends up applied to the wrong row."""
+    authorize(client)
+    announce(client, state="connected")
+    press_f7(client)
+    page_ready(client)
+    linked_snapshot(client)
+
+    act(client, "unlink")
+    act(client, "recheck")
+
+    assert server_events(client, "ankigta:unlinkCardFromEntity") == []
+    assert server_events(client, "ankigta:recheckPendingMapSave") == []
+
+
+def test_linking_needs_both_a_map_entity_and_a_card(client: MtaSandbox) -> None:
+    open_workspace(client)
+
+    act(client, "link")
+    assert server_events(client, "ankigta:linkCardToEntity") == []
+
+    act(client, "selectCard", {"cardId": "7", "collectionUuid": UUID})
+    act(client, "link")
+
+    events = server_events(client, "ankigta:linkCardToEntity")
+    assert events
+    identity = client.to_python(events[-1].args[2])
+    assert identity["cardId"] == 7
+    assert identity["collectionUuid"] == UUID
+
+
+def test_the_card_list_is_not_ordered_by_card_id(client: MtaSandbox) -> None:
+    """Named by the owner as a defect of the previous attempt."""
+    open_workspace(client)
+    client.eval(
+        """
+        function(uuid)
+            triggerEvent("ankigta:cardPickerSnapshot", resourceRoot, {
+                enabled = true,
+                cards = {
+                    {identity = {collectionUuid = uuid, cardId = 1},
+                     deck = {name = "Zebra"}, state = "review"},
+                    {identity = {collectionUuid = uuid, cardId = 9},
+                     deck = {name = "Alpha"}, state = "review"},
+                },
+            })
+        end
+        """
+    )(UUID)
+
+    cards = last_state(client)["cardPicker"]["cards"]
+    assert [card["deck"] for card in cards] == ["Alpha", "Zebra"]
+
+
+def test_a_server_notice_reaches_the_panel_as_well_as_the_chat(
+    client: MtaSandbox,
+) -> None:
+    open_workspace(client)
+
+    client.eval(
+        """
+        function()
+            triggerEvent(
+                "ankigta:pendingMapSaveNotice",
+                resourceRoot,
+                "notice.unlinked",
+                "unlink"
+            )
+        end
+        """
+    )()
+
+    assert last_state(client)["notice"]["key"] == "notice.unlinked"
+    assert client.chat

@@ -299,7 +299,7 @@ def measure_f7_entity_filter(dataset: ReferenceDataset) -> Measurement:
         narrow = client.eval(
             """
             function(entities, query)
-                return #ANKIGTA.F7.matching(entities, query)
+                return #ANKIGTA.Panel.matching(entities, query)
             end
             """
         )
@@ -316,7 +316,7 @@ def measure_f7_entity_filter(dataset: ReferenceDataset) -> Measurement:
         samples=tuple(samples),
         context={
             "measures": (
-                "ANKIGTA.F7.matching over every Map Entity in the snapshot: "
+                "ANKIGTA.Panel.matching over every Map Entity in the snapshot: "
                 "identity, name, Entity Tag, type and Spatial Link state"
             ),
             "excludes": (

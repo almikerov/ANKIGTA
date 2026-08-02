@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 RESOURCE = REPO_ROOT / "mta" / "ankigta"
 SERVER_MAIN = RESOURCE / "server" / "main.lua"
 SERVER_STORE = RESOURCE / "server" / "store.lua"
-CLIENT_F7 = RESOURCE / "client" / "f7.lua"
+CLIENT_F7 = RESOURCE / "client" / "panel.lua"
 SERVER_COMPANION = RESOURCE / "server" / "companion.lua"
 
 
@@ -84,13 +84,13 @@ def test_pending_and_collision_links_are_ineligible_and_picker_is_presented() ->
     assert 'state = "Pending Map Save"' in identity
     assert "activation = false" in identity
     assert "identity_collision" in server or "collision" in identity
-    assert "f7.cardPicker" in string_constants(CLIENT_F7)
+    assert "ankigta:requestCardPicker" in string_constants(CLIENT_F7)
     assert "CARD_PICKER" in client
-    assert "link.state == \"Unlinked\"" in client
+    assert "Unlinked" in client
     assert "triggerServerEvent" in client
-    assert "deckFilterEdit" in client
-    assert "guiGridListGetSelectedItem(cardGrid)" in client
-    assert "existingLinks" in client
+    assert "actions.searchCards" in client
+    assert "actions.selectCard" in client
+    assert "linkedTo = card.linkedTo" in client
 
 
 def test_card_picker_uses_read_only_companion_search_and_pending_preparation() -> None:

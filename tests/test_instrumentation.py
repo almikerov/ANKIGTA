@@ -398,7 +398,18 @@ def test_the_search_the_player_started_carries_the_wait_they_had(
     # A picker that opened on its own is not a search anyone waited for.
     assert report(client)["search"]["pageMs"] is False
 
-    client.click_widget("Search cards", "button")
+    # The panel is a page: the button lives in HTML, and pressing it arrives
+    # here as the action the page names.
+    client.eval(
+        """
+        function()
+            triggerEvent(
+                "ankigta:panelAction", resourceRoot, "searchCards",
+                '{"query":"","deck":"Default"}'
+            )
+        end
+        """
+    )()
     client.advance(500)
     open_picker(UUID, 400)
 
