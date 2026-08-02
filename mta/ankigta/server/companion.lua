@@ -54,6 +54,7 @@ local Gateway = {
     status = {
         state = "disconnected",
         category = false,
+        sessionCategory = false,
         requestId = false,
         httpStatus = false,
         warningCategory = false,
@@ -230,13 +231,21 @@ local function setStatus(request, state, category, httpStatus)
     local context = request.configContext or {}
     local warningCategory = context.warningCategory or false
     local study = request.study or previous.study
+    -- Carried separately from `category`, which describes the connection. A
+    -- session that will not start says so without claiming the link is down.
+    local sessionCategory = request.sessionCategory
+    if sessionCategory == nil then
+        sessionCategory = previous.sessionCategory or false
+    end
     local changed = previous.state ~= state
         or previous.category ~= (category or false)
         or previous.warningCategory ~= warningCategory
+        or (previous.sessionCategory or false) ~= sessionCategory
         or toJSON(previous.study, true) ~= toJSON(study, true)
     Gateway.status = {
         state = state,
         category = category or false,
+        sessionCategory = sessionCategory,
         requestId = request.requestId,
         httpStatus = httpStatus or false,
         warningCategory = warningCategory,
@@ -370,6 +379,21 @@ local function sessionTimeout(requestId, generation)
     end
 end
 
+--- Did the companion itself answer, in its own protocol?
+-- Told apart from a dead link, a proxy page or a truncated body: the envelope
+-- has to name this protocol, this version, this request and carry an error the
+-- companion wrote. Anything less is the transport being in doubt.
+function companionAnswered(response, requestId)
+    return type(response) == "table"
+        and response.protocol == PROTOCOL_NAME
+        and response.protocolVersion == PROTOCOL_VERSION
+        and response.requestId == requestId
+        and response.ok == false
+        and type(response.error) == "table"
+        and type(response.error.category) == "string"
+        and response.error.category ~= ""
+end
+
 local function sessionCallback(body, info, requestId, generation)
     local request = Gateway.sessionPending[requestId]
     if not request
@@ -403,10 +427,22 @@ local function sessionCallback(body, info, requestId, generation)
             and type(response.error) == "table"
             and response.error.category
             or "protocol_error"
+        -- A refused session is not a lost connection. When the companion
+        -- answered in its own protocol -- right request id, well-formed error
+        -- -- it is reachable and talking, and only the session failed.
+        -- `session_unavailable` is the ordinary state before Start studying,
+        -- and reporting it as disconnected made the connection window reopen
+        -- every few seconds over a healthy link.
+        if companionAnswered(response, requestId) then
+            request.sessionCategory = category
+            setStatus(request, "connected", false, httpStatus)
+            return
+        end
         setStatus(request, "disconnected", category, httpStatus)
         return
     end
     request.study = response.payload.session
+    request.sessionCategory = false
     setStatus(request, "connected", false, httpStatus)
 end
 
