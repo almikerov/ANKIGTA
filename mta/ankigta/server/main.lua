@@ -1520,6 +1520,245 @@ function reviewModeOpenCard()
     return openReview and openReview.cardIdentity or false
 end
 
+-- Study state: counters, candidates and the next target ----------------------
+--
+-- One refresh answers three questions that have to agree with each other: how
+-- much work there is, which Spatial Link may open by itself, and which Map
+-- Entity carries the marker. They are all statements about the same moment, so
+-- they come from one read of the world and one answer from Anki.
+--
+-- Nothing here decides a card's state or which card is next. Both come from
+-- Anki through the companion (ADR 0017); a card Anki did not report on is
+-- simply not counted and not activated.
+
+local SPATIAL_CANDIDATES_EVENT = "ankigta:spatialCandidates"
+local NEXT_CARD_EVENT = "ankigta:nextCard"
+local STATISTICS_EVENT = "ankigta:statistics"
+local SPATIAL_OPEN_REQUEST_EVENT = "ankigta:requestSpatialOpen"
+local CARD_STATES_REFRESHED_EVENT = "ankigta:cardStatesRefreshed"
+local STUDY_STATE_EVENT = "ankigta:studyStateChanged"
+
+local EMPTY_COUNTS = {new = 0, learning = 0, due = 0, early = 0, total = 0}
+
+--- Which observed card states a Spatial Link may activate on.
+--
+-- The same table `Statistics` counts by, for the same reason: a card that is
+-- not part of the work to be done is not a card to walk into. `not_due` is
+-- conditional on the early-review setting and is handled where it is read.
+local ACTIVATABLE_STATES = {
+    new = true,
+    learning = true,
+    review = true,
+    not_due = "early",
+}
+
+local function includedMapSet()
+    local included = {}
+    for _, preference in ipairs(ANKIGTA.SettingsStore.mapPreferences()) do
+        if preference.includeInStudy == true then
+            included[preference.mapId] = true
+        end
+    end
+    return included
+end
+
+local function cardStateKey(collectionUuid, cardId)
+    return tostring(collectionUuid) .. "/" .. tostring(cardId)
+end
+
+--- Tell the client there is nothing to watch.
+--
+-- Sent rather than left implicit: this is how `Pause studying` turns the
+-- Activation Zone and the marker off, and a client that simply stopped hearing
+-- from the server would keep the last set forever.
+local function sendPausedStudyState(player)
+    triggerClientEvent(player, STATISTICS_EVENT, resourceRoot, EMPTY_COUNTS)
+    triggerClientEvent(player, SPATIAL_CANDIDATES_EVENT, resourceRoot, {})
+    triggerClientEvent(player, NEXT_CARD_EVENT, resourceRoot, false, {})
+end
+
+--- Ask Anki for the state of every linked card, and for the next one.
+local function refreshStudyState(player)
+    if not playerAuthorization(player) then
+        return false, "forbidden"
+    end
+    local identities, identityError = activeCardIdentities()
+    if not identities then
+        return false, identityError
+    end
+    if #identities == 0 then
+        sendPausedStudyState(player)
+        return true
+    end
+    return ANKIGTA.CompanionGateway.requestCardStates(player, identities)
+end
+
+addEvent(CARD_STATES_REFRESHED_EVENT, false)
+addEventHandler(CARD_STATES_REFRESHED_EVENT, resourceRoot, function(
+    player,
+    cardStates,
+    nextCard
+)
+    if source ~= resourceRoot or not playerAuthorization(player) then
+        return
+    end
+    local rows = ANKIGTA.Store.listMapEntities()
+    if type(rows) ~= "table" then
+        return
+    end
+    local includedMaps = includedMapSet()
+    local allowEarlyReview =
+        ANKIGTA.SettingsStore.get("allowEarlyReview") == true
+
+    triggerClientEvent(
+        player,
+        STATISTICS_EVENT,
+        resourceRoot,
+        ANKIGTA.Statistics.summarize(
+            rows,
+            cardStates,
+            includedMaps,
+            allowEarlyReview
+        )
+    )
+
+    -- Identities and metadata only. Where the Runtime Instance is now is the
+    -- client's to read off the live element (Implementation Decision 14), and
+    -- a coordinate sent from here would be the authored one wearing the
+    -- current one's name.
+    local candidates, bearers = {}, {}
+    for _, row in ipairs(rows) do
+        if row.link_state == "active"
+            and includedMaps[row.map_id] == true
+            and type(row.collection_uuid) == "string"
+            and tonumber(row.card_id) ~= nil
+        then
+            local state = cardStates[
+                cardStateKey(row.collection_uuid, tonumber(row.card_id))
+            ]
+            local activatable = state and ACTIVATABLE_STATES[state] or false
+            if activatable == "early" and not allowEarlyReview then
+                -- Preview only, so not something to walk into (story 35).
+                activatable = false
+            end
+            if activatable then
+                local cardIdentity = {
+                    collectionUuid = row.collection_uuid,
+                    cardId = tonumber(row.card_id),
+                }
+                local candidate = {
+                    mapId = row.map_id,
+                    entityId = row.entity_id,
+                    cardIdentity = cardIdentity,
+                    radius = tonumber(row.radius) or 3,
+                    showRadius = tonumber(row.show_radius) == 1,
+                    eligible = true,
+                }
+                table.insert(candidates, candidate)
+                if sameCardIdentity(cardIdentity, nextCard) then
+                    table.insert(bearers, {
+                        mapId = row.map_id,
+                        entityId = row.entity_id,
+                    })
+                end
+            end
+        end
+    end
+
+    triggerClientEvent(
+        player,
+        SPATIAL_CANDIDATES_EVENT,
+        resourceRoot,
+        candidates
+    )
+    triggerClientEvent(
+        player,
+        NEXT_CARD_EVENT,
+        resourceRoot,
+        (#bearers > 0 and nextCard) or false,
+        bearers
+    )
+end)
+
+addEvent(STUDY_STATE_EVENT, false)
+addEventHandler(STUDY_STATE_EVENT, resourceRoot, function(player, status)
+    if source ~= resourceRoot or not playerAuthorization(player) then
+        return
+    end
+    local study = type(status) == "table" and status.study or nil
+    if type(study) ~= "table" or study.sessionActive ~= true then
+        sendPausedStudyState(player)
+        return
+    end
+    refreshStudyState(player)
+end)
+
+-- Link, unlink, replace and relink all pass through here, and each of them
+-- changes what may activate.
+addEventHandler(SESSION_INVALIDATED_EVENT, resourceRoot, function(player)
+    if source == resourceRoot and playerAuthorization(player) then
+        refreshStudyState(player)
+    end
+end)
+
+--- Open the card a Spatial Link points at, because the player walked into it.
+--
+-- The client names a Map Entity; the server decides which card that is. Going
+-- through `openReviewModeFor` is the point: spatial opening is not a second
+-- way into Review Mode, so it cannot skip Exact Card Admission on the way.
+function openSpatialReview(player, mapId, entityId, proposedIdentity)
+    local authorized, authorizationError = playerAuthorization(player)
+    if not authorized then
+        return false, authorizationError.category
+    end
+    if type(mapId) ~= "string" or type(entityId) ~= "string" then
+        return false, "invalid_map_entity"
+    end
+    local row, readError = ANKIGTA.Store.getMapEntity(mapId, entityId)
+    if not row then
+        return false, readError or "entity_missing"
+    end
+    if row.link_state ~= "active" then
+        return false, "link_not_active"
+    end
+    local identity = cardIdentityFromRow(row)
+    if not identity then
+        return false, "invalid_card_identity"
+    end
+    -- A stale client proposal is refused rather than silently corrected: the
+    -- card it is about is not the card it would open.
+    if proposedIdentity ~= nil
+        and proposedIdentity ~= false
+        and not sameCardIdentity(identity, proposedIdentity)
+    then
+        return false, "card_changed"
+    end
+    return openReviewModeFor(player, identity)
+end
+
+addEvent(SPATIAL_OPEN_REQUEST_EVENT, true)
+addEventHandler(SPATIAL_OPEN_REQUEST_EVENT, resourceRoot, function(
+    mapId,
+    entityId,
+    cardIdentity
+)
+    if not client or source ~= resourceRoot then
+        return
+    end
+    local opened, reason = openSpatialReview(client, mapId, entityId, cardIdentity)
+    if not opened and reason ~= "review_open" then
+        -- A card already being open is the ordinary case while one is open,
+        -- not something to tell the player about.
+        triggerClientEvent(
+            client,
+            PENDING_NOTICE_EVENT,
+            resourceRoot,
+            "notice.spatialOpenFailed",
+            reason
+        )
+    end
+end)
+
 -- Teleport -------------------------------------------------------------------
 
 local TELEPORT_REQUEST_EVENT = "ankigta:teleportToEntity"
@@ -1558,6 +1797,27 @@ addEventHandler(TELEPORT_REQUEST_EVENT, resourceRoot, function(mapId, entityId)
     teleportPlayerToMapEntity(client, mapId, entityId)
 end)
 
+--- Stopping the resource has to reach Anki, not only the database.
+--
+-- A stop that only closed SQLite would leave every card of the session sitting
+-- in the owned filtered deck, in a deck the user did not put them in, with
+-- nothing left running to take them out (story 46). So the stop is asked for
+-- here, before the store closes.
+--
+-- Best effort, and documented as such: MTA tears a resource's pending
+-- `fetchRemote` down with the resource, so a stop issued at teardown may never
+-- reach the companion. What makes that recoverable rather than lost is that
+-- the companion owns the deck and rebuilds it from scratch on the next
+-- session start, and that `Pause studying` and `Stop` do the same thing while
+-- something is still running to hear the answer. The removal instructions in
+-- `docs/operations/installation.md` say to use one of them first for exactly
+-- this reason.
 addEventHandler("onResourceStop", resourceRoot, function()
+    for _, player in ipairs(getElementsByType("player")) do
+        if playerAuthorization(player) then
+            ANKIGTA.CompanionGateway.requestSessionStop(player)
+            break
+        end
+    end
     ANKIGTA.Store.close()
 end)

@@ -5,7 +5,10 @@ local PROTOCOL_VERSION = 1
 local HEALTH_PATH = "/v1/health"
 local CARD_SEARCH_PATH = "/v1/cards/search"
 local CARD_READ_PATH = "/v1/cards/read"
+local CARD_STATES_PATH = "/v1/cards/states"
 local CARD_STATE_REFRESHED_EVENT = "ankigta:cardStateRefreshed"
+local CARD_STATES_REFRESHED_EVENT = "ankigta:cardStatesRefreshed"
+local STUDY_STATE_EVENT = "ankigta:studyStateChanged"
 local SESSION_START_PATH = "/v1/session/start"
 local SESSION_REBUILD_PATH = "/v1/session/rebuild"
 local SESSION_PAUSE_PATH = "/v1/session/pause"
@@ -37,6 +40,8 @@ local Gateway = {
     cardPending = {},
     cardStateGeneration = 0,
     cardStatePending = {},
+    cardStatesGeneration = 0,
+    cardStatesPending = {},
     sessionGeneration = 0,
     sessionPending = {},
     reviewGeneration = 0,
@@ -251,6 +256,16 @@ local function setStatus(request, state, category, httpStatus)
             )
         )
         presentStatus(request.player)
+        -- Starting, pausing and stopping a session all land here, and each of
+        -- them changes what may activate in the world. Announced rather than
+        -- acted on: this module talks to Anki, and what the world does about
+        -- the answer belongs to the module that owns the world.
+        triggerEvent(
+            STUDY_STATE_EVENT,
+            resourceRoot,
+            request.player,
+            Gateway.status
+        )
     end
 end
 
@@ -1269,6 +1284,203 @@ function Gateway.requestCardState(player, cardIdentity)
     return true, requestId
 end
 
+-- Card states and the next card ----------------------------------------------
+--
+-- One query rather than two. The HUD counters, which Spatial Link may activate
+-- and which Map Entity carries the marker are all answers about the same
+-- moment, and asking twice would let them disagree about it.
+
+local function cardStatesFailure(player, category)
+    if isElement(player) then
+        triggerClientEvent(
+            player,
+            "ankigta:pendingMapSaveNotice",
+            resourceRoot,
+            "notice.studyStateUnavailable",
+            category
+        )
+    end
+end
+
+local function validCardStatesPayload(payload)
+    if type(payload) ~= "table" or type(payload.cardStates) ~= "table" then
+        return false
+    end
+    for key, state in pairs(payload.cardStates) do
+        if type(key) ~= "string" or type(state) ~= "string" then
+            return false
+        end
+    end
+    -- `nextCard` is absent when no session is running. MTA's fromJSON gives a
+    -- JSON null as boolean false, so both spellings of "there isn't one" are
+    -- accepted and nothing else is.
+    local nextCard = payload.nextCard
+    if nextCard ~= nil and nextCard ~= false then
+        if type(nextCard) ~= "table"
+            or type(nextCard.collectionUuid) ~= "string"
+            or nextCard.collectionUuid == ""
+            or type(nextCard.cardId) ~= "number"
+            or nextCard.cardId ~= math.floor(nextCard.cardId)
+            or nextCard.cardId <= 0
+        then
+            return false
+        end
+    end
+    return true
+end
+
+local function timeoutCardStates(requestId, generation)
+    local request = Gateway.cardStatesPending[requestId]
+    if not request
+        or request.generation ~= generation
+        or request.settled
+    then
+        return
+    end
+    request.settled = true
+    Gateway.cardStatesPending[requestId] = nil
+    if request.handle then
+        abortRemoteRequest(request.handle)
+    end
+    cardStatesFailure(request.player, "timeout")
+end
+
+local function cardStatesCallback(body, info, requestId, generation)
+    local request = Gateway.cardStatesPending[requestId]
+    if not request
+        or request.generation ~= generation
+        or request.settled
+    then
+        Gateway.quarantinedCallbacks = Gateway.quarantinedCallbacks + 1
+        return
+    end
+    request.settled = true
+    Gateway.cardStatesPending[requestId] = nil
+    if type(info) ~= "table"
+        or tonumber(info.statusCode) ~= 200
+        or not isJsonContentType(info.headers)
+    then
+        cardStatesFailure(request.player, "protocol_error")
+        return
+    end
+    local response = decodeJson(body)
+    if type(response) ~= "table"
+        or response.protocol ~= PROTOCOL_NAME
+        or response.protocolVersion ~= PROTOCOL_VERSION
+        or response.requestId ~= requestId
+        or response.ok ~= true
+        or not validCardStatesPayload(response.payload)
+    then
+        cardStatesFailure(request.player, "protocol_error")
+        return
+    end
+    triggerEvent(
+        CARD_STATES_REFRESHED_EVENT,
+        resourceRoot,
+        request.player,
+        response.payload.cardStates,
+        response.payload.nextCard or false
+    )
+end
+
+--- Ask Anki what state each linked card is in, and which is next.
+function Gateway.requestCardStates(player, identities)
+    if not canPresentTo(player) then
+        return false, "forbidden"
+    end
+    if type(identities) ~= "table" then
+        return false, "invalid_anki_card_identity"
+    end
+    local body = {}
+    for _, identity in ipairs(identities) do
+        if type(identity) ~= "table"
+            or type(identity.collectionUuid) ~= "string"
+            or identity.collectionUuid == ""
+            or (tonumber(identity.cardId) or 0) <= 0
+        then
+            return false, "invalid_anki_card_identity"
+        end
+        body[#body + 1] = {
+            collectionUuid = identity.collectionUuid,
+            cardId = tonumber(identity.cardId),
+        }
+    end
+    local effective, category = ANKIGTA.ConnectionConfig.loadEffective()
+    if not effective then
+        cardStatesFailure(player, category)
+        return false, category
+    end
+    Gateway.cardStatesGeneration = Gateway.cardStatesGeneration + 1
+    local requestId = string.format(
+        "card-states-%d-%d",
+        getTickCount(),
+        Gateway.cardStatesGeneration
+    )
+    local request = {
+        requestId = requestId,
+        generation = Gateway.cardStatesGeneration,
+        player = player,
+        settled = false,
+        handle = false,
+    }
+    Gateway.cardStatesPending[requestId] = request
+    setTimer(
+        timeoutCardStates,
+        REQUEST_TIMEOUT_MS,
+        1,
+        requestId,
+        request.generation
+    )
+    local envelope = encodeJson({
+        protocol = PROTOCOL_NAME,
+        protocolVersion = PROTOCOL_VERSION,
+        requestId = requestId,
+        cardIdentities = body,
+    })
+    if not envelope then
+        request.settled = true
+        Gateway.cardStatesPending[requestId] = nil
+        cardStatesFailure(player, "protocol_error")
+        return false, "json_encode_failed"
+    end
+    local headers = {
+        ["Accept"] = "application/json",
+        ["Content-Type"] = "application/json; charset=utf-8",
+    }
+    if type(effective.token) == "string" and effective.token ~= "" then
+        headers["Authorization"] = "Bearer " .. effective.token
+    end
+    request.handle = fetchRemote(
+        string.format(
+            "http://127.0.0.1:%d%s",
+            effective.port,
+            CARD_STATES_PATH
+        ),
+        {
+            method = "POST",
+            postData = envelope,
+            postIsBinary = false,
+            headers = headers,
+            queueName = "ankigta-card-states",
+            connectionAttempts = 1,
+            connectTimeout = 4000,
+            maxRedirects = 0,
+        },
+        cardStatesCallback,
+        {
+            requestId,
+            generation = request.generation,
+        }
+    )
+    if not request.handle then
+        request.settled = true
+        Gateway.cardStatesPending[requestId] = nil
+        cardStatesFailure(player, "transport_error")
+        return false, "fetch_rejected"
+    end
+    return true, requestId
+end
+
 local function cardPickerCallback(body, info, requestId, generation)
     local request = Gateway.cardPending[requestId]
     if not request
@@ -1524,6 +1736,11 @@ local function sendSettingsSnapshot(player)
         ANKIGTA.ConnectionConfig.getSanitizedStatus()
     )
 end
+
+-- Server-only, both of them: a client that could raise either would be a
+-- client deciding what Anki said.
+addEvent(CARD_STATES_REFRESHED_EVENT, false)
+addEvent(STUDY_STATE_EVENT, false)
 
 addEvent(CONNECT_EVENT, true)
 addEventHandler(CONNECT_EVENT, resourceRoot, function()

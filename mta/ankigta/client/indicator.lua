@@ -166,9 +166,19 @@ local hud = {
     counts = false,
     cardIdentity = false,
     candidates = {},
+    -- Where the live candidates come from, when something owns the runtime
+    -- index. `client/spatial.lua` does, and fills in the position the Runtime
+    -- Instance is at now; the event carries identities only.
+    candidateSource = false,
     blip = false,
     pulse = 0,
 }
+
+--- Read the candidates from `source` rather than from the last event.
+function Indicator.setCandidateSource(source)
+    hud.candidateSource = type(source) == "function" and source or false
+    return true
+end
 
 local function clearBlip()
     if isElement(hud.blip) then
@@ -199,7 +209,7 @@ end
 function Indicator.refresh()
     local current = Indicator.plan(
         playerObservation(),
-        hud.candidates,
+        hud.candidateSource and hud.candidateSource() or hud.candidates,
         hud.cardIdentity
     )
     if not current.blip then

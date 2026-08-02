@@ -29,17 +29,26 @@ python -m tests.perf --report .scratch/ticket30-report.json
 It prints one line per threshold, writes the evidence as JSON, and exits
 non-zero if anything blocks the release.
 
-Two things to know before starting, both recorded as open findings on ticket 30:
+Two things to know before starting. Both were open findings on ticket 30 and
+were closed by ticket 31, so what this pass observes is different from what the
+original text described:
 
-- **Nothing yet drives the Activation Zone or the Next Card Indicator in a
-  running resource.** The rules are implemented and tested; the polling that
-  feeds them a player position and a candidate list is not written, and no
-  server code sends `ankigta:nextCard`. Until it is, the scenarios below that
-  ask for a card to open by walking into a zone, or for a marker to appear, have
-  nothing to observe — record them as blocked rather than as failed.
-- **F7's Map Entity list has no search or filter box.** Where a scenario below
-  says to filter, that is the Card Picker's deck filter. The 150 ms promise in
-  story 58 is measured against it.
+- **The Activation Zone and the Next Card Indicator are driven now.**
+  `client/spatial.lua` polls the world every 250 ms, feeds `Activation.update`
+  a player observation and a candidate list, and asks the server to open the
+  card through the ordinary Review Mode path; the server sends the candidate
+  set, the HUD counters and `ankigta:nextCard`. The scenarios below that ask
+  for a card to open by walking into a zone now have something to observe.
+- **F7 has a Map Entity filter.** It searches the stored record — identity,
+  name, Entity Tag, type and Spatial Link state — and does not depend on
+  streaming. The 150 ms promise in story 58 covers it and the Card Picker's
+  deck filter; the benchmark measures them as `f7_entity_filter` and
+  `search_filter`.
+
+Because the scan no longer runs on every rendered frame, the per-frame number
+this pass compares against is the amortised one: `spatial_frame` in the report
+is the marker and the HUD every frame plus one full pass every 250 ms, and
+`pollMsMax` in its context is what a single full pass costs.
 
 ## Scenarios
 
@@ -52,6 +61,10 @@ Two things to know before starting, both recorded as open findings on ticket 30:
 - Type a deck name into the Card Picker filter and press Search. Time to the
   first page. Confirm the wait reads as immediate rather than as a pause you
   notice.
+- Type into F7's own Map Entity filter and press Filter over the same ten
+  thousand entities. Time it by stopwatch, and confirm the grid repopulates
+  without the window going blank. The automated number excludes CEGUI
+  repopulating the rows, which is the part only this pass can see.
 - Scroll the F7 list from top to bottom. Confirm scrolling stays smooth and no
   row renders blank while it catches up.
 - Confirm no card is rendered by any of the above: nothing loads CEF until a

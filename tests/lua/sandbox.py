@@ -56,6 +56,12 @@ RESOURCE_ROOT = Path(__file__).resolve().parents[2] / "mta" / "ankigta"
 
 IN_MEMORY = ":memory:"
 
+#: What the client-side `localPlayer` global is in this harness. MTA hands out
+#: a player element; here it is a sentinel the world accessors recognise, so a
+#: test moves the player by setting `sandbox.player_position` rather than by
+#: reaching into a Lua table.
+LOCAL_PLAYER = "localPlayer"
+
 
 class LuaError(AssertionError):
     """A Lua script failed to load or run."""
@@ -399,6 +405,13 @@ class MtaSandbox:
         self.vehicle_occupants: dict[int, Any] = {}
         self.moved: list[dict[str, Any]] = []
         self.world_elements: list[Any] = []
+        #: Where the client-side player is, what world context they are in, and
+        #: how fast they are moving. Velocity is in GTA's own units per physics
+        #: step, which is what `getElementVelocity` reports.
+        self.player_position: tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self.player_interior = 0
+        self.player_dimension = 0
+        self.player_velocity: tuple[float, float, float] = (0.0, 0.0, 0.0)
         self.blips: list[Any] = []
         #: Every control the resource created, in creation order.
         self.widgets: list[Widget] = []
@@ -421,9 +434,14 @@ class MtaSandbox:
 
     # ---------------------------------------------------------------- loading
 
-    def load(self, relative_path: str) -> None:
-        """Load a resource script, e.g. `server/store.lua`."""
-        path = RESOURCE_ROOT / relative_path
+    def load(self, relative_path: str, *, root: Path | None = None) -> None:
+        """Load a resource script, e.g. `server/store.lua`.
+
+        `root` names a different copy of the resource to load it from, which is
+        how the certification suite runs the unpacked artifact rather than the
+        working tree it was built from.
+        """
+        path = (root or RESOURCE_ROOT) / relative_path
         source = path.read_text(encoding="utf-8")
         chunk = self.lua.eval("loadstring")(source, f"@{relative_path}")
         if chunk is None:
@@ -1136,6 +1154,41 @@ class MtaSandbox:
         self.acl_rights[right] = True
         return player
 
+    def add_world_element(
+        self,
+        kind: str = "object",
+        *,
+        x: float = 0.0,
+        y: float = 0.0,
+        z: float = 0.0,
+        interior: int = 0,
+        dimension: int = 0,
+        streamed: bool = True,
+        **element_data: Any,
+    ) -> Any:
+        """A Map Editor-created element the client can find and read.
+
+        Element data is set the way EDF sets it, so a lookup by
+        `ankigtaEntityId` finds the same thing the resource would find.
+        """
+        element = self.lua.table_from(
+            {
+                "__element": True,
+                "__streamed": streamed,
+                "type": kind,
+                "x": float(x),
+                "y": float(y),
+                "z": float(z),
+                "interior": int(interior),
+                "dimension": int(dimension),
+            }
+        )
+        for key, value in element_data.items():
+            element[key] = value
+        self.world_elements.append(element)
+        self._elements.add(id(element))
+        return element
+
     def to_python(self, value: Any) -> Any:
         """Convert a Lua value the scripts produced into plain Python.
 
@@ -1322,12 +1375,14 @@ class MtaSandbox:
 
         g.setElementDamageProof = set_damage_proof
         g.isElementDamageProof = is_damage_proof
-        g.localPlayer = "localPlayer"
+        g.localPlayer = LOCAL_PLAYER
         g.getPedOccupiedVehicle = lambda _ped=None: self.occupied_vehicle
         # --- world manipulation ---------------------------------------------
         def get_element_position(element: Any) -> Any:
             if self.position_read_fails:
                 return False
+            if element == LOCAL_PLAYER:
+                return self.player_position
             if (
                 self.vanish_after_position_read is not None
                 and element is not None
@@ -1339,6 +1394,25 @@ class MtaSandbox:
             if lua_type(element) != "table":
                 return False
             return element["x"], element["y"], element["z"]
+
+        def get_element_velocity(element: Any) -> Any:
+            # Units per physics step, the way GTA stores it -- see
+            # `CTimer::ms_fTimeStep` in `Client/game_sa/CGameSA.cpp`. MTA
+            # exposes no speed accessor, so the caller converts.
+            if element == LOCAL_PLAYER:
+                return self.player_velocity
+            if lua_type(element) != "table":
+                return False
+            return (
+                element["vx"] or 0.0,
+                element["vy"] or 0.0,
+                element["vz"] or 0.0,
+            )
+
+        def is_element_streamed_in(element: Any) -> bool:
+            if lua_type(element) != "table":
+                return False
+            return element["__streamed"] is not False
 
         def set_element_position(element: Any, x: float, y: float, z: float, *_r: Any) -> bool:
             self._record_move(element, position=(float(x), float(y), float(z)))
@@ -1353,11 +1427,17 @@ class MtaSandbox:
             return True
 
         g.getElementPosition = get_element_position
+        g.getElementVelocity = get_element_velocity
+        g.isElementStreamedIn = is_element_streamed_in
         g.getElementInterior = lambda e=None: (
-            e["interior"] if lua_type(e) == "table" else 0
+            e["interior"]
+            if lua_type(e) == "table"
+            else (self.player_interior if e == LOCAL_PLAYER else 0)
         )
         g.getElementDimension = lambda e=None: (
-            e["dimension"] if lua_type(e) == "table" else 0
+            e["dimension"]
+            if lua_type(e) == "table"
+            else (self.player_dimension if e == LOCAL_PLAYER else 0)
         )
         g.setElementPosition = set_element_position
         g.setElementInterior = set_element_interior

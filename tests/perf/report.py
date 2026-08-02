@@ -57,6 +57,13 @@ THRESHOLDS: tuple[Threshold, ...] = (
         criterion="F7 available <=2 s; search/filter <=150 ms.",
     ),
     Threshold(
+        key="f7_entity_filter",
+        statement="F7's Map Entity filter narrows the list",
+        limit=150.0,
+        unit="ms",
+        criterion="F7 available <=2 s; search/filter <=150 ms.",
+    ),
+    Threshold(
         key="spatial_frame",
         statement="Activation Zone, Pick Entity and HUD, per frame",
         limit=2.0,

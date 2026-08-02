@@ -1,4 +1,7 @@
 {
   "name": "ANKIGTA Companion",
-  "package": "ankigta_companion"
+  "package": "ankigta_companion",
+  "version": "1.0.0",
+  "homepage": "https://github.com/almikerov/ankigta",
+  "conflicts": []
 }

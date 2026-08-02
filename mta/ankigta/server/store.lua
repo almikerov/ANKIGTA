@@ -1028,9 +1028,36 @@ function Store.listIdentityCollisions()
     if not Store.ready then
         return false, Store.errorCategory or "storage_unavailable"
     end
+    -- Joined rather than keyed: the only caller rebuilds the whole collision
+    -- record from this row on resource start, and it needs the map's locator,
+    -- the entity's type and the link it was blocking. Returning the key alone
+    -- left it concatenating a nil map name into a path -- on every start, for
+    -- any user who had ever had a collision, aborting `onResourceStart` before
+    -- the presence refresh and the authorization broadcast ran.
     local ok, rows = execute(
         Store.connection,
-        "SELECT map_id, entity_id, reason FROM identity_collisions"
+        [[
+            SELECT
+                identity_collisions.map_id,
+                identity_collisions.entity_id,
+                identity_collisions.reason,
+                maps.resource_name,
+                maps.map_name,
+                map_entities.entity_type,
+                spatial_links.collection_uuid,
+                spatial_links.card_id,
+                spatial_links.verified_map_sha256
+            FROM identity_collisions
+            INNER JOIN maps
+                ON maps.map_id = identity_collisions.map_id
+            INNER JOIN map_entities
+                ON map_entities.map_id = identity_collisions.map_id
+                AND map_entities.entity_id = identity_collisions.entity_id
+            LEFT JOIN spatial_links
+                ON spatial_links.map_id = identity_collisions.map_id
+                AND spatial_links.entity_id = identity_collisions.entity_id
+            ORDER BY identity_collisions.map_id, identity_collisions.entity_id
+        ]]
     )
     if not ok then
         return false, "identity_collision_read_failed"

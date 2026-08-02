@@ -326,6 +326,24 @@ def test_switching_language_relabels_an_f7_window_that_is_already_open() -> None
         sandbox.close()
 
 
+def picker_edits(sandbox: MtaSandbox) -> list[Any]:
+    """Live edit controls inside the Card Picker window."""
+    pickers = {
+        index
+        for index, widget in enumerate(sandbox.widgets)
+        if widget.kind == "window"
+        and not widget.destroyed
+        and "Card Picker" in widget.text
+    }
+    return [
+        widget
+        for widget in sandbox.widgets
+        if widget.kind == "edit"
+        and not widget.destroyed
+        and widget.parent in pickers
+    ]
+
+
 def test_relabelling_the_card_picker_keeps_what_the_player_typed() -> None:
     sandbox = client("en")
     try:
@@ -342,19 +360,15 @@ def test_relabelling_the_card_picker_keeps_what_the_player_typed() -> None:
             end
             """
         )()
-        edits = [
-            widget for widget in sandbox.widgets
-            if widget.kind == "edit" and not widget.destroyed
-        ]
+        # The Card Picker's own field, not F7's Map Entity filter, which is a
+        # live edit control in the window behind it.
+        edits = picker_edits(sandbox)
         assert len(edits) == 1
         edits[0].text = "Колода::Мой набор"
 
         sandbox.eval('function() ANKIGTA.Locale.setLanguage("ru") end')()
 
-        rebuilt = [
-            widget for widget in sandbox.widgets
-            if widget.kind == "edit" and not widget.destroyed
-        ]
+        rebuilt = picker_edits(sandbox)
         assert len(rebuilt) == 1
         assert rebuilt[0].text == "Колода::Мой набор"
         assert text(sandbox, "cardPicker.search") in sandbox.widget_texts()

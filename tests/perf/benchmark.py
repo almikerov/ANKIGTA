@@ -68,6 +68,10 @@ CEILING_SAMPLES = 6
 #: Frames simulated per batch for the per-frame budget, and how many batches.
 FRAME_SAMPLES = 120
 FRAME_BATCHES = 8
+#: Polls per batch. Far fewer than frames, because one poll walks the whole
+#: reference world and eight batches of a hundred and twenty would be a minute
+#: of benchmark for a number that settles in a handful.
+POLL_SAMPLES = 8
 #: Session rebuilds: the first build, then repeats, so the number is not only
 #: the first-ever one.
 REBUILD_SAMPLES = 3
@@ -193,10 +197,8 @@ def measure_f7(dataset: ReferenceDataset) -> Measurement:
 def measure_search_filter(dataset: ReferenceDataset) -> Measurement:
     """The deck filter narrowing the Card Picker to its first page.
 
-    This is the search/filter the 150 ms promise is about, and the only one
-    ANKIGTA has: F7's own list is not filterable, so there is no entity-level
-    search to time. That gap is a finding of this benchmark and is written up
-    with the ticket rather than hidden behind a number for something else.
+    One of the two searches the 150 ms promise covers; F7's own Map Entity
+    filter is the other, and is measured as `f7_entity_filter`.
 
     Measured over the same loopback the Card Picker's unfiltered first page
     goes over, and differing from it only in what the query narrows to — which
@@ -247,9 +249,9 @@ def measure_search_filter(dataset: ReferenceDataset) -> Measurement:
                 "Anki's own find_cards, which the reference collection answers "
                 "from a generated index rather than from Anki's search"
             ),
-            "absent": (
-                "F7's Map Entity list has no search or filter surface, so "
-                "there is no entity-level filter to time"
+            "companion": (
+                "the other half of the same 150 ms promise is F7's own Map "
+                "Entity filter, measured separately as f7_entity_filter"
             ),
             "deckFilter": deck,
             "cardsInCollection": dataset.anki_cards,
@@ -259,67 +261,166 @@ def measure_search_filter(dataset: ReferenceDataset) -> Measurement:
     )
 
 
-# --- the per-frame budget -----------------------------------------------------
-
-
-FRAME_LUA = """
-function(candidates, identity, frames)
-    local player = {
-        x = 0, y = 0, z = 0, interior = 0, dimension = 0,
-        speedKmh = 0, reviewOpen = false,
-    }
-    local worst = 0
-    local started = getTickCount()
-    for frame = 1, frames do
-        -- Walk, so the nearest candidate really changes and the scan cannot be
-        -- answered from whatever the previous frame happened to leave behind.
-        player.x = frame * 0.5
-        ANKIGTA.Activation.update(frame / 60, player, candidates)
-        ANKIGTA.Indicator.plan(player, candidates, identity)
-        ANKIGTA.Indicator.hudText()
+F7_ENTITIES_LUA = """
+function(count)
+    local entities = {}
+    for index = 1, count do
+        entities[index] = {
+            mapEntity = {
+                mapId = "ticket30-reference",
+                entityId = string.format("ref-%06d", index - 1),
+                type = "object",
+            },
+            metadata = {
+                name = "Entity " .. index,
+                entityTag = "bucket-" .. (index % 20),
+            },
+            link = {state = "Active Spatial Link"},
+        }
     end
-    return getTickCount() - started
+    return entities
 end
 """
 
 
-def measure_spatial_frame(dataset: ReferenceDataset) -> Measurement:
-    """The per-frame cost of the Activation Zone, the indicator and the HUD.
+def measure_f7_entity_filter(dataset: ReferenceDataset) -> Measurement:
+    """F7's Map Entity filter narrowing the reference world.
 
-    Every Spatial Link is offered as a candidate, which is the worst case: the
-    whole reference world streamed in at once, in the player's own interior and
+    The other half of story 58's 150 ms promise, and the one story 51 asks for:
+    a filter over every managed Map Entity of the loaded maps, which does not
+    depend on current streaming and so is measured with no world at all.
+    """
+    samples: list[float] = []
+    kept = 0
+    with _client_side() as client:
+        # Built in Lua rather than marshalled from Python: ten thousand nested
+        # tables crossing the boundary would cost more than the measurement.
+        entities = client.eval(F7_ENTITIES_LUA)(dataset.map_entities)
+        narrow = client.eval(
+            """
+            function(entities, query)
+                return #ANKIGTA.F7.matching(entities, query)
+            end
+            """
+        )
+        # A query that keeps a handful out of ten thousand, which is what a
+        # player types when they are looking for one door.
+        narrow(entities, "ref-000123")
+        for _ in range(CEILING_SAMPLES):
+            started = time.perf_counter()
+            kept = int(narrow(entities, "ref-000123"))
+            samples.append(_milliseconds(started))
+
+    return Measurement(
+        key="f7_entity_filter",
+        samples=tuple(samples),
+        context={
+            "measures": (
+                "ANKIGTA.F7.matching over every Map Entity in the snapshot: "
+                "identity, name, Entity Tag, type and Spatial Link state"
+            ),
+            "excludes": (
+                "CEGUI clearing and repopulating the grid with the rows that "
+                "survive, which no automated check can time"
+            ),
+            "entities": dataset.map_entities,
+            "matched": kept,
+        },
+    )
+
+
+# --- the per-frame budget -----------------------------------------------------
+
+
+#: The frame rate the per-frame budget is stated against. Story 58 says
+#: "average frame time" without naming a rate, and the amortised cost of
+#: anything that does not run every frame depends on one.
+REFERENCE_FPS = 60.0
+FRAME_MS = 1000.0 / REFERENCE_FPS
+
+FRAME_LUA = """
+function(markers, identity, frames)
+    local player = {
+        x = 0, y = 0, z = 0, interior = 0, dimension = 0,
+        speedKmh = 0, reviewOpen = false,
+    }
+    for frame = 1, frames do
+        -- Walk, so the marker really moves and nothing can be answered from
+        -- whatever the previous frame happened to leave behind.
+        player.x = frame * 0.5
+        ANKIGTA.Indicator.plan(player, markers, identity)
+        ANKIGTA.Indicator.hudText()
+    end
+end
+"""
+
+POLL_LUA = """
+function(candidates, polls)
+    local player = {
+        x = 0, y = 0, z = 0, interior = 0, dimension = 0,
+        speedKmh = 0, reviewOpen = false,
+    }
+    for poll = 1, polls do
+        player.x = poll * 4
+        ANKIGTA.Activation.update(poll, player, candidates)
+    end
+end
+"""
+
+
+def _reference_candidates(client: MtaSandbox, dataset: ReferenceDataset) -> Any:
+    return client.lua.table_from(
+        [
+            client.lua.table_from(
+                {
+                    "mapId": "ticket30-reference",
+                    "entityId": f"ref-{index:06d}",
+                    "x": float(index % 500) * 4.0,
+                    "y": float(index // 500) * 4.0,
+                    "z": float(index % 7),
+                    "radius": 3.0,
+                    "interior": 0,
+                    "dimension": 0,
+                    "eligible": True,
+                    "present": True,
+                    "hasActivationZone": True,
+                    "cardIdentity": client.lua.table_from(
+                        {
+                            "collectionUuid": dataset.collection_uuid,
+                            "cardId": 1_000_000 + index,
+                        }
+                    ),
+                }
+            )
+            for index in range(dataset.spatial_links)
+        ]
+    )
+
+
+def measure_spatial_frame(dataset: ReferenceDataset) -> Measurement:
+    """The average frame time the Activation Zone, the marker and the HUD add.
+
+    Two costs, because they run at two rates. The marker and the HUD line are
+    drawn every frame. The Activation Zone is not: `client/spatial.lua` polls
+    the world on a timer, and the cadence it polls at is read out of the
+    resource here rather than restated, so changing it moves this number.
+
+    The scan is measured at the worst case the reference world allows -- every
+    Spatial Link streamed in, eligible, and in the player's own interior and
     dimension, so nothing is skipped by a cheap check before the distance test.
     """
     samples: list[float] = []
+    poll_samples: list[float] = []
     with _client_side() as client:
-        candidates = client.lua.table_from(
-            [
-                client.lua.table_from(
-                    {
-                        "mapId": "ticket30-reference",
-                        "entityId": f"ref-{index:06d}",
-                        "x": float(index % 500) * 4.0,
-                        "y": float(index // 500) * 4.0,
-                        "z": float(index % 7),
-                        "radius": 3.0,
-                        "interior": 0,
-                        "dimension": 0,
-                        "eligible": True,
-                        "present": True,
-                        "hasActivationZone": True,
-                        "cardIdentity": client.lua.table_from(
-                            {
-                                "collectionUuid": dataset.collection_uuid,
-                                "cardId": 1_000_000 + index,
-                            }
-                        ),
-                    }
-                )
-                for index in range(dataset.spatial_links)
-            ]
-        )
+        candidates = _reference_candidates(client, dataset)
+        # What the marker actually walks: the entities carrying one card, which
+        # is what the server sends and what the runtime index resolves.
+        markers = client.lua.table_from([candidates[1], candidates[2]])
         identity = client.lua.table_from(
-            {"collectionUuid": dataset.collection_uuid, "cardId": 1_000_000}
+            {"collectionUuid": dataset.collection_uuid, "cardId": 1_000_001}
+        )
+        interval_ms = float(
+            client.eval("function() return ANKIGTA.Spatial.pollIntervalMs() end")()
         )
         client.eval(
             "function() return ANKIGTA.Indicator.setMode('sphere_and_minimap') end"
@@ -336,28 +437,48 @@ def measure_spatial_frame(dataset: ReferenceDataset) -> Measurement:
             )
         )
         frame = client.eval(FRAME_LUA)
-        # One warm-up batch: the first pass pays for Lua's own lazy work, and a
-        # frame budget is about the frames after the first.
-        frame(candidates, identity, 10)
+        poll = client.eval(POLL_LUA)
+        # One warm-up of each: the first pass pays for Lua's own lazy work, and
+        # a frame budget is about the frames after the first.
+        frame(markers, identity, 10)
+        poll(candidates, 1)
         for _ in range(FRAME_BATCHES):
             started = time.perf_counter()
-            frame(candidates, identity, FRAME_SAMPLES)
-            samples.append(_milliseconds(started) / FRAME_SAMPLES)
+            frame(markers, identity, FRAME_SAMPLES)
+            drawn = _milliseconds(started) / FRAME_SAMPLES
+
+            started = time.perf_counter()
+            poll(candidates, POLL_SAMPLES)
+            polled = _milliseconds(started) / POLL_SAMPLES
+
+            poll_samples.append(polled)
+            # A poll every `interval_ms` costs this much of every frame.
+            samples.append(drawn + polled * FRAME_MS / interval_ms)
 
     return Measurement(
         key="spatial_frame",
         samples=tuple(samples),
         context={
             "measures": (
-                "Activation.update, Indicator.plan and the HUD line, per frame, "
-                "with every Spatial Link streamed in and eligible"
+                "Indicator.plan and the HUD line every frame, plus "
+                "Activation.update over every Spatial Link amortised at the "
+                "cadence client/spatial.lua polls at"
             ),
             "excludes": (
-                "dxDraw and blip calls, which are the game's cost rather than "
-                "ANKIGTA's, and Pick Entity, which runs only while picking"
+                "dxDraw and blip calls and the element accessors the runtime "
+                "index reads positions through, which are the game's cost "
+                "rather than ANKIGTA's, and Pick Entity, which runs only while "
+                "picking"
             ),
             "candidates": dataset.spatial_links,
+            "markers": 2,
+            "pollIntervalMs": interval_ms,
+            "pollMsMax": max(poll_samples),
+            "pollMsMedian": sorted(poll_samples)[len(poll_samples) // 2],
+            "referenceFps": REFERENCE_FPS,
+            "framesPerPoll": interval_ms / FRAME_MS,
             "framesPerBatch": FRAME_SAMPLES,
+            "pollsPerBatch": POLL_SAMPLES,
             "batches": FRAME_BATCHES,
         },
     )
@@ -753,6 +874,7 @@ def run_benchmark(
     measurements = [
         measure_f7(world),
         measure_search_filter(world),
+        measure_f7_entity_filter(world),
         measure_spatial_frame(world),
         measure_card_picker_first_page(world),
         measure_card_open(world),
