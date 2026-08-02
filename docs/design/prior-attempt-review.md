@@ -150,3 +150,53 @@ for a system without undo.
   `me:ID` and the native element ID in step. ANKIGTA's Pending Map Save and
   independent read-back cover the same ground and additionally refuse to trust
   the write until it has been read back.
+
+
+## Second reading: the interface and the working loop
+
+The first reading covered architecture and missed the part the owner actually
+felt. Read again on 2026-08-03, this time `anki_map_editor/web/index.html`,
+`selection.lua` and `anki_in_gta/bindings.lua`.
+
+Their binding panel is not a list of what the system already holds. It is a
+two-column workspace with the steps numbered on screen — **1 Choose object**,
+**2 Choose card** — and arrows between the columns for Link and Unlink. That
+framing is why it was usable: it says what to do rather than showing what is
+stored.
+
+### Taken
+
+- **A readable name for a row nobody named.** `selection.lua:elementName` walks
+  `name`, `me:name`, `me:Name`, `me:ID` and then the *model* name via
+  `engineGetModelNameFromID` / `getVehicleNameFromModel`. Without that last
+  step a world candidate reads as the hash that identifies it. Ours now does
+  the same, client-side, because the server has no model tables.
+- **Take me there.** Their object column has Teleport next to Select in-game.
+  A row you cannot find in the world is a row you cannot judge, and ANKIGTA had
+  `teleportPlayerToMapEntity` exported with nothing calling it.
+- **The dimension belongs in the key.** Their `archiveKey` carries interior
+  *and* dimension. Ours carried only the interior, so two identical objects in
+  two dimensions would have been one name.
+
+### Worth taking next
+
+- **A deck picker before the search, and filters for tag, note type, card id
+  and note id.** Ours searches a deck by name and nothing else.
+- **A card inspector**: read, edit, create and delete the note from the panel,
+  with its fields and tags. Ours can only pick an existing card.
+- **An archive tab** for bindings whose object is gone, and a way to clear it.
+  Ours reports Entity missing on the row and offers Relink, which is the same
+  information with no place to stand back and look at it.
+- **Per-object activation settings inline** — radius and show-radius on the
+  object, next to the object. Ours has one global radius in Settings.
+- **A replace dialog that shows both cards**, old and new, before it commits.
+  Ours replaces on a button with no confirmation.
+- **Numbered steps.** Cheap, and it is the difference between a workspace and
+  a pair of lists.
+
+### Deliberately not taken
+
+- **Their default token `anki-gta`**, already noted above.
+- **`pickup`, `marker` and `colshape` as bindable types.** They allowed them;
+  we support object, vehicle and ped. Widening is a spec question, not a
+  drive-by change.

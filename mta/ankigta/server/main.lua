@@ -109,6 +109,9 @@ local function positionalName(element)
         string.format("%.2f", tonumber(rotationY) or 0),
         string.format("%.2f", tonumber(rotationZ) or 0),
         tostring(getElementInterior(element)),
+        -- The prior resource keyed on the dimension as well, and it was right
+        -- to: two identical objects in two dimensions are two objects.
+        tostring(getElementDimension(element)),
     }, "|")
     -- Twins stand in the same place with the same model, so the descriptor
     -- alone would name them both. The ordinal is which of them this is.
@@ -2120,9 +2123,25 @@ function teleportPlayerToMapEntity(player, mapId, entityId)
     if type(mapId) ~= "string" or type(entityId) ~= "string" then
         return false, "invalid_map_entity"
     end
-    local record, readError = ANKIGTA.Store.getMapEntity(mapId, entityId)
+    local record = ANKIGTA.Store.getMapEntity(mapId, entityId)
     if not record then
-        return false, readError or "entity_missing"
+        -- Not in the store: the list also offers what is merely standing in
+        -- the world, and "take me to it" is most useful for exactly those --
+        -- a thing you have not taken in yet is a thing you have not found.
+        local element = elementByAdoptionName(entityId)
+        if not element then
+            return false, "entity_missing"
+        end
+        local x, y, z = getElementPosition(element)
+        return ANKIGTA.Teleport.toMapEntity(player, {
+            mapId = mapId,
+            entityId = entityId,
+            authoredX = x,
+            authoredY = y,
+            authoredZ = z,
+            interior = getElementInterior(element) or 0,
+            dimension = getElementDimension(element) or 0,
+        })
     end
     return ANKIGTA.Teleport.toMapEntity(player, {
         mapId = mapId,

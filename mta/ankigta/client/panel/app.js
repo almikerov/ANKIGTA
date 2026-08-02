@@ -326,6 +326,9 @@
     var entity = findSelected(state.entities);
     document.getElementById("recheck").disabled =
       !entity || !entity.recheckAvailable;
+    /* Finding the thing is useful whatever state it is in, so this is enabled
+     * for anything selected at all. */
+    document.getElementById("teleport").disabled = !entity;
     document.getElementById("unlink").disabled =
       !entity || !LINK_CHANGEABLE[entity.linkState];
     document.getElementById("relink").disabled =
@@ -368,6 +371,7 @@
   });
   var SIMPLE = {
     "pick-entity": ["pickEntity", {mode: "pick"}],
+    "teleport": ["teleport", {}],
     "recheck": ["recheck", {}],
     "unlink": ["unlink", {}],
     "relink": ["pickEntity", {mode: "relink"}],

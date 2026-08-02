@@ -186,6 +186,7 @@ Locale.strings = {
         ["f7.replace.confirm"] = "Confirm Replace",
         -- The state itself is a stable technical value; only its display
         -- follows the language.
+        ["f7.teleport"] = "Take me there",
         ["f7.linkState.Not adopted"] = "Not adopted",
         ["f7.guidance.notAdopted"] = "In the world, not in ANKIGTA yet."
             .. " Pick a card and press Link to take it in.",
@@ -452,6 +453,7 @@ Locale.strings = {
         ["f7.replace.explanation"] =
             "Замена атомарна; промежуточный Unlink не выполняется.",
         ["f7.replace.confirm"] = "Подтвердить замену",
+        ["f7.teleport"] = "Перенести меня",
         ["f7.linkState.Not adopted"] = "Не принят",
         ["f7.guidance.notAdopted"] = "В мире есть, в ANKIGTA ещё нет."
             .. " Выберите карточку и нажмите Link, чтобы принять.",

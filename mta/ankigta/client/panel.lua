@@ -30,6 +30,7 @@ local LINK_CARD_REQUEST_EVENT = "ankigta:linkCardToEntity"
 local UNLINK_CARD_REQUEST_EVENT = "ankigta:unlinkCardFromEntity"
 local REPLACE_CARD_REQUEST_EVENT = "ankigta:replaceCardForEntity"
 local RELINK_ENTITY_REQUEST_EVENT = "ankigta:relinkEntity"
+local TELEPORT_REQUEST_EVENT = "ankigta:teleportToEntity"
 local ADOPT_ENTITY_REQUEST_EVENT = "ankigta:adoptEntity"
 local UNDO_REQUEST_EVENT = "ankigta:undo"
 local REDO_REQUEST_EVENT = "ankigta:redo"
@@ -336,6 +337,45 @@ local function dropFilterHiding(snapshot)
     end
 end
 
+--- Something a person can read, for a row nobody has named.
+--
+-- The prior resource walked `name`, `me:name`, `me:Name`, `me:ID` and then the
+-- *model* name, and that last step is the one that matters: an object nobody
+-- named reads as "Infernus" rather than as the hash that identifies it. The
+-- model name is not user content, so translating nothing here is correct.
+--
+-- Client-side because that is where the model tables are: the server has no
+-- `engineGetModelNameFromID`.
+local function readableName(entry)
+    -- The name the user typed, wherever this snapshot carried it. Theirs
+    -- first and always: the model name is only for a row nobody has named.
+    local typed = entry.metadata and entry.metadata.name
+    if type(typed) ~= "string" or typed == "" then
+        typed = entry.link and entry.link.metadata and entry.link.metadata.name
+    end
+    if type(typed) == "string" and typed ~= "" then
+        return typed
+    end
+    local mapEntity = entry.mapEntity
+    local model = tonumber(mapEntity.model)
+    if not model then
+        return ""
+    end
+    if mapEntity.type == "vehicle" and getVehicleNameFromModel then
+        local name = getVehicleNameFromModel(model)
+        if type(name) == "string" and name ~= "" then
+            return name
+        end
+    end
+    if engineGetModelNameFromID then
+        local name = engineGetModelNameFromID(model)
+        if type(name) == "string" and name ~= "" then
+            return name
+        end
+    end
+    return ""
+end
+
 local function entityRows(snapshot)
     dropFilterHiding(snapshot)
     selectionArrivedFromOutside = false
@@ -346,9 +386,8 @@ local function entityRows(snapshot)
             mapId = mapEntity.mapId,
             entityId = mapEntity.entityId,
             type = mapEntity.type,
-            name = entry.metadata and entry.metadata.name
-                or entry.link.metadata and entry.link.metadata.name
-                or "",
+            name = readableName(entry),
+            model = tonumber(entry.mapEntity.model) or 0,
             linkState = entry.link.state,
             guidanceKey = entry.link.guidanceKey or false,
             runtimeKey = runtimeStatusKey(entry.runtimeInstance),
@@ -822,6 +861,24 @@ local function selectedEntry()
         end
     end
     return nil
+end
+
+--- Take me to the thing I have selected.
+--
+-- The prior resource had this next to its object list, and it is why a player
+-- could work at all: a row you cannot find in the world is a row you cannot
+-- judge. The server owns the move, including for a row that is only an offer.
+function actions.teleport()
+    local entry = selectedEntry()
+    if not entry then
+        return
+    end
+    triggerServerEvent(
+        TELEPORT_REQUEST_EVENT,
+        resourceRoot,
+        entry.mapEntity.mapId,
+        entry.mapEntity.entityId
+    )
 end
 
 function actions.recheck()
