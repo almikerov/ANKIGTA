@@ -266,7 +266,104 @@ local function snapshotDiagnostics(startedAt, entityCount, linkCount)
     }
 end
 
-local function buildF7Snapshot()
+--- One row for something in the world that ANKIGTA has not taken in yet.
+--
+-- Shaped like a stored entity so the panel needs no second kind of row, and
+-- marked `Not adopted` so it reads as an offer rather than as a link that has
+-- gone wrong. Without these the list showed only what was already inside it,
+-- which on a fresh install is nothing -- so a player looking at a world full of
+-- objects was looking at an empty list and correctly concluded it was broken.
+local function candidateContract(element, name, resourceName)
+    local x, y, z = getElementPosition(element)
+    local rotationX, rotationY, rotationZ = getElementRotation(element)
+    return {
+        mapEntity = {
+            mapId = resourceName,
+            entityId = name,
+            type = getElementType(element),
+            model = getElementModel(element),
+            map = {resourceName = resourceName, mapName = resourceName},
+            display = {name = "", entityTag = "", radius = 3, showRadius = false},
+            authored = {
+                position = {x = x or 0, y = y or 0, z = z or 0},
+                rotation = {
+                    x = rotationX or 0, y = rotationY or 0, z = rotationZ or 0
+                },
+                world = {
+                    interior = getElementInterior(element) or 0,
+                    dimension = getElementDimension(element) or 0,
+                },
+            },
+        },
+        runtimeInstance = {
+            available = true,
+            referenceId = getElementID(element) or "",
+        },
+        metadata = {
+            name = "", entityTag = "", radius = 3, showRadius = false,
+        },
+        link = {state = "Not adopted", guidanceKey = "f7.guidance.notAdopted"},
+        copyCollision = false,
+        adoptable = true,
+    }
+end
+
+--- What is standing in the world that could be taken in, nearest first.
+--
+-- Bounded on purpose. A server with thousands of elements would otherwise
+-- build a list nobody can read out of a scan nobody asked for, and the cap is
+-- reported rather than applied quietly.
+local CANDIDATE_LIMIT = 150
+
+local function worldCandidates(player, storedRows)
+    local taken = {}
+    for _, row in ipairs(storedRows) do
+        taken[row.entity_id] = true
+    end
+    local originX, originY, originZ = 0, 0, 0
+    if isElement(player) then
+        originX, originY, originZ = getElementPosition(player)
+    end
+
+    local found = {}
+    for _, kind in ipairs({"object", "vehicle", "ped"}) do
+        for _, element in ipairs(getElementsByType(kind)) do
+            local name = getElementID(element)
+            if type(name) ~= "string" or name == "" then
+                name = positionalName(element)
+            end
+            if type(name) == "string" and name ~= "" and not taken[name] then
+                local x, y, z = getElementPosition(element)
+                found[#found + 1] = {
+                    element = element,
+                    name = name,
+                    distance = isElement(player)
+                        and getDistanceBetweenPoints3D(
+                            originX, originY, originZ, x or 0, y or 0, z or 0
+                        )
+                        or 0,
+                }
+            end
+        end
+    end
+    table.sort(found, function(left, right)
+        if left.distance ~= right.distance then
+            return left.distance < right.distance
+        end
+        return left.name < right.name
+    end)
+
+    local rows, total = {}, #found
+    for index = 1, math.min(total, CANDIDATE_LIMIT) do
+        local entry = found[index]
+        rows[#rows + 1] = candidateContract(
+            entry.element, entry.name, owningResource(entry.element) or "world"
+        )
+    end
+    return rows, total
+end
+
+local function buildF7Snapshot(player)
     local startedAt = getTickCount()
     local refreshed, refreshError = ANKIGTA.MapIdentity.refreshEntityPresence()
     if not refreshed and refreshError ~= "entity_read_failed" then
@@ -284,6 +381,13 @@ local function buildF7Snapshot()
         if row.link_state == "active" or row.link_state == "card_missing" then
             linkCount = linkCount + 1
         end
+    end
+
+    -- After the stored rows, so what ANKIGTA already knows about is what the
+    -- player sees first and the offers follow.
+    local candidates, candidateTotal = worldCandidates(player, rows)
+    for _, candidate in ipairs(candidates) do
+        entities[#entities + 1] = candidate
     end
 
     local history = ANKIGTA.Store.historyStatus()
@@ -304,6 +408,8 @@ local function buildF7Snapshot()
             deckFilterScope = "initial_card_picker_filter",
         },
         entities = entities,
+        candidatesShown = #candidates,
+        candidatesFound = candidateTotal,
         history = history,
         diagnostics = snapshotDiagnostics(startedAt, #entities, linkCount),
     }
@@ -732,7 +838,9 @@ local function sendF7Snapshot(player)
         return false
     end
 
-    local snapshot, snapshotError = buildF7Snapshot()
+    -- The player is passed so candidates can be ordered by how far away
+    -- they are: the thing being looked at is nearly always the thing meant.
+    local snapshot, snapshotError = buildF7Snapshot(player)
     if not snapshot then
         triggerClientEvent(
             player,
@@ -1366,6 +1474,24 @@ local function failAdoption(player, reason)
     )
 end
 
+--- The element a name refers to, for a row the list offered rather than one
+--- the player pointed at. The name is derived from the element, so deriving it
+--- again over the world finds the same one -- or nothing, if it has gone.
+local function elementByAdoptionName(name)
+    for _, kind in ipairs({"object", "vehicle", "ped"}) do
+        for _, element in ipairs(getElementsByType(kind)) do
+            local candidate = getElementID(element)
+            if type(candidate) ~= "string" or candidate == "" then
+                candidate = positionalName(element)
+            end
+            if candidate == name then
+                return element
+            end
+        end
+    end
+    return nil
+end
+
 addEvent(ADOPT_ENTITY_REQUEST_EVENT, true)
 addEventHandler(ADOPT_ENTITY_REQUEST_EVENT, resourceRoot, function(
     entityElement,
@@ -1373,6 +1499,14 @@ addEventHandler(ADOPT_ENTITY_REQUEST_EVENT, resourceRoot, function(
 )
     if not client or source ~= resourceRoot then
         return
+    end
+    -- Pick Entity sends the element it was aimed at; the list sends the name
+    -- it displayed. Both end up here as the same thing.
+    if type(entityElement) == "string" then
+        entityElement = elementByAdoptionName(entityElement)
+        if not entityElement then
+            return failAdoption(client, "entity_no_longer_in_the_world")
+        end
     end
     local target, reason = validatePickEntity(client, entityElement, "pick")
     if not target then

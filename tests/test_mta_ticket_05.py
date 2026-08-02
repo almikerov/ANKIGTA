@@ -158,13 +158,17 @@ def test_server_source_guards_f7_with_a_logged_player_and_acl_right() -> None:
     assert "getPlayerAccount(player)" in server
     assert "isGuestAccount(account)" in server
     assert "hasObjectPermissionTo(player, STUDY_RIGHT, false)" in server
+    # The snapshot now takes the player, so candidates can be ordered by how
+    # far away they are -- the authorization still has to come first.
     assert send_snapshot.index("playerAuthorization(player)") < send_snapshot.index(
-        "buildF7Snapshot()"
+        "buildF7Snapshot(player)"
     )
     assert "F7_DENIED_EVENT" in send_snapshot[
-        : send_snapshot.index("buildF7Snapshot()")
+        : send_snapshot.index("buildF7Snapshot(player)")
     ]
-    assert "return false" in send_snapshot[: send_snapshot.index("buildF7Snapshot()")]
+    assert "return false" in send_snapshot[
+        : send_snapshot.index("buildF7Snapshot(player)")
+    ]
     assert remote_f7.strip() == (
         "if not client or source ~= resourceRoot then\n"
         "        return\n"

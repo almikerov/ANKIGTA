@@ -186,6 +186,9 @@ Locale.strings = {
         ["f7.replace.confirm"] = "Confirm Replace",
         -- The state itself is a stable technical value; only its display
         -- follows the language.
+        ["f7.linkState.Not adopted"] = "Not adopted",
+        ["f7.guidance.notAdopted"] = "In the world, not in ANKIGTA yet."
+            .. " Pick a card and press Link to take it in.",
         ["f7.linkState.Active Spatial Link"] = "Active Spatial Link",
         ["f7.linkState.Card missing"] = "Card missing",
         ["f7.linkState.Entity missing"] = "Entity missing",
@@ -449,6 +452,9 @@ Locale.strings = {
         ["f7.replace.explanation"] =
             "Замена атомарна; промежуточный Unlink не выполняется.",
         ["f7.replace.confirm"] = "Подтвердить замену",
+        ["f7.linkState.Not adopted"] = "Не принят",
+        ["f7.guidance.notAdopted"] = "В мире есть, в ANKIGTA ещё нет."
+            .. " Выберите карточку и нажмите Link, чтобы принять.",
         ["f7.linkState.Active Spatial Link"] = "Активная Spatial Link",
         ["f7.linkState.Card missing"] = "Карточка отсутствует",
         ["f7.linkState.Entity missing"] = "Map Entity отсутствует",

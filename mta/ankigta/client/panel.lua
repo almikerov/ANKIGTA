@@ -354,6 +354,8 @@ local function entityRows(snapshot)
             runtimeKey = runtimeStatusKey(entry.runtimeInstance),
             recheckAvailable = entry.link.recheckAvailable == true,
             copyCollision = entry.link.copyCollision == true,
+            -- In the world but not in the store yet: Link takes it in.
+            adoptable = entry.adoptable == true,
         })
         if not matches(entry, entityFilter) then
             table.remove(rows)
@@ -899,6 +901,17 @@ function actions.link()
     end
     local entry = selectedEntry()
     if not entry then
+        return
+    end
+    -- A row the list offered rather than one the store holds: it is named, so
+    -- the server can find it again, but there is nothing yet to link to.
+    if entry.adoptable == true then
+        triggerServerEvent(
+            ADOPT_ENTITY_REQUEST_EVENT,
+            resourceRoot,
+            entry.mapEntity.entityId,
+            identity
+        )
         return
     end
     triggerServerEvent(

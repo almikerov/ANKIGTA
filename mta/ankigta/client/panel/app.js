@@ -43,6 +43,7 @@
   var TONES = {
     "Active Spatial Link": "good",
     "Unlinked": "",
+    "Not adopted": "",
     "Pending Map Save": "warn",
     "Identity Collision": "bad",
     "Entity missing": "bad",
