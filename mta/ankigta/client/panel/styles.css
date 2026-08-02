@@ -64,6 +64,8 @@ html, body {
    empty, which is the panel looking half-drawn. Flex sizes what is actually
    there rather than counting children. */
 .shell {
+  /* The confirmation is drawn inside the panel, not over the whole screen. */
+  position: relative;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -381,3 +383,70 @@ label {
   border-color: var(--accent);
   color: var(--accent);
 }
+
+
+/* --- numbered steps --------------------------------------------------- */
+
+/* Drawn by a counter rather than written in the page: the page ships no
+   readable text of its own, and a number counted is a number that stays right
+   if the columns are ever reordered. */
+.workspace { counter-reset: step; }
+.column-head h2::before {
+  counter-increment: step;
+  content: counter(step);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-right: var(--space-2);
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+.column-head h2 { display: flex; align-items: center; }
+
+/* --- the Activation Zone of one entity -------------------------------- */
+
+.entity-settings {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  border-top: 1px solid var(--line-soft);
+  padding-top: var(--space-2);
+}
+.entity-settings[hidden] { display: none; }
+.entity-settings h3 { margin: 0; font-size: 12px; color: var(--muted); flex: 1 1 100%; }
+.entity-settings .inline { flex-direction: row; align-items: center; gap: var(--space-2); }
+.entity-settings input[type="number"] { width: 90px; }
+.entity-settings .check input { width: auto; }
+
+/* --- confirmation ----------------------------------------------------- */
+
+.modal {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(2, 6, 23, 0.72);
+}
+.modal[hidden] { display: none; }
+.modal-card {
+  width: min(460px, 90%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: var(--space-5);
+  background: var(--panel);
+}
+.modal-card h2 { margin: 0; font-size: 16px; }
+.modal-card p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.replace-summary { display: grid; grid-template-columns: auto 1fr; gap: var(--space-1) var(--space-3); margin: 0; }
+.replace-summary dt { color: var(--muted); font-size: 11px; }
+.replace-summary dd { margin: 0; font-size: 13px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }

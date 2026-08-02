@@ -187,6 +187,15 @@ Locale.strings = {
         -- The state itself is a stable technical value; only its display
         -- follows the language.
         ["f7.teleport"] = "Take me there",
+        ["f7.activation"] = "Activation Zone",
+        ["f7.radius"] = "Radius (m)",
+        ["f7.showRadius"] = "Draw it",
+        ["f7.replaceTitle"] = "Replace the linked card?",
+        ["f7.replaceWarning"] = "The current link is discarded. The card"
+            .. " itself is not touched.",
+        ["f7.replaceCurrent"] = "Currently linked",
+        ["f7.replaceNew"] = "Replacing with",
+        ["f7.replaceUnknownCard"] = "(unknown card)",
         ["f7.linkState.Not adopted"] = "Not adopted",
         ["f7.guidance.notAdopted"] = "In the world, not in ANKIGTA yet."
             .. " Pick a card and press Link to take it in.",
@@ -304,6 +313,7 @@ Locale.strings = {
         ["notice.spatialOpenFailed"] = "The card did not open: %s",
         ["notice.linkFailed"] = "Spatial Link was not activated: %s",
         ["notice.adoptFailed"] = "The object was not adopted: %s",
+        ["notice.entityUpdateFailed"] = "The entity was not changed: %s",
         ["notice.unlinked"] = "Spatial Link removed; Map Entity metadata kept.",
         ["notice.unlinkFailed"] = "Unlink failed: %s",
         ["notice.replaced"] = "Card replaced with no intermediate Unlink.",
@@ -454,6 +464,15 @@ Locale.strings = {
             "Замена атомарна; промежуточный Unlink не выполняется.",
         ["f7.replace.confirm"] = "Подтвердить замену",
         ["f7.teleport"] = "Перенести меня",
+        ["f7.activation"] = "Зона активации",
+        ["f7.radius"] = "Радиус (м)",
+        ["f7.showRadius"] = "Показывать",
+        ["f7.replaceTitle"] = "Заменить привязанную карточку?",
+        ["f7.replaceWarning"] = "Текущая связь будет отброшена. Саму карточку"
+            .. " это не трогает.",
+        ["f7.replaceCurrent"] = "Сейчас привязана",
+        ["f7.replaceNew"] = "Будет привязана",
+        ["f7.replaceUnknownCard"] = "(карточка неизвестна)",
         ["f7.linkState.Not adopted"] = "Не принят",
         ["f7.guidance.notAdopted"] = "В мире есть, в ANKIGTA ещё нет."
             .. " Выберите карточку и нажмите Link, чтобы принять.",
@@ -574,6 +593,7 @@ Locale.strings = {
         ["notice.spatialOpenFailed"] = "Карточка не открылась: %s",
         ["notice.linkFailed"] = "Spatial Link не активирована: %s",
         ["notice.adoptFailed"] = "Объект не принят: %s",
+        ["notice.entityUpdateFailed"] = "Сущность не изменена: %s",
         ["notice.unlinked"] = "Spatial Link удалена; Map Entity metadata сохранены.",
         ["notice.unlinkFailed"] = "Unlink не выполнен: %s",
         ["notice.replaced"] = "Карточка заменена без промежуточного Unlink.",

@@ -40,6 +40,7 @@ local REVIEW_CLOSED_EVENT = "ankigta:reviewClosed"
 local RENDER_ISSUED_EVENT = "ankigta:renderIssued"
 local REVIEW_RETURN_REQUEST_EVENT = "ankigta:returnToCard"
 local ADOPT_ENTITY_REQUEST_EVENT = "ankigta:adoptEntity"
+local ENTITY_METADATA_REQUEST_EVENT = "ankigta:updateEntityMetadata"
 local PICK_ENTITY_REQUEST_EVENT = "ankigta:pickEntity"
 local PICK_ENTITY_RESULT_EVENT = "ankigta:pickEntityResult"
 local RECOVERY_STATE_EVENT = "ankigta:databaseRecovery"
@@ -1541,6 +1542,79 @@ addEventHandler(ADOPT_ENTITY_REQUEST_EVENT, resourceRoot, function(
         return failAdoption(client, linkError)
     end
     invalidateStudyDependents(client, false, cardIdentity, "link")
+    sendF7Snapshot(client)
+end)
+
+--- The Activation Zone of one Map Entity, set on the entity itself.
+--
+-- The prior resource put the radius next to the object rather than in a global
+-- setting, and it was right: how close you must stand is a property of the
+-- thing, not of the player. The schema has carried `radius` and `show_radius`
+-- per entity all along and activation has honoured them; nothing could set
+-- them.
+--
+-- Validated against the same rule the global setting uses, so one number
+-- cannot be legal in Settings and illegal here.
+addEvent(ENTITY_METADATA_REQUEST_EVENT, true)
+addEventHandler(ENTITY_METADATA_REQUEST_EVENT, resourceRoot, function(
+    mapId, entityId, metadata
+)
+    if not client or source ~= resourceRoot then
+        return
+    end
+    local authorized, authorizationError = playerAuthorization(client)
+    if not authorized then
+        return
+    end
+    if type(metadata) ~= "table" then
+        return
+    end
+    local row, readError = ANKIGTA.Store.getMapEntity(mapId, entityId)
+    if not row then
+        triggerClientEvent(
+            client, PENDING_NOTICE_EVENT, resourceRoot,
+            "notice.entityUpdateFailed", readError or "entity_missing"
+        )
+        return
+    end
+    local radius = tonumber(metadata.radius)
+    if radius ~= nil then
+        -- The schema's own rule for the global radius, applied to the
+        -- per-entity one: a number cannot be legal in Settings and illegal
+        -- here, and the schema is the side both can reach.
+        local valid, reason = ANKIGTA.Settings.validate(
+            "activationRadius", ANKIGTA.Settings.normalize("activationRadius", radius)
+        )
+        if not valid then
+            triggerClientEvent(
+                client, PENDING_NOTICE_EVENT, resourceRoot,
+                "notice.entityUpdateFailed", reason
+            )
+            return
+        end
+    end
+    local updated, updateError = ANKIGTA.Store.updateEntityMetadata(
+        mapId,
+        entityId,
+        {
+            -- Everything the row already says, so setting one field does not
+            -- quietly erase the others.
+            name = row.entity_name or "",
+            entityTag = row.entity_tag or "",
+            radius = radius or tonumber(row.radius) or 3,
+            showRadius = metadata.showRadius ~= nil
+                and metadata.showRadius == true
+                or (metadata.showRadius == nil
+                    and tonumber(row.show_radius) == 1),
+        }
+    )
+    if not updated then
+        triggerClientEvent(
+            client, PENDING_NOTICE_EVENT, resourceRoot,
+            "notice.entityUpdateFailed", updateError
+        )
+        return
+    end
     sendF7Snapshot(client)
 end)
 

@@ -37,6 +37,11 @@
   }
 
   var selected = {mapId: false, entityId: false, cardId: false};
+  /* The last rows rendered, and a readable label for the chosen card. Kept so
+   * the replace confirmation can name what it is about to throw away without
+   * asking Lua for a state it has already sent. */
+  var lastEntities = [];
+  var selectedCardLabel = "";
 
   /* A link state is a stable technical value; only its display follows the
    * language, and its tone is set here rather than in the string table. */
@@ -109,6 +114,7 @@
   }
 
   function renderCards(picker) {
+    selectedCardLabel = "";
     var host = document.getElementById("cards");
     host.textContent = "";
     var cards = (picker && picker.cards) || [];
@@ -128,7 +134,10 @@
       row.appendChild(primary);
       row.appendChild(element("span", "type", card.state));
 
-      if (card.cardId === selected.cardId) row.className = "row card selected";
+      if (card.cardId === selected.cardId) {
+        row.className = "row card selected";
+        selectedCardLabel = (card.question || card.cardId) + " — " + card.deck;
+      }
       bindSelectCard(row, card);
       host.appendChild(row);
     }
@@ -306,6 +315,7 @@
     selected = state.selected || {mapId: false, entityId: false, cardId: false};
     renderStudy(state.study || {active: false, resumable: false});
     renderSettings(state.settings);
+    lastEntities = state.entities || [];
     renderRows(state.entities);
     renderCards(state.cardPicker);
     renderNotice(state.notice);
@@ -341,6 +351,16 @@
       !entity || !selected.cardId || !LINK_CHANGEABLE[entity.linkState];
     document.getElementById("copy-decision").hidden =
       !entity || !entity.copyCollision;
+
+    /* Only a row the store holds has an Activation Zone: an offer has nothing
+     * to write one on yet. */
+    var settings = document.getElementById("entity-settings");
+    settings.hidden = !entity || entity.adoptable === true;
+    if (!settings.hidden) {
+      document.getElementById("entity-radius").value = entity.radius;
+      document.getElementById("entity-show-radius").checked =
+        entity.showRadius === true;
+    }
 
     show(state.section);
   }
@@ -378,7 +398,7 @@
     "undo": ["undo", {}],
     "redo": ["redo", {}],
     "link": ["link", {}],
-    "replace": ["replaceCard", {}],
+
     "copy-original": ["copyDecision", {decision: "original_or_renamed"}],
     "copy-new": ["copyDecision", {decision: "new_copy"}]
   };
@@ -387,6 +407,44 @@
       send(SIMPLE[id][0], SIMPLE[id][1]);
     });
   });
+  /* Replacing throws away a link the player made, so it asks first and shows
+   * both cards while it does. */
+  var pendingReplace = null;
+
+  function closeReplace() {
+    pendingReplace = null;
+    document.getElementById("replace-dialog").hidden = true;
+  }
+
+  document.getElementById("replace").addEventListener("click", function () {
+    var entity = pendingReplace = findSelected(lastEntities);
+    if (!entity) return;
+    document.getElementById("replace-old").textContent = entity.linkedCard
+      ? t("cardPicker.column.card") + " " + entity.linkedCard
+      : t("f7.replaceUnknownCard");
+    document.getElementById("replace-new").textContent =
+      selectedCardLabel || String(selected.cardId || "");
+    document.getElementById("replace-dialog").hidden = false;
+  });
+  document.getElementById("replace-cancel").addEventListener("click", closeReplace);
+  document.getElementById("replace-confirm").addEventListener("click", function () {
+    closeReplace();
+    send("replaceCard");
+  });
+
+  /* The Activation Zone of the selected entity, sent when the field is left
+   * rather than on every keystroke: a half-typed number is not a radius. */
+  document.getElementById("entity-radius").addEventListener("change", function () {
+    send("setEntityRadius", {
+      radius: parseFloat(document.getElementById("entity-radius").value)
+    });
+  });
+  document.getElementById("entity-show-radius").addEventListener("change", function () {
+    send("setEntityRadius", {
+      showRadius: document.getElementById("entity-show-radius").checked
+    });
+  });
+
   document.getElementById("filter-form").addEventListener("submit", function (e) {
     e.preventDefault();
     send("filter", {text: document.getElementById("filter").value});

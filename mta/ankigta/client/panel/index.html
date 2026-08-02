@@ -60,7 +60,7 @@
 
       <div class="column">
         <div class="column-head">
-          <h2 data-i18n="f7.title"></h2>
+          <h2><span data-i18n="f7.title"></span></h2>
           <span class="count" id="entity-count"></span>
         </div>
         <form class="search" id="filter-form">
@@ -75,6 +75,19 @@
           <button type="button" id="unlink" data-i18n="f7.unlink"></button>
           <button type="button" id="relink" data-i18n="f7.relink"></button>
         </div>
+        <div class="entity-settings" id="entity-settings" hidden>
+          <h3 data-i18n="f7.activation"></h3>
+          <label class="inline">
+            <span data-i18n="f7.radius"></span>
+            <input type="number" id="entity-radius" min="0.5" max="100"
+                   step="0.5" />
+          </label>
+          <label class="inline check">
+            <input type="checkbox" id="entity-show-radius" />
+            <span data-i18n="f7.showRadius"></span>
+          </label>
+        </div>
+
         <div class="column-actions" id="copy-decision" hidden>
           <span class="hint" data-i18n="f7.copyDecisionHint"></span>
           <button type="button" id="copy-original" data-i18n="f7.copyOriginal"></button>
@@ -84,7 +97,7 @@
 
       <div class="column">
         <div class="column-head">
-          <h2 data-i18n="cardPicker.title"></h2>
+          <h2><span data-i18n="cardPicker.title"></span></h2>
           <div class="history">
             <button type="button" id="undo" data-i18n="f7.undo"></button>
             <button type="button" id="redo" data-i18n="f7.redo"></button>
@@ -113,6 +126,28 @@
       <button type="button" id="close-settings" data-i18n="common.close"></button>
     </div>
     <div class="settings-rows" id="settings-rows"></div>
+  </section>
+
+  <!-- Replacing a card is the one action here that throws away a link the
+       player made, so it says what is being thrown away and what replaces it
+       before it happens. -->
+  <section class="modal" id="replace-dialog" role="dialog" aria-modal="true"
+           hidden>
+    <div class="modal-card">
+      <h2 data-i18n="f7.replaceTitle"></h2>
+      <p data-i18n="f7.replaceWarning"></p>
+      <dl class="replace-summary">
+        <dt data-i18n="f7.replaceCurrent"></dt>
+        <dd id="replace-old"></dd>
+        <dt data-i18n="f7.replaceNew"></dt>
+        <dd id="replace-new"></dd>
+      </dl>
+      <div class="modal-actions">
+        <button type="button" id="replace-cancel" data-i18n="common.cancel"></button>
+        <button type="button" id="replace-confirm" class="primary"
+                data-i18n="f7.replaceCard"></button>
+      </div>
+    </div>
   </section>
 
 </div>

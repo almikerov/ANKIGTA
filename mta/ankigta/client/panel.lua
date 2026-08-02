@@ -31,6 +31,7 @@ local UNLINK_CARD_REQUEST_EVENT = "ankigta:unlinkCardFromEntity"
 local REPLACE_CARD_REQUEST_EVENT = "ankigta:replaceCardForEntity"
 local RELINK_ENTITY_REQUEST_EVENT = "ankigta:relinkEntity"
 local TELEPORT_REQUEST_EVENT = "ankigta:teleportToEntity"
+local ENTITY_METADATA_REQUEST_EVENT = "ankigta:updateEntityMetadata"
 local ADOPT_ENTITY_REQUEST_EVENT = "ankigta:adoptEntity"
 local UNDO_REQUEST_EVENT = "ankigta:undo"
 local REDO_REQUEST_EVENT = "ankigta:redo"
@@ -391,6 +392,13 @@ local function entityRows(snapshot)
             linkState = entry.link.state,
             guidanceKey = entry.link.guidanceKey or false,
             runtimeKey = runtimeStatusKey(entry.runtimeInstance),
+            radius = tonumber(entry.metadata and entry.metadata.radius) or 3,
+            showRadius = entry.metadata
+                and entry.metadata.showRadius == true or false,
+            -- What is on the row now, so the replace confirmation can name
+            -- what it is about to throw away rather than saying "unknown".
+            linkedCard = type(entry.link.cardIdentity) == "table"
+                and tostring(entry.link.cardIdentity.cardId or "") or false,
             recheckAvailable = entry.link.recheckAvailable == true,
             copyCollision = entry.link.copyCollision == true,
             -- In the world but not in the store yet: Link takes it in.
@@ -878,6 +886,28 @@ function actions.teleport()
         resourceRoot,
         entry.mapEntity.mapId,
         entry.mapEntity.entityId
+    )
+end
+
+--- How close the player must stand to *this* entity, and whether it is drawn.
+--
+-- A property of the thing rather than of the player, which is why it lives on
+-- the row and not in Settings. Only a row the store holds has one: an offer
+-- has nothing to write it on yet.
+function actions.setEntityRadius(payload)
+    local entry = selectedEntry()
+    if not entry or entry.adoptable == true then
+        return
+    end
+    triggerServerEvent(
+        ENTITY_METADATA_REQUEST_EVENT,
+        resourceRoot,
+        entry.mapEntity.mapId,
+        entry.mapEntity.entityId,
+        {
+            radius = tonumber(payload.radius),
+            showRadius = payload.showRadius,
+        }
     )
 end
 
