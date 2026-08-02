@@ -162,17 +162,30 @@ def test_a_browser_that_cannot_be_created_leaves_the_cursor_alone(
     assert client.eval("function() return isPanelOpen() end")() is False
 
 
-def test_the_panel_does_not_take_a_cursor_that_was_already_showing(
+def test_the_panel_gives_the_cursor_back_to_whoever_else_wanted_it(
     client: MtaSandbox,
 ) -> None:
+    """Opening over another resource's window, and closing, changes nothing.
+
+    MTA counts cursor requests across resources and shows it while the count is
+    above zero. Reading `isCursorShowing()` on the way in reads somebody else's
+    answer, and handing that answer back on the way out means never letting go:
+    open Hot Reload, then this, then close both, and the cursor stays on screen
+    with nothing left to dismiss it.
+    """
     authorize(client)
-    client.eval("function() showCursor(true) end")()
+    client.another_resource_shows_cursor()
 
     press_f7(client)
-    press_f7(client)
-
-    # It was showing before the panel opened, so it is still showing after.
     assert client.cursor_visible is True
+    press_f7(client)
+
+    # The other resource is still asking, so it is still on.
+    assert client.cursor_visible is True
+
+    # And when that one closes too, it goes -- which is the bug: it did not.
+    client.another_resource_hides_cursor()
+    assert client.cursor_visible is False
 
 
 # --- what the page is told ----------------------------------------------------

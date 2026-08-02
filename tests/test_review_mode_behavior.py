@@ -344,9 +344,11 @@ def test_game_actions_are_suppressed_while_a_card_is_open(
 def test_closing_restores_the_captured_state_not_defaults(
     client: MtaSandbox,
 ) -> None:
-    # The player already had the cursor up and `action` disabled by something
-    # else; both must come back as they were, not as ANKIGTA would prefer.
-    client.cursor_visible = True
+    # Something else already had the cursor up and `action` disabled; both must
+    # come back as they were, not as ANKIGTA would prefer. The cursor is the
+    # other resource's to hold -- MTA counts requests for it, so ANKIGTA's job
+    # is to stop asking, not to guess what the answer should be.
+    client.another_resource_shows_cursor()
     client.controls["action"] = False
     client.radio_channel = 5
 
@@ -815,7 +817,6 @@ def test_no_failure_leaves_protection_or_the_cursor_stuck(
     failure: str,
 ) -> None:
     client.damage_proof["player"] = False
-    client.cursor_visible = False
     open_card(client)
     assert client.damage_proof["player"] is True
 

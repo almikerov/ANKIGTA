@@ -56,7 +56,6 @@ local browser = nil
 local dragFrom = nil
 local pageReady = false
 local cursorOwned = false
-local cursorWasShowing = false
 
 -- The last thing each source told us. The page is redrawn from these, so a
 -- language change or a new status repaints without asking anyone again.
@@ -116,7 +115,16 @@ function isPanelOpen()
     return isElement(guiBrowser)
 end
 
---- Give the cursor back exactly as it was found.
+--- Stop asking for the cursor.
+--
+-- `showCursor(false)`, never "whatever it was before I looked". MTA counts
+-- cursor requests across resources -- `static int m_iShowingCursor` -- and
+-- shows it while any resource is asking. Reading `isCursorShowing()` on the way
+-- in therefore reads *somebody else's* answer, and handing it back on the way
+-- out means never letting go: open another resource's window first, then this
+-- one, then close both, and the cursor stays on screen with nothing left to
+-- dismiss it.
+--
 -- Called from every path that ends the panel, including the one where the
 -- browser could not be created: a panel that fails to open must not leave the
 -- player holding a cursor they cannot dismiss.
@@ -124,16 +132,14 @@ local function releaseCursor()
     if not cursorOwned then
         return
     end
-    showCursor(cursorWasShowing)
+    showCursor(false)
     cursorOwned = false
-    cursorWasShowing = false
 end
 
 local function takeCursor()
     if cursorOwned then
         return
     end
-    cursorWasShowing = isCursorShowing()
     cursorOwned = true
     showCursor(true)
 end

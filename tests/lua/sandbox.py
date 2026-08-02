@@ -387,7 +387,11 @@ class MtaSandbox:
         self.file_writes_fail = False
         # Client-side observable state, for tests to assert against.
         self.controls: dict[str, bool] = {}
-        self.cursor_visible = False
+        #: What this resource has asked for, and what everyone has asked for.
+        #: Separate because MTA keeps them separate, and the difference is the
+        #: whole reason two windows can strand a cursor on screen.
+        self._cursor_wanted_here = False
+        self._cursor_requests = 0
         self.camera_target: Any = None
         self.radio_channel = 0
         self.bound_keys: dict[tuple[str, str], list[Any]] = {}
@@ -1263,7 +1267,16 @@ class MtaSandbox:
             return self.controls.get(str(control), True)
 
         def show_cursor(visible: Any = True, *_rest: Any) -> bool:
-            self.cursor_visible = visible is True
+            # `CResource::ShowCursor` keeps a per-resource flag and a *shared*
+            # count -- `static int m_iShowingCursor` -- and the cursor is on
+            # while the count is above zero. A double that stores one boolean
+            # cannot see the bug that costs: read `isCursorShowing()` on the
+            # way in, hand it back on the way out, and this resource never lets
+            # go while another one is holding it.
+            wanted = visible is True
+            if wanted != self._cursor_wanted_here:
+                self._cursor_requests += 1 if wanted else -1
+                self._cursor_wanted_here = wanted
             return True
 
         g.toggleControl = toggle_control
@@ -1893,6 +1906,22 @@ class MtaSandbox:
         for child, widget in enumerate(self.widgets):
             if widget.parent == index and not widget.destroyed:
                 self._destroy_widget(child)
+
+    @property
+    def cursor_visible(self) -> bool:
+        """On while anybody is asking for it, which is MTA's own rule."""
+        return self._cursor_requests > 0
+
+    def another_resource_shows_cursor(self) -> None:
+        """Somebody else opened a window that wants the cursor.
+
+        There is no second Lua state here, and there does not need to be: what
+        another resource contributes is one more request on the shared count.
+        """
+        self._cursor_requests += 1
+
+    def another_resource_hides_cursor(self) -> None:
+        self._cursor_requests -= 1
 
     def widget_texts(self, kind: str | None = None) -> list[str]:
         """Text of every live control, i.e. what the player would read now."""

@@ -142,7 +142,12 @@ local function captureClientState()
     local vehicle = occupiedVehicle()
     Review.captured = {
         controls = controls,
-        cursor = isCursorShowing(),
+        -- The cursor is not captured. MTA counts requests for it across
+        -- resources, so `isCursorShowing()` answers for everyone, and handing
+        -- that answer back on the way out leaves this one asking forever --
+        -- another resource's window open, then this, then both closed, and the
+        -- cursor is stranded with nothing left to dismiss it. Everything else
+        -- here really is ours to put back.
         cameraTarget = getCameraTarget(),
         radioChannel = getRadioChannel(),
         worldSoundEnabled = Review.muteGameWorld ~= true,
@@ -170,7 +175,7 @@ local function restoreClientState()
     for control, enabled in pairs(captured.controls or {}) do
         toggleControl(control, enabled == true)
     end
-    showCursor(captured.cursor == true)
+    showCursor(false)
     if captured.cameraTarget and isElement(captured.cameraTarget) then
         setCameraTarget(captured.cameraTarget)
     end

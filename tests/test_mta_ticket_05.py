@@ -462,15 +462,20 @@ def test_client_reauthorizes_after_resource_restart_before_opening_f7() -> None:
     assert "if not authorized then" in _function_body(client, "togglePanel")
 
 
-def test_f7_restores_only_the_cursor_state_it_acquired() -> None:
+def test_f7_asks_for_the_cursor_and_stops_asking() -> None:
+    """It does not remember what it found, because that is not its answer.
+
+    MTA counts cursor requests across resources. `isCursorShowing()` therefore
+    reports what *everyone* wants, and restoring it on the way out leaves this
+    resource asking forever -- two windows open and closed, cursor stranded.
+    """
     client = _source(CLIENT_F7)
 
     assert "releaseCursor()" in _function_body(client, "closePanel")
-    # Taking and giving back are separate steps, so the panel can decline to
-    # take a cursor that was already showing and hand back what it found.
     take = _function_body(client, "takeCursor")
-    assert "cursorWasShowing = isCursorShowing()" in take
+    assert "isCursorShowing()" not in take, "somebody else's answer"
+    assert "showCursor(true)" in take
     assert "cursorOwned = true" in take
     release = _function_body(client, "releaseCursor")
-    assert "showCursor(cursorWasShowing)" in release
+    assert "showCursor(false)" in release
     assert "if not cursorOwned then" in release

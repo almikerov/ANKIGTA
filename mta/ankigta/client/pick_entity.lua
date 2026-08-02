@@ -41,7 +41,6 @@ local active = false
 local awaitingResponse = false
 local purpose = "pick"
 local previousControls = {}
-local previousCursor = false
 
 local function captureInputState()
     previousControls = {}
@@ -60,7 +59,9 @@ local function captureInputState()
     --
     -- It is also load-bearing: MTA raises `onClientClick` from the cursor
     -- position, so with the cursor hidden the click never arrived at all.
-    previousCursor = isCursorShowing()
+    -- Asked for, not remembered. MTA counts cursor requests across resources,
+    -- so `isCursorShowing()` answers for everyone and giving that answer back
+    -- would leave this resource still asking forever.
     showCursor(true)
 end
 
@@ -69,7 +70,7 @@ local function restoreInputState()
         toggleControl(control, enabled == true)
     end
     previousControls = {}
-    showCursor(previousCursor)
+    showCursor(false)
 end
 
 local function nonEmptyData(element, key)
