@@ -42,7 +42,6 @@
          modules it applies them to have to exist by then. -->
     <script src="client/settings_store.lua" type="client" cache="false" />
     <!-- After the store it reads from, and after the windows it opens over. -->
-    <script src="client/settings_ui.lua" type="client" cache="false" />
     <file src="client/panel/index.html" />
     <file src="client/panel/styles.css" />
     <file src="client/panel/app.js" />

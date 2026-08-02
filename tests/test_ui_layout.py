@@ -41,7 +41,7 @@ SCALES = [0.5, 1, 2]
 #: Every surface the layout manager places, with the window that shows it. The
 #: dx-drawn ones have no control to read back, so they are listed separately.
 WINDOW_SURFACES = [
-    "settings",
+    "panel",
 ]
 DRAWN_SURFACES = ["review", "hud"]
 
@@ -71,8 +71,44 @@ def start_client(
     for script in manifest_client_scripts():
         sandbox.load(script)
     sandbox.trigger("onClientResourceStart")
+    # The panel belongs to the Study Player, and so does the way into it.
+    sandbox.eval(
+        'function() triggerEvent("ankigta:setAuthorized", resourceRoot, true) end'
+    )()
+    # These are about layout, not about the gate: the gate legitimately wins
+    # the section while there is no companion, so give them one.
+    sandbox.eval(
+        """
+        function()
+            triggerEvent("ankigta:companionStatus", resourceRoot,
+                {state = "connected"})
+        end
+        """
+    )()
     sandbox.eval("function(l) ANKIGTA.Locale.setLanguage(l) end")(language)
     return sandbox
+
+
+def set_setting_action(sandbox: MtaSandbox, action: str, payload: Any) -> None:
+    sandbox.eval(
+        """
+        function(action, payload)
+            triggerEvent("ankigta:panelAction", resourceRoot, action, payload)
+        end
+        """
+    )(action, json.dumps(payload))
+
+
+def pushed_section(sandbox: MtaSandbox) -> str:
+    for code in reversed(sandbox.browser_javascript):
+        start, end = code.find("("), code.rfind(")")
+        if start == -1 or end == -1:
+            continue
+        try:
+            return str(json.loads(code[start + 1 : end])["section"])
+        except (json.JSONDecodeError, KeyError):
+            continue
+    raise AssertionError("the panel pushed no state")
 
 
 @pytest.fixture
@@ -197,9 +233,77 @@ def select_first_row(sandbox: MtaSandbox) -> None:
     sandbox.click_widget(grid)
 
 
+def set_setting(sandbox: MtaSandbox, key: str, value: Any) -> None:
+    """Change a setting the way the panel's one write path does."""
+    sandbox.eval(
+        """
+        function(payload)
+            triggerEvent("ankigta:panelAction", resourceRoot,
+                "setSetting", payload)
+        end
+        """
+    )(json.dumps({"key": key, "value": value}))
+
+
+def settings_row(sandbox: MtaSandbox, key: str) -> Any:
+    for code in reversed(sandbox.browser_javascript):
+        start, end = code.find("("), code.rfind(")")
+        if start == -1 or end == -1:
+            continue
+        try:
+            state = json.loads(code[start + 1 : end])
+        except json.JSONDecodeError:
+            continue
+        for row in state.get("settings", {}).get("rows", []):
+            if row["key"] == key:
+                return row
+    return None
+
+
+def reset_layout(sandbox: MtaSandbox) -> None:
+    sandbox.eval(
+        'function() triggerEvent("ankigta:panelAction", resourceRoot,'
+        ' "resetLayout", "{}") end'
+    )()
+
+
+def page_ready(sandbox: MtaSandbox) -> None:
+    """The page telling Lua it loaded; nothing is pushed into it before that."""
+    sandbox.eval(
+        'function() triggerEvent("ankigta:panelAction", resourceRoot,'
+        ' "ready", "{}") end'
+    )()
+
+
 def open_every_window(sandbox: MtaSandbox) -> None:
-    """Put one of every window on screen, including a modal warning."""
+    """Put the panel on screen. Ticket 32 left exactly one surface to place."""
     sandbox.commands["ankigta-ui"][0]()
+    page_ready(sandbox)
+
+
+def panel_rect(sandbox: MtaSandbox) -> tuple[float, float, float, float]:
+    rect = sandbox.eval('function() return {ANKIGTA.Layout.rect("panel")} end')()
+    return rect[1], rect[2], rect[3], rect[4]
+
+
+def drag_panel(sandbox: MtaSandbox, x: float, y: float) -> None:
+    """Drag the panel to a screen position, the way a player does.
+
+    The page reports only that a drag began; Lua follows the cursor. Both ends
+    of that are exercised here rather than reaching for guiSetPosition, which
+    would prove nothing about the path a player takes.
+    """
+    width, height = sandbox.eval("function() return guiGetScreenSize() end")()
+    start_x, start_y, _w, _h = panel_rect(sandbox)
+    sandbox.cursor_position = (start_x / width, start_y / height)
+    sandbox.key_states["mouse1"] = True
+    sandbox.eval(
+        'function() triggerEvent("ankigta:panelAction", resourceRoot,'
+        ' "dragStart", "{}") end'
+    )()
+    sandbox.cursor_position = (x / width, y / height)
+    sandbox.trigger("onClientRender")
+    sandbox.key_states["mouse1"] = False
 
 
 def open_review(sandbox: MtaSandbox, *, side: str = "question") -> None:
@@ -294,27 +398,27 @@ def test_a_scale_outside_the_range_is_refused_with_a_reason_never_clamped(
     assert scale(client) == 1
 
 
-def test_the_buttons_move_ui_scale_by_005_and_stop_at_the_bounds(
+def test_ui_scale_steps_by_005_and_stops_at_the_bounds(
     client: MtaSandbox,
 ) -> None:
+    """The step is the manager's rule, not a button's.
+
+    Ticket 32 folded the +/- pair into one number row, so the rule is asserted
+    where it lives rather than through two controls that no longer exist.
+    """
     step = client.eval("ANKIGTA.Layout.scaleStep")
     assert step == 0.05
 
     client.commands["ankigta-ui"][0]()
-    larger = text(client, "ui.larger")
-    smaller = text(client, "ui.smaller")
-
-    client.click_widget(larger)
+    page_ready(client)
+    set_setting(client, "uiScale", 1.05)
     assert scale(client) == 1.05
 
-    for _ in range(40):
-        client.click_widget(larger)
-    assert scale(client) == 2
-
-    for _ in range(40):
-        client.click_widget(smaller)
-    assert scale(client) == 0.5
-
+    # The bounds refuse rather than clamp, which is the same rule the row above
+    # is checked against.
+    refused, _why = set_scale(client, 2.05)
+    assert refused is False
+    assert scale(client) == 1.05
 
 def test_a_value_typed_by_hand_is_taken_at_two_decimal_places(
     client: MtaSandbox,
@@ -326,9 +430,7 @@ def test_a_value_typed_by_hand_is_taken_at_two_decimal_places(
     client.commands["ankigta-ui"][0]()
     # UI scale is a row of the settings panel like any other, so the field
     # starts at the current value and Apply is the row's own button.
-    field = client.find_widget("1", "edit")
-    client.widgets[field].text = "1.23"
-    client.eval("function() ANKIGTA.SettingsUI.applyNumber('uiScale') end")()
+    set_setting(client, "uiScale", 1.23)
 
     assert scale(client) == 1.23
 
@@ -343,43 +445,32 @@ def test_a_refused_value_typed_by_hand_says_why_in_the_players_language(
     """
     client.eval("function(l) ANKIGTA.Locale.setLanguage(l) end")("ru")
     client.commands["ankigta-ui"][0]()
-    field = client.find_widget("1", "edit")
-    client.widgets[field].text = "9"
-    client.eval("function() ANKIGTA.SettingsUI.applyNumber('uiScale') end")()
+    page_ready(client)
+    set_setting(client, "uiScale", 9)
+
 
     assert scale(client) == 1
-    shown = client.eval(
-        "function() return guiGetText("
-        "ANKIGTA.SettingsUI.controls.uiScale.errorLabel) end"
-    )()
-    assert shown == text(client, "settings.error.out_of_range")
+    assert settings_row(client, "uiScale")["error"] == "settings.error.out_of_range"
 
 
 def test_a_scale_change_reaches_an_open_window_without_reopening_it(
     client: MtaSandbox,
 ) -> None:
-    """"Applies immediately" means the window on screen, not the next one."""
+    """"Applies immediately" means the surface on screen, not the next one.
+
+    The controls inside are HTML and scale with the page, so what this side
+    still owns — and what this checks — is that the open surface itself grows
+    without being closed and reopened.
+    """
     open_f7(client)
-    before = client.widget_rect(client.find_widget(text(client, "settings.title")))
-    before_controls = {
-        "apply": client.widget_rect(
-            client.find_widget(text(client, "settings.apply"))
-        )
-    }
+    page_ready(client)
+    before = panel_rect(client)
 
     set_scale(client, 1.5)
 
-    after = client.widget_rect(client.find_widget(text(client, "settings.title")))
+    after = panel_rect(client)
     assert after[2] == pytest.approx(before[2] * 1.5, abs=1)
     assert after[3] == pytest.approx(before[3] * 1.5, abs=1)
-    # And the controls inside it grew with it, rather than staying put in a
-    # bigger frame.
-    apply_before = before_controls["apply"]
-    apply_after = client.widget_rect(
-        client.find_widget(text(client, "settings.apply"))
-    )
-    assert apply_after[2] == pytest.approx(apply_before[2] * 1.5, abs=1)
-
 
 def test_the_scale_is_stored_and_reapplied_after_a_restart(
     client: MtaSandbox,
@@ -430,22 +521,30 @@ def test_no_control_falls_outside_the_window_that_holds_it(
     height: int,
     wanted: float,
 ) -> None:
-    """The layout acceptance test story 54 asks for.
+    """The layout acceptance test story 54 asks for, after ticket 32.
 
-    A button past the right edge of its window is a required primary action the
-    player cannot reach, and CEGUI does not scroll to it.
+    The controls became HTML in one page, and CSS keeps them inside it — there
+    is no CEGUI frame left to overflow. What is still this side's job, and
+    still the thing story 54 is about, is that the surface itself is wholly on
+    screen at every scale and resolution: a panel whose title bar is off the
+    top is a panel that cannot be moved back.
     """
     sandbox = start_client(width=width, height=height)
     try:
         assert set_scale(sandbox, wanted) is True
         open_every_window(sandbox)
 
+        x, y, panel_width, panel_height = panel_rect(sandbox)
+        assert x >= 0 and y >= 0, (x, y)
+        assert x + panel_width <= width, (x, panel_width, width)
+        assert y + panel_height <= height, (y, panel_height, height)
+
+        # Any CEGUI control still alive — the recovery screen is the last one —
+        # keeps the original rule.
         windows = {
             index: sandbox.widgets[index]
             for index in sandbox.live_widgets("window")
         }
-        assert len(windows) >= len(WINDOW_SURFACES)
-
         for index, control in enumerate(sandbox.widgets):
             if control.destroyed or control.parent not in windows:
                 continue
@@ -462,7 +561,6 @@ def test_no_control_falls_outside_the_window_that_holds_it(
     finally:
         sandbox.close()
 
-
 def test_a_surface_too_big_for_the_screen_is_capped_and_the_setting_is_not() -> None:
     """F7 is 900x360 by design; at scale 2 that is taller than a 720p screen.
 
@@ -473,7 +571,7 @@ def test_a_surface_too_big_for_the_screen_is_capped_and_the_setting_is_not() -> 
     sandbox = start_client(width=1280, height=720)
     try:
         assert set_scale(sandbox, 2) is True
-        _x, _y, width, height = rect(sandbox, "settings")
+        _x, _y, width, height = rect(sandbox, "panel")
 
         assert width <= 1280 and height <= 720
         assert width < 900 * 2
@@ -490,42 +588,42 @@ def test_dragging_f7_by_its_title_is_remembered_as_a_fraction_of_the_screen(
     client: MtaSandbox,
 ) -> None:
     open_f7(client)
-    window = client.find_widget(text(client, "settings.title"))
 
-    client.drag_window(window, 480, 216)
+    drag_panel(client, 480, 216)
 
-    assert placement(client)["settings"] == {"x": 0.25, "y": 0.2}
+    assert placement(client)["panel"] == {"x": 0.25, "y": 0.2}
 
 
 def test_a_window_is_movable_by_its_title_and_never_resizable(
     client: MtaSandbox,
 ) -> None:
-    """The size is UI Scale's to decide.
+    """Moved by its bar, and never resized by dragging an edge.
 
-    A hand-resized window would have its controls at the wrong size the moment
-    it was reopened, because the controls are built for the scale, not for the
-    frame.
+    The panel is a page, so "resizable" is not a property a player can reach:
+    its size comes from UI Scale alone. What is still checkable here is that
+    the bar moves it and the size does not change while it does.
     """
-    open_f7(client)
-    window = client.widgets[client.find_widget(text(client, "settings.title"))]
+    client.commands["ankigta-ui"][0]()
+    page_ready(client)
+    _x, _y, width_before, height_before = panel_rect(client)
 
-    assert window.movable is True
-    assert window.sizable is False
+    drag_panel(client, 480, 216)
 
+    x, y, width, height = panel_rect(client)
+    assert (x, y) == (480, 216)
+    assert (width, height) == (width_before, height_before)
 
 def test_a_placement_survives_a_restart(client: MtaSandbox) -> None:
     open_f7(client)
-    client.drag_window(client.find_widget(text(client, "settings.title")), 480, 216)
+    drag_panel(client, 480, 216)
     # The write is debounced, so a drag is one write rather than one per frame.
     client.fire_timers()
-    assert stored_settings(client)["uiPlacement"]["settings"] == {"x": 0.25, "y": 0.2}
+    assert stored_settings(client)["uiPlacement"]["panel"] == {"x": 0.25, "y": 0.2}
 
     restarted = start_client(dict(client.files))
     try:
         open_f7(restarted)
-        assert restarted.widget_rect(
-            restarted.find_widget(text(restarted, "settings.title"))
-        )[:2] == (480, 216)
+        assert panel_rect(restarted)[:2] == (480, 216)
     finally:
         restarted.close()
 
@@ -535,10 +633,9 @@ def test_a_drag_is_written_once_rather_than_once_per_frame(
 ) -> None:
     """CEGUI reports a drag as a stream of moves."""
     open_f7(client)
-    window = client.find_widget(text(client, "settings.title"))
 
     for step in range(20):
-        client.drag_window(window, 400 + step, 300 + step)
+        drag_panel(client, 400 + step, 300 + step)
 
     pending = [timer for timer in client.recorder.timers if not timer.cancelled]
     assert len([timer for timer in pending if timer.repeats == 1]) == 1
@@ -549,14 +646,24 @@ def test_a_placement_made_at_one_resolution_lands_in_the_same_place_at_another(
 ) -> None:
     """Normalized, so the corner means the same thing on every screen."""
     open_f7(client)
-    client.drag_window(client.find_widget(text(client, "settings.title")), 480, 216)
+    drag_panel(client, 480, 216)
     client.fire_timers()
 
     for width, height in RESOLUTIONS:
         restarted = start_client(dict(client.files), width=width, height=height)
         try:
-            x, y, _width, _height = rect(restarted, "settings")
-            assert (x / width, y / height) == pytest.approx((0.25, 0.2), abs=0.01)
+            x, y, panel_width, panel_height = rect(restarted, "panel")
+            # The fraction is what was stored, so it lands in the same place —
+            # except where the surface is nearly as large as the screen, and
+            # then being wholly visible wins over being at the same fraction.
+            # Both are ticket 28's rule; the clamp is the half that matters at
+            # 1280x720.
+            assert (x, y) == (
+                min(round(0.25 * width), width - panel_width),
+                min(round(0.2 * height), height - panel_height),
+            )
+            assert x >= 0 and y >= 0
+            assert x + panel_width <= width and y + panel_height <= height
         finally:
             restarted.close()
 
@@ -566,9 +673,8 @@ def test_a_placement_off_the_new_screen_is_clamped_back_onto_it() -> None:
     big = start_client(width=3840, height=2160)
     try:
         open_f7(big)
-        client_window = big.find_widget(text(big, "settings.title"))
-        _x, _y, width, height = rect(big, "settings")
-        big.drag_window(client_window, 3840 - width, 2160 - height)
+        _x, _y, width, height = rect(big, "panel")
+        drag_panel(big, 3840 - width, 2160 - height)
         big.fire_timers()
         files = dict(big.files)
     finally:
@@ -576,7 +682,7 @@ def test_a_placement_off_the_new_screen_is_clamped_back_onto_it() -> None:
 
     small = start_client(files, width=1280, height=720)
     try:
-        x, y, width, height = rect(small, "settings")
+        x, y, width, height = rect(small, "panel")
         assert x + width <= 1280
         assert y + height <= 720
         # The title bar is what the player has to be able to grab.
@@ -590,14 +696,12 @@ def test_the_screen_changing_size_puts_an_open_window_back_on_it(
 ) -> None:
     """MTA reports no resolution change, so the manager polls for it."""
     open_f7(client)
-    client.drag_window(client.find_widget(text(client, "settings.title")), 1000, 700)
+    drag_panel(client, 1000, 700)
 
     client.screen_width, client.screen_height = 1280, 720
     client.eval("function() return ANKIGTA.Layout.refresh() end")()
 
-    x, y, width, height = client.widget_rect(
-        client.find_widget(text(client, "settings.title"))
-    )
+    x, y, width, height = panel_rect(client)
     assert x + width <= 1280
     assert y + height <= 720
 
@@ -606,7 +710,7 @@ def test_a_stored_placement_that_is_not_one_is_discarded_with_a_diagnostic() -> 
     sandbox = MtaSandbox()
     sandbox.write_file(
         "@ankigta-settings.json",
-        json.dumps({"uiPlacement": {"settings": {"x": 4.5, "y": -2}}}),
+        json.dumps({"uiPlacement": {"panel": {"x": 4.5, "y": -2}}}),
     )
     try:
         for script in manifest_client_scripts():
@@ -629,10 +733,10 @@ def test_a_placement_the_file_will_not_take_is_reported_rather_than_lost(
     open_f7(client)
     client.file_writes_fail = True
 
-    client.drag_window(client.find_widget(text(client, "settings.title")), 480, 216)
+    drag_panel(client, 480, 216)
     client.fire_timers()
 
-    assert placement(client)["settings"] == {"x": 0.25, "y": 0.2}
+    assert placement(client)["panel"] == {"x": 0.25, "y": 0.2}
     assert any(
         "ui_placement_not_stored" in line
         for line in client.recorder.debug_messages()
@@ -645,7 +749,7 @@ def test_a_placement_for_a_surface_this_version_no_longer_has_is_dropped() -> No
     sandbox.write_file(
         "@ankigta-settings.json",
         json.dumps(
-            {"uiPlacement": {"settings": {"x": 0.1, "y": 0.2}, "gone": {"x": 0.3, "y": 0.4}}}
+            {"uiPlacement": {"panel": {"x": 0.1, "y": 0.2}, "gone": {"x": 0.3, "y": 0.4}}}
         ),
     )
     try:
@@ -653,7 +757,7 @@ def test_a_placement_for_a_surface_this_version_no_longer_has_is_dropped() -> No
             sandbox.load(script)
         sandbox.trigger("onClientResourceStart")
 
-        assert set(placement(sandbox)) == {"settings"}
+        assert set(placement(sandbox)) == {"panel"}
     finally:
         sandbox.close()
 
@@ -785,11 +889,10 @@ def test_edit_hud_layout_is_a_setting_the_player_turns_on(
     client: MtaSandbox,
 ) -> None:
     client.commands["ankigta-ui"][0]()
-    checkbox = client.find_widget(text(client, "ui.editHud"), "checkbox")
+    page_ready(client)
     assert client.eval("function() return ANKIGTA.Layout.hudEditMode() end")() is False
 
-    client.widgets[checkbox].selected = True
-    client.click_widget(checkbox)
+    set_setting_action(client, "editHud", {"value": True})
 
     assert client.eval("function() return ANKIGTA.Layout.hudEditMode() end")() is True
 
@@ -818,11 +921,11 @@ def test_reset_ui_layout_restores_the_shipped_scale_and_placement(
     client: MtaSandbox,
 ) -> None:
     open_f7(client)
-    client.drag_window(client.find_widget(text(client, "settings.title")), 40, 40)
+    drag_panel(client, 40, 40)
     set_scale(client, 1.8)
     client.eval("function() ANKIGTA.Layout.setHudEditMode(true) end")()
 
-    client.click_widget(text(client, "ui.reset"), "button")
+    reset_layout(client)
 
     assert scale(client) == 1
     assert placement(client) == {}
@@ -833,9 +936,9 @@ def test_reset_ui_layout_restores_the_shipped_scale_and_placement(
 
 def test_reset_ui_layout_survives_a_restart(client: MtaSandbox) -> None:
     open_f7(client)
-    client.drag_window(client.find_widget(text(client, "settings.title")), 40, 40)
+    drag_panel(client, 40, 40)
     client.fire_timers()
-    client.click_widget(text(client, "ui.reset"), "button")
+    reset_layout(client)
 
     restarted = start_client(dict(client.files))
     try:
@@ -887,29 +990,30 @@ def test_the_reset_row_is_inside_the_panel_at_every_scale(
     width: int,
     height: int,
 ) -> None:
-    """The row is the way a player who opened the panel finds it."""
+    """Reset stays reachable however the layout was left.
+
+    The row itself is HTML and CSS keeps it inside the page, so what this
+    checks is the part that can still go wrong here: the panel is on screen,
+    and the reset it offers actually puts scale and placement back.
+    """
     sandbox = start_client(width=width, height=height)
     try:
         set_scale(sandbox, wanted)
         sandbox.commands["ankigta-ui"][0]()
+        page_ready(sandbox)
+        drag_panel(sandbox, width * 0.4, height * 0.4)
 
-        button = sandbox.find_widget(text(sandbox, "ui.reset"))
-        panel = sandbox.widgets[
-            sandbox.find_widget(text(sandbox, "settings.title"))
-        ]
-        panel_x, panel_y, panel_width, panel_height = rect(sandbox, "settings")
+        panel_x, panel_y, panel_width, panel_height = rect(sandbox, "panel")
+        assert panel_x >= 0 and panel_y >= 0
         assert panel_x + panel_width <= width
         assert panel_y + panel_height <= height
-        control = sandbox.widgets[button]
-        assert control.x + control.width <= panel.width + 1
-        assert control.y + control.height <= panel.height + 1
 
-        sandbox.click_widget(button)
+        reset_layout(sandbox)
+
         assert scale(sandbox) == 1
         assert placement(sandbox) == {}
     finally:
         sandbox.close()
-
 
 def test_the_panel_is_reachable_from_f7_as_well_as_from_the_command(
     client: MtaSandbox,
@@ -917,10 +1021,19 @@ def test_the_panel_is_reachable_from_f7_as_well_as_from_the_command(
     """One panel, so one entry: the UI scale rows live in the settings panel
     rather than in a second window offering the same value."""
     open_f7(client)
+    page_ready(client)
+    client.eval(
+        'function() triggerEvent("ankigta:panelAction", resourceRoot,'
+        ' "openSettings", "{}") end'
+    )()
+    from_panel = pushed_section(client)
 
-    client.click_widget(text(client, "settings.title"))
+    client.commands["ankigta-ui"][0]()
+    page_ready(client)
+    from_command = pushed_section(client)
 
-    assert client.eval("function() return isUiSettingsOpen() end")() is True
+    assert from_panel == "settings"
+    assert from_command == "settings"
 
 
 # --- authority ----------------------------------------------------------------
@@ -929,7 +1042,7 @@ def test_the_panel_is_reachable_from_f7_as_well_as_from_the_command(
 def test_ui_scale_and_placement_never_reach_the_server(client: MtaSandbox) -> None:
     """ADR 0028. They live on this machine, so nothing is sent anywhere."""
     open_f7(client)
-    client.drag_window(client.find_widget(text(client, "settings.title")), 40, 40)
+    drag_panel(client, 40, 40)
     set_scale(client, 1.5)
     client.fire_timers()
 

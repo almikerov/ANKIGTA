@@ -304,3 +304,72 @@ label {
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* --- settings ---------------------------------------------------------- */
+
+.settings { display: flex; flex-direction: column; height: 100%; }
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+.settings-head h2 { margin: 0; font-size: 15px; }
+
+.settings-rows {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  margin: 0 var(--space-4) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(2, 6, 23, 0.5);
+}
+
+/* Label, control, and the reason directly under them — never a list of
+   errors collected at the top of the form. */
+.setting {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line-soft);
+}
+.setting:last-child { border-bottom: 0; }
+.setting.invalid { background: rgba(239, 68, 68, 0.07); }
+.setting-label {
+  flex-direction: row;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--text);
+  font-size: 13px;
+  min-width: 0;
+}
+.setting-label .hint { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.setting .field-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #fecaca;
+  font-size: 11px;
+}
+.setting .field-error[hidden] { display: none; }
+
+.setting select {
+  font: inherit;
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  background: var(--bg);
+  color: var(--text);
+}
+.setting select:focus-visible,
+.setting input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.setting .toggle[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}

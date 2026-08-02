@@ -18,7 +18,7 @@ local F7_SNAPSHOT_EVENT = "ankigta:f7Snapshot"
 local AUTHORIZATION_EVENT = "ankigta:setAuthorized"
 local AUTHORIZATION_REQUEST_EVENT = "ankigta:requestAuthorization"
 local CONNECT_EVENT = "ankigta:connectCompanion"
-local SETTINGS_UPDATE_EVENT = "ankigta:updateConnectionSettings"
+local CONNECTION_UPDATE_EVENT = "ankigta:updateConnectionSettings"
 local START_STUDY_REQUEST_EVENT = "ankigta:startStudy"
 local OPEN_SETTINGS_EVENT = "ankigta:openSettings"
 local STATUS_REQUEST_EVENT = "ankigta:requestCompanionStatus"
@@ -35,6 +35,11 @@ local REDO_REQUEST_EVENT = "ankigta:redo"
 local PICK_ENTITY_START_EVENT = "ankigta:pickEntityStart"
 local PICK_ENTITY_FINISHED_EVENT = "ankigta:pickEntityFinished"
 local PENDING_NOTICE_EVENT = "ankigta:pendingMapSaveNotice"
+local SETTINGS_REQUEST_EVENT = "ankigta:requestSettings"
+local SETTINGS_SNAPSHOT_EVENT = "ankigta:settingsSnapshot"
+local SETTINGS_UPDATE_EVENT = "ankigta:updateSetting"
+local SETTINGS_REJECTED_EVENT = "ankigta:settingRejected"
+local CONNECTION_SETTINGS_REQUEST_EVENT = "ankigta:requestConnectionSettings"
 local PAGE_URL = "http://mta/local/client/panel/index.html"
 
 local authorized = false
@@ -66,11 +71,27 @@ local selectionArrivedFromOutside = false
 -- What the player typed to narrow the list. Kept here so a rebuild for another
 -- language does not throw away their filter.
 local entityFilter = ""
+-- Which section the player asked for, when it is theirs to ask. The connection
+-- gate is not a request but a consequence, so it stays out of this.
+local requestedSection = nil
+-- Server-owned values as last reported, and the reason a row was refused. Kept
+-- per key so the reason sits on the row that earned it rather than at the top
+-- of a form.
+local serverValues = {}
+local settingsRejections = {}
+-- What was sent to the server and not yet answered. Shown in place of the
+-- stored value while it is in flight: snapping the field back to the old
+-- number while the owner is still deciding reads exactly like a refusal.
+local settingsPending = {}
 -- When the panel and the last search were asked for, so the report can say how
 -- long each took rather than only that it arrived. Measured on this side,
 -- because this is the side that waits.
 local panelRequestedAt = false
 local searchRequestedAt = false
+
+-- Filled in further down, declared here: the commands and the Review Mode
+-- entry wire themselves to it before those definitions are reached.
+local actions = {}
 
 local function record(section, values)
     if ANKIGTA.Diagnostics then
@@ -122,7 +143,78 @@ local function section()
     if not lastStatus or lastStatus.state ~= "connected" then
         return "connection"
     end
-    return "entities"
+    return requestedSection or "entities"
+end
+
+-- --- settings ----------------------------------------------------------------
+
+--- Rows are derived from the schema, never listed here.
+--
+-- A setting added to `shared/settings.lua` shows up in the panel by existing,
+-- which is the property that stopped `pauseOnReviewerOpen` from being ticked
+-- while unreachable. Two are deliberately absent: a secret is never sent back
+-- to a page, and window placement is dragged rather than typed.
+local SETTINGS_NOT_SHOWN = {connectionToken = true, uiPlacement = true}
+
+-- Owned by the add-on, which publishes them. The panel routes to the section
+-- that already edits them instead of offering a second field for the same
+-- value: two places to change one setting is one place too many.
+local SETTINGS_DELEGATED = {connectionPort = true}
+
+local function schema()
+    return ANKIGTA.Settings
+end
+
+local function ownedByServer(key)
+    return schema().authorityOf(key) == schema().SERVER
+end
+
+local function currentValue(key)
+    if ownedByServer(key) then
+        if settingsPending[key] ~= nil then
+            return settingsPending[key]
+        end
+        local value = serverValues[key]
+        if value ~= nil then
+            return value
+        end
+        return schema().default(key)
+    end
+    if ANKIGTA.ClientSettings then
+        return ANKIGTA.ClientSettings.get(key)
+    end
+    return schema().default(key)
+end
+
+local function settingsRows()
+    local rows = {}
+    for _, key in ipairs(schema().orderedKeys()) do
+        if not SETTINGS_NOT_SHOWN[key] then
+            local definition = schema().definition(key)
+            local rule = definition and definition.rule or {}
+            local row = {
+                key = key,
+                labelKey = "settings." .. key,
+                kind = SETTINGS_DELEGATED[key] and "delegated"
+                    or rule.kind or "unknown",
+                value = currentValue(key),
+                owner = ownedByServer(key) and "server" or "client",
+                error = settingsRejections[key] or false,
+            }
+            if SETTINGS_DELEGATED[key] then
+                row.value = false
+            elseif rule.kind == "number" then
+                row.min = rule.minimum
+                row.max = rule.maximum
+                row.step = rule.step
+                row.decimals = rule.decimals
+            elseif rule.kind == "choice" then
+                row.options = rule.values
+            end
+            table.insert(rows, row)
+        end
+    end
+    return rows
 end
 
 --- Rank a row the way a reader thinks about it.
@@ -373,6 +465,7 @@ local function push()
             cards = cardRows(lastCards),
         },
         notice = notice,
+        settings = {rows = settingsRows()},
     }
     local encoded = toJSON(state, true)
     if not encoded then
@@ -462,9 +555,11 @@ local function followCursor()
     local x = dragFrom.x + (cursorX * screenWidth - dragFrom.cursorX)
     local y = dragFrom.y + (cursorY * screenHeight - dragFrom.cursorY)
     if ANKIGTA.Layout then
-        -- Clamping, storing and repositioning are the layout manager's, so a
-        -- drag cannot put the panel somewhere the next resolution cannot show.
-        ANKIGTA.Layout.moveTo("panel", x, y)
+        -- Clamping, storing, writing and repositioning are the layout
+        -- manager's, so a drag cannot put the panel somewhere the next
+        -- resolution cannot show, and it survives a restart. `remember`
+        -- rather than `moveTo`: the second moves, only the first writes.
+        ANKIGTA.Layout.remember("panel", x, y)
         local placedX, placedY = ANKIGTA.Layout.rect("panel")
         guiSetPosition(guiBrowser, placedX, placedY, false)
         return
@@ -510,9 +605,38 @@ end)
 
 addCommandHandler("ankigta-connection", togglePanel)
 
+--- The two ways out of a layout that went wrong.
+--
+-- Both are commands rather than only buttons, because "always reachable" has
+-- to hold in the case they exist for: the panel is the wrong size, in the
+-- wrong place, or off the screen entirely. A button inside it would be behind
+-- the very problem it fixes.
+addCommandHandler("ankigta-ui", function()
+    if not authorized then
+        return
+    end
+    if not isPanelOpen() then
+        openPanel()
+        if not isPanelOpen() then
+            return
+        end
+    end
+    actions.openSettings()
+end)
+
+addCommandHandler("ankigta-ui-reset", function()
+    if ANKIGTA.Layout then
+        ANKIGTA.Layout.reset()
+    end
+    if isPanelOpen() then
+        local x, y = panelRect()
+        guiSetPosition(guiBrowser, x, y, false)
+        push()
+    end
+end)
+
 -- --- what the page sends back -------------------------------------------------
 
-local actions = {}
 
 function actions.ready()
     pageReady = true
@@ -531,7 +655,88 @@ end
 -- Kept as a door rather than a copy: two settings surfaces would be two places
 -- to fix one wrong default.
 function actions.openSettings()
-    triggerEvent(OPEN_SETTINGS_EVENT, resourceRoot)
+    requestedSection = "settings"
+    -- Server-owned values are the server's to report; ask, then render what
+    -- comes back rather than guessing from a default.
+    triggerServerEvent(SETTINGS_REQUEST_EVENT, resourceRoot)
+    push()
+end
+
+--- Put UI scale and every placement back where they shipped.
+function actions.resetLayout()
+    if ANKIGTA.Layout then
+        ANKIGTA.Layout.reset()
+    end
+    if isPanelOpen() then
+        local x, y = panelRect()
+        guiSetPosition(guiBrowser, x, y, false)
+    end
+    notice = {key = "ui.resetDone", detail = false}
+    push()
+end
+
+--- Turn HUD dragging on and off.
+-- A mode rather than a setting: it is on while the player is placing the
+-- counters and off the moment they are done, so it is never written down.
+function actions.editHud(payload)
+    if ANKIGTA.Layout then
+        ANKIGTA.Layout.setHudEditMode(payload.value == true)
+    end
+    push()
+end
+
+function actions.closeSettings()
+    requestedSection = nil
+    push()
+end
+
+--- The one path every change takes, whichever control started it.
+--
+-- Validated against the schema before anything is stored or sent: a value the
+-- schema refuses comes back as the reason it gave, on its own row. Nothing is
+-- clamped -- a mistyped 200 quietly becoming 50 leaves the player with a
+-- setting they never chose and no way to notice.
+function actions.setSetting(payload)
+    local key = payload.key
+    if type(key) ~= "string" or SETTINGS_NOT_SHOWN[key] then
+        return
+    end
+    if SETTINGS_DELEGATED[key] then
+        -- Not edited here: this takes the player to the side that owns it.
+        requestedSection = "connection"
+        triggerServerEvent(CONNECTION_SETTINGS_REQUEST_EVENT, resourceRoot)
+        push()
+        return
+    end
+    local value = schema().normalize(key, payload.value)
+    local valid, reason = schema().validate(key, value)
+    if not valid then
+        settingsRejections[key] = reason
+        push()
+        return
+    end
+
+    if ownedByServer(key) then
+        -- Not redrawn here on purpose: snapping the field back while the
+        -- server is still deciding looks exactly like a rejection. The
+        -- snapshot that follows is what shows the new value.
+        settingsRejections[key] = nil
+        settingsPending[key] = value
+        triggerServerEvent(
+            SETTINGS_UPDATE_EVENT, resourceRoot, key, value, payload.mapId
+        )
+        push()
+        return
+    end
+
+    local stored, storeReason = ANKIGTA.ClientSettings.set(key, value)
+    if not stored then
+        settingsRejections[key] = storeReason
+        push()
+        return
+    end
+    settingsRejections[key] = nil
+    push()
 end
 
 function actions.dragStart()
@@ -561,7 +766,7 @@ function actions.startStudy()
 end
 
 function actions.updateConnection(payload)
-    triggerServerEvent(SETTINGS_UPDATE_EVENT, resourceRoot, payload)
+    triggerServerEvent(CONNECTION_UPDATE_EVENT, resourceRoot, payload)
 end
 
 --- The selected Map Entity, by the identity the server knows it by.
@@ -881,6 +1086,46 @@ addEventHandler(PICK_ENTITY_FINISHED_EVENT, resourceRoot, function(
         -- player left off rather than making them press F7 again.
         togglePanel()
     end
+end)
+
+-- Review Mode has its own way in, and it asks by name rather than by knowing
+-- where the panel keeps its sections.
+addEvent(OPEN_SETTINGS_EVENT, false)
+addEventHandler(OPEN_SETTINGS_EVENT, resourceRoot, function()
+    if not authorized then
+        return
+    end
+    if not isPanelOpen() then
+        openPanel()
+        if not isPanelOpen() then
+            return
+        end
+    end
+    actions.openSettings()
+end)
+
+addEvent(SETTINGS_SNAPSHOT_EVENT, true)
+addEventHandler(SETTINGS_SNAPSHOT_EVENT, resourceRoot, function(values)
+    if source ~= resourceRoot or type(values) ~= "table" then
+        return
+    end
+    serverValues = type(values.values) == "table" and values.values or values
+    -- The owner has spoken, so nothing is in flight any more and what it says
+    -- is what the row shows -- including when it says something else.
+    settingsPending = {}
+    push()
+end)
+
+addEvent(SETTINGS_REJECTED_EVENT, true)
+addEventHandler(SETTINGS_REJECTED_EVENT, resourceRoot, function(key, reason)
+    if source ~= resourceRoot or type(key) ~= "string" then
+        return
+    end
+    -- The server refused after the fact, so the reason lands on the row that
+    -- earned it rather than in the chat, where it would scroll away.
+    settingsRejections[key] = reason or "settings.error.not_saved"
+    settingsPending[key] = nil
+    push()
 end)
 
 addEvent(AUTHORIZATION_EVENT, true)

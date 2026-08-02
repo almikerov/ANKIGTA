@@ -207,9 +207,93 @@
     node.hidden = false;
   }
 
+  /* One row per setting, built from what Lua sent rather than from a list
+   * kept here: a setting added to the schema appears by existing. */
+  function renderSettings(settings) {
+    var host = document.getElementById("settings-rows");
+    host.textContent = "";
+    var rows = (settings && settings.rows) || [];
+    for (var i = 0; i < rows.length; i += 1) {
+      host.appendChild(settingRow(rows[i]));
+    }
+  }
+
+  function settingRow(row) {
+    var wrap = element("div", "setting");
+    var label = element("label", "setting-label");
+    label.setAttribute("for", "set-" + row.key);
+    label.appendChild(element("span", null, t("settings." + row.key)));
+    if (row.kind === "number" && row.min !== undefined) {
+      /* The range is helper text, not a secret to be discovered by being
+       * refused. */
+      label.appendChild(
+        element("span", "hint", row.min + " – " + row.max)
+      );
+    }
+    wrap.appendChild(label);
+    wrap.appendChild(settingControl(row));
+
+    /* The reason sits under the field it belongs to, and announces itself:
+     * a red border is not a message a screen reader receives. */
+    var error = element("p", "field-error", row.error ? t(row.error) : "");
+    error.setAttribute("role", "alert");
+    error.hidden = !row.error;
+    wrap.appendChild(error);
+    if (row.error) wrap.className = "setting invalid";
+    return wrap;
+  }
+
+  function settingControl(row) {
+    if (row.kind === "boolean") {
+      var toggle = element("button", "toggle");
+      toggle.type = "button";
+      toggle.id = "set-" + row.key;
+      toggle.textContent = t("settings.value." + String(row.value));
+      toggle.setAttribute("aria-pressed", String(row.value === true));
+      toggle.addEventListener("click", function () {
+        send("setSetting", {key: row.key, value: !row.value});
+      });
+      return toggle;
+    }
+    if (row.kind === "choice") {
+      var select = document.createElement("select");
+      select.id = "set-" + row.key;
+      for (var i = 0; i < row.options.length; i += 1) {
+        var option = document.createElement("option");
+        option.value = row.options[i];
+        option.textContent = t("settings.value." + row.options[i]);
+        if (row.options[i] === row.value) option.selected = true;
+        select.appendChild(option);
+      }
+      select.addEventListener("change", function () {
+        send("setSetting", {key: row.key, value: select.value});
+      });
+      return select;
+    }
+    var input = document.createElement("input");
+    input.id = "set-" + row.key;
+    input.type = row.kind === "number" ? "number" : "text";
+    if (row.kind === "number") {
+      input.min = row.min;
+      input.max = row.max;
+      input.step = row.step;
+    }
+    input.value = row.value === false || row.value === undefined ? "" : row.value;
+    /* Validated on blur rather than only on submit: there is no submit here,
+     * and finding out on the way out is finding out too late. */
+    input.addEventListener("change", function () {
+      send("setSetting", {
+        key: row.key,
+        value: row.kind === "number" ? parseFloat(input.value) : input.value
+      });
+    });
+    return input;
+  }
+
   function show(section) {
     document.getElementById("section-connection").hidden = section !== "connection";
     document.getElementById("section-entities").hidden = section !== "entities";
+    document.getElementById("section-settings").hidden = section !== "settings";
   }
 
   /** The one entry point Lua calls. A whole state in, a whole render out. */
@@ -220,6 +304,7 @@
     renderConnection(state.connection || {state: "disconnected"});
     selected = state.selected || {mapId: false, entityId: false, cardId: false};
     renderStudy(state.study || {active: false, resumable: false});
+    renderSettings(state.settings);
     renderRows(state.entities);
     renderCards(state.cardPicker);
     renderNotice(state.notice);
@@ -261,6 +346,18 @@
   });
   document.getElementById("connect").addEventListener("click", function () {
     send("connect");
+  });
+  document.getElementById("edit-hud").addEventListener("click", function () {
+    var button = document.getElementById("edit-hud");
+    var next = button.getAttribute("aria-pressed") !== "true";
+    button.setAttribute("aria-pressed", String(next));
+    send("editHud", {value: next});
+  });
+  document.getElementById("reset-layout").addEventListener("click", function () {
+    send("resetLayout");
+  });
+  document.getElementById("close-settings").addEventListener("click", function () {
+    send("closeSettings");
   });
   document.getElementById("start-study").addEventListener("click", function () {
     send("startStudy");

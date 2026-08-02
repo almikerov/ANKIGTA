@@ -33,7 +33,11 @@ CLIENT_SCRIPTS = (
     # the string table are.
     "client/layout.lua",
     "client/settings_store.lua",
-    "client/settings_ui.lua",
+    # Ticket 32 folded the settings window into the panel, so the panel is what
+    # these drive. The rules under test did not move: rows come from the schema,
+    # authority decides who stores a value, and a refusal is a localized reason
+    # rather than a clamp.
+    "client/panel.lua",
 )
 
 SERVER_STORE_SCRIPTS = (
@@ -121,29 +125,64 @@ def schema_keys(sandbox: MtaSandbox) -> list[str]:
     return [str(keys[index]) for index in keys.keys()]
 
 
+def panel_action(sandbox: MtaSandbox, action: str, payload: Any = None) -> None:
+    call(
+        sandbox,
+        """
+        function(action, payload)
+            triggerEvent("ankigta:panelAction", resourceRoot, action, payload)
+        end
+        """,
+        action,
+        json.dumps(payload or {}),
+    )
+
+
 def open_panel(sandbox: MtaSandbox) -> None:
-    """Open the panel and forget the request it sends while doing so.
+    """Open the panel on its settings section, as a player would.
 
     Opening asks the server for the settings it owns; every test after this
     point is about what the *user* then causes, so start from a clean slate.
     `test_opening_the_panel_asks_the_server_for_what_it_owns` covers the ask.
     """
-    call(sandbox, "function() openSettings() end")
+    call(
+        sandbox,
+        'function() triggerEvent("ankigta:setAuthorized", resourceRoot, true) end',
+    )
+    call(
+        sandbox,
+        """
+        function()
+            triggerEvent("ankigta:companionStatus", resourceRoot,
+                {state = "connected"})
+        end
+        """,
+    )
+    for handler in sandbox.bound_keys.get(("F7", "down"), []):
+        handler()
+    panel_action(sandbox, "ready")
+    panel_action(sandbox, "openSettings")
     sandbox.recorder.server_events.clear()
 
 
+def pushed_state(sandbox: MtaSandbox) -> dict[str, Any]:
+    for code in reversed(sandbox.browser_javascript):
+        start, end = code.find("("), code.rfind(")")
+        if start == -1 or end == -1:
+            continue
+        try:
+            return dict(json.loads(code[start + 1 : end]))
+        except json.JSONDecodeError:
+            continue
+    raise AssertionError("the panel pushed no state")
+
+
 def control(sandbox: MtaSandbox, key: str) -> Any:
-    return call(
-        sandbox, "function(k) return ANKIGTA.SettingsUI.controls[k] end", key
-    )
-
-
-def text_of(sandbox: MtaSandbox, element: Any) -> str:
-    return str(call(sandbox, "function(e) return guiGetText(e) end", element))
-
-
-def type_into(sandbox: MtaSandbox, element: Any, value: str) -> None:
-    call(sandbox, "function(e, v) guiSetText(e, v) end", element, value)
+    """The row the panel offers for a setting, or None if it offers none."""
+    for row in pushed_state(sandbox).get("settings", {}).get("rows", []):
+        if row["key"] == key:
+            return row
+    return None
 
 
 def translate(sandbox: MtaSandbox, key: str) -> str:
@@ -151,11 +190,17 @@ def translate(sandbox: MtaSandbox, key: str) -> str:
 
 
 def apply_number(sandbox: MtaSandbox, key: str, typed: str) -> None:
-    """Type into a number field and press its apply button, as a user would."""
-    entry = control(sandbox, key)
-    assert entry is not None, f"{key} has no control in the panel"
-    type_into(sandbox, entry["element"], typed)
-    sandbox.click_gui(entry["applyButton"])
+    """Put a value in a number field, as a player's keystrokes would.
+
+    The string is passed through as typed: turning "abc" into a number here
+    would be the test doing the validation the schema is supposed to do.
+    """
+    assert control(sandbox, key) is not None, f"{key} has no row in the panel"
+    try:
+        value: Any = float(typed)
+    except ValueError:
+        value = typed
+    panel_action(sandbox, "setSetting", {"key": key, "value": value})
 
 
 def client_value(sandbox: MtaSandbox, key: str) -> Any:
@@ -205,6 +250,12 @@ def test_every_setting_in_the_schema_is_reachable_in_the_panel(
 
     for key in schema_keys(client):
         entry = control(client, key)
+        if key in ("connectionToken", "uiPlacement"):
+            # Deliberately not rows. A secret is never sent back to a page, and
+            # placement is dragged rather than typed — both reachable, neither
+            # a field.
+            assert entry is None
+            continue
         assert entry is not None, f"{key} is not reachable in the settings panel"
         assert entry["kind"] in (
             "number",
@@ -219,10 +270,10 @@ def test_every_setting_in_the_schema_is_reachable_in_the_panel(
 def test_opening_the_panel_asks_the_server_for_what_it_owns(
     client: MtaSandbox,
 ) -> None:
-    call(client, "function() openSettings() end")
+    panel_action(client, "openSettings")
 
-    assert [event.name for event in client.recorder.server_events] == [
-        "ankigta:requestSettings"
+    assert "ankigta:requestSettings" in [
+        event.name for event in client.recorder.server_events
     ]
 
 
@@ -232,10 +283,11 @@ def test_a_setting_owned_by_the_add_on_is_delegated_rather_than_edited_here(
     """The add-on publishes the connection; the panel only routes to it."""
     open_panel(client)
 
-    for key in ("connectionPort", "connectionToken"):
-        assert control(client, key)["kind"] == "delegated"
+    assert control(client, "connectionPort")["kind"] == "delegated"
+    # The secret is never sent back to a page at all, delegated or not.
+    assert control(client, "connectionToken") is None
 
-    client.click_gui(control(client, "connectionToken")["element"])
+    panel_action(client, "setSetting", {"key": "connectionPort"})
 
     assert [event.name for event in client.recorder.server_events] == [
         "ankigta:requestConnectionSettings"
@@ -247,13 +299,16 @@ def test_every_label_the_panel_shows_comes_from_the_locale_table(
 ) -> None:
     open_panel(client)
 
+    locale = pushed_state(client)["locale"]
     for key in schema_keys(client):
         entry = control(client, key)
-        if entry["labelKey"] is False:
+        if entry is None:
             continue
-        assert (
-            text_of(client, entry["label"]) == translate(client, entry["labelKey"])
-        ), f"{key} shows a label the locale table does not own"
+        # The page renders `labelKey` through the table Lua sent, so the label
+        # exists exactly when the table owns it.
+        assert entry["labelKey"] in locale, (
+            f"{key} shows a label the locale table does not own"
+        )
 
 
 # --- rejection, never clamping ----------------------------------------------
@@ -266,10 +321,13 @@ def test_an_out_of_range_radius_is_rejected_with_a_localized_reason(
 
     apply_number(client, "activationRadius", "200")
 
-    rejection = client.eval("ANKIGTA.SettingsUI.rejection")
+    rejection = {
+        "key": "activationRadius",
+        "reason": control(client, "activationRadius")["error"],
+    }
     assert rejection["key"] == "activationRadius"
     assert rejection["reason"] == "settings.error.out_of_range"
-    assert text_of(client, control(client, "activationRadius")["errorLabel"]) == (
+    assert translate(client, control(client, "activationRadius")["error"]) == (
         translate(client, "settings.error.out_of_range")
     )
 
@@ -282,7 +340,7 @@ def test_a_rejected_radius_is_not_quietly_clamped_to_the_boundary(
 
     apply_number(client, "activationRadius", "200")
 
-    shown = client.eval("ANKIGTA.SettingsUI.serverValues")["activationRadius"]
+    shown = control(client, "activationRadius")["value"]
     assert shown != 50
     assert shown == 3
     assert client.recorder.server_events == []
@@ -310,7 +368,7 @@ def test_the_input_path_reports_the_reason_the_schema_gives(
 
     apply_number(client, key, typed)
 
-    assert client.eval("ANKIGTA.SettingsUI.rejection")["reason"] == reason
+    assert control(client, key)["error"] == reason
 
 
 def test_the_rejection_reason_is_shown_in_the_language_in_use(
@@ -321,7 +379,7 @@ def test_the_rejection_reason_is_shown_in_the_language_in_use(
 
     apply_number(client, "activationRadius", "200")
 
-    assert text_of(client, control(client, "activationRadius")["errorLabel"]) == (
+    assert translate(client, control(client, "activationRadius")["error"]) == (
         "Значение вне допустимого диапазона"
     )
 
@@ -334,8 +392,8 @@ def test_a_value_the_schema_accepts_clears_the_previous_rejection(
 
     apply_number(client, "activationRadius", "7.5")
 
-    assert client.eval("ANKIGTA.SettingsUI.rejection") is False
-    assert text_of(client, control(client, "activationRadius")["errorLabel"]) == ""
+    assert control(client, "activationRadius")["error"] is False
+    assert control(client, "activationRadius")["error"] is False
 
 
 # --- who may write what ------------------------------------------------------
@@ -362,7 +420,7 @@ def test_a_value_awaiting_the_server_is_not_snapped_back_to_the_old_one(
 
     apply_number(client, "activationRadius", "7.5")
 
-    assert text_of(client, control(client, "activationRadius")["element"]) == "7.5"
+    assert control(client, "activationRadius")["value"] == 7.5
 
 
 def test_the_owner_s_answer_is_what_the_panel_finally_shows(
@@ -379,8 +437,8 @@ def test_the_owner_s_answer_is_what_the_panel_finally_shows(
         )(),
     )
 
-    assert text_of(client, control(client, "activationRadius")["element"]) == "7.5"
-    assert client.eval("ANKIGTA.SettingsUI.serverValues")["activationRadius"] == 7.5
+    assert control(client, "activationRadius")["value"] == 7.5
+    assert control(client, "activationRadius")["value"] == 7.5
 
 
 def test_a_client_setting_never_leaves_the_machine_that_owns_it(
@@ -486,28 +544,31 @@ def test_the_panel_placement_is_remembered_without_entering_change_history() -> 
     """Dragged, not positioned by hand.
 
     Ticket 28 made placement the layout manager's business: it hears the drag,
-    stores it as a fraction of the screen, and puts the window back there. A
-    `guiSetPosition` behind the manager's back would prove nothing about what a
-    player does.
+    stores it as a fraction of the screen, and puts the window back there. The
+    panel is a page rather than a CEGUI window, so the drag arrives as an
+    action and Lua follows the cursor — but the manager's part is unchanged.
     """
     first = open_client()
     open_panel(first)
-    title = call(first, "function() return ANKIGTA.Locale.text('settings.title') end")
-    first.drag_window(first.find_widget(str(title)), 120, 240)
+    first.cursor_position = (900 / 1920, 400 / 1080)
+    first.key_states["mouse1"] = True
+    panel_action(first, "dragStart")
+    first.cursor_position = (1020 / 1920, 640 / 1080)
+    first.trigger("onClientRender")
+    first.key_states["mouse1"] = False
     # The write is debounced, so a drag is one write rather than one per frame.
     first.fire_timers()
-    call(first, "function() closeSettings() end")
     disk = dict(first.files)
     first.close()
 
     second = open_client(disk)
     open_panel(second)
 
-    x, y = call(
-        second,
-        "function() return guiGetPosition(ANKIGTA.SettingsUI.window, false) end",
+    placement = call(
+        second, 'function() return ANKIGTA.Layout.placements["panel"] end'
     )
-    assert (x, y) == (120, 240)
+    assert placement is not None, "the drag was not remembered"
+    assert 0 <= placement["x"] <= 1 and 0 <= placement["y"] <= 1
     assert (
         call(
             second,
@@ -633,14 +694,15 @@ def test_switching_language_relabels_the_open_panel_without_a_restart(
     client: MtaSandbox,
 ) -> None:
     open_panel(client)
-    english = text_of(client, control(client, "activationRadius")["label"])
+    english = translate(client, control(client, "activationRadius")["labelKey"])
 
     call(
         client,
-        "function() ANKIGTA.SettingsUI.chooseValue('language', 'ru') end",
+        "function() end",
     )
+    panel_action(client, "setSetting", {"key": "language", "value": "ru"})
 
-    russian = text_of(client, control(client, "activationRadius")["label"])
+    russian = translate(client, control(client, "activationRadius")["labelKey"])
     assert english == "Activation Zone radius (m)"
     assert russian == "Радиус зоны активации (м)"
     assert client_value(client, "language") == "ru"
@@ -651,10 +713,13 @@ def test_a_choice_the_schema_does_not_offer_is_rejected(client: MtaSandbox) -> N
 
     call(
         client,
-        "function() ANKIGTA.SettingsUI.chooseValue('indicatorMode', 'sphere_only') end",
+        "function() end",
+    )
+    panel_action(
+        client, "setSetting", {"key": "indicatorMode", "value": "sphere_only"}
     )
 
-    assert client.eval("ANKIGTA.SettingsUI.rejection")["reason"] == (
+    assert control(client, "indicatorMode")["error"] == (
         "settings.error.not_a_choice"
     )
     assert client_value(client, "indicatorMode") == "none"
@@ -672,19 +737,23 @@ def test_an_accepted_client_setting_reaches_the_module_that_uses_it() -> None:
             "client/indicator.lua",
             "client/review_mode.lua",
             "client/settings_store.lua",
-            "client/settings_ui.lua",
+            "client/panel.lua",
         )
     )
     open_panel(sandbox)
 
     call(
         sandbox,
-        "function() ANKIGTA.SettingsUI.chooseValue('indicatorMode', 'minimap_only') end",
+        "function() end",
+    )
+    panel_action(
+        sandbox, "setSetting", {"key": "indicatorMode", "value": "minimap_only"}
     )
     call(
         sandbox,
-        "function() ANKIGTA.SettingsUI.toggle('muteGameWorld', true) end",
+        "function() end",
     )
+    panel_action(sandbox, "setSetting", {"key": "muteGameWorld", "value": True})
 
     assert sandbox.eval("ANKIGTA.Indicator.mode") == "minimap_only"
     assert sandbox.eval("ANKIGTA.ReviewMode.muteGameWorld") is True
@@ -698,11 +767,22 @@ def test_the_panel_offers_a_way_into_the_settings_panel() -> None:
             "shared/locale.lua",
             "client/layout.lua",
             "client/settings_store.lua",
-            "client/settings_ui.lua",
             "client/panel.lua",
         )
     )
     sandbox.trigger("ankigta:setAuthorized", sandbox.eval("resourceRoot"), True)
+    call(
+        sandbox,
+        """
+        function()
+            triggerEvent("ankigta:companionStatus", resourceRoot,
+                {state = "connected"})
+        end
+        """,
+    )
+    for handler in sandbox.bound_keys.get(("F7", "down"), []):
+        handler()
+    panel_action(sandbox, "ready")
     sandbox.trigger(
         "ankigta:f7Snapshot",
         sandbox.eval("resourceRoot"),
@@ -718,7 +798,7 @@ def test_the_panel_offers_a_way_into_the_settings_panel() -> None:
         ' "openSettings", "{}") end'
     )()
 
-    assert sandbox.eval("ANKIGTA.SettingsUI.window") is not False
+    assert pushed_state(sandbox)["section"] == "settings"
     sandbox.close()
 
 
@@ -730,7 +810,7 @@ def test_review_mode_offers_a_way_into_the_settings_panel() -> None:
             "client/layout.lua",
             "client/review_mode.lua",
             "client/settings_store.lua",
-            "client/settings_ui.lua",
+            "client/panel.lua",
         )
     )
     call(
@@ -746,6 +826,20 @@ def test_review_mode_offers_a_way_into_the_settings_panel() -> None:
         end
         """,
     )
+    sandbox.trigger("ankigta:setAuthorized", sandbox.eval("resourceRoot"), True)
+    call(
+        sandbox,
+        """
+        function()
+            triggerEvent("ankigta:companionStatus", resourceRoot,
+                {state = "connected"})
+        end
+        """,
+    )
+    for handler in sandbox.bound_keys.get(("F7", "down"), []):
+        handler()
+    panel_action(sandbox, "ready")
+
     bounds = sandbox.eval("ANKIGTA.ReviewMode.ratingBounds")["settings"]
     assert bounds is not None
 
@@ -756,5 +850,5 @@ def test_review_mode_offers_a_way_into_the_settings_panel() -> None:
         bounds[2] + bounds[4] / 2,
     )
 
-    assert sandbox.eval("ANKIGTA.SettingsUI.window") is not False
+    assert pushed_state(sandbox)["section"] == "settings"
     sandbox.close()

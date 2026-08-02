@@ -684,3 +684,217 @@ def test_the_panel_never_leaves_the_screen(client: MtaSandbox) -> None:
     x, y, width, height = rect[1], rect[2], rect[3], rect[4]
     assert x >= 0 and y >= 0
     assert x + width <= 1920 and y + height <= 1080
+
+
+# --- the settings section -----------------------------------------------------
+
+
+def open_settings(sandbox: MtaSandbox) -> None:
+    act(sandbox, "openSettings")
+
+
+def settings_rows(sandbox: MtaSandbox) -> list[dict[str, Any]]:
+    return last_state(sandbox).get("settings", {}).get("rows", [])
+
+
+def row_for(sandbox: MtaSandbox, key: str) -> dict[str, Any]:
+    for row in settings_rows(sandbox):
+        if row["key"] == key:
+            return row
+    raise AssertionError(f"{key} is not offered: {[r['key'] for r in settings_rows(sandbox)]}")
+
+
+def test_settings_are_a_section_of_the_panel_not_a_window(
+    client: MtaSandbox,
+) -> None:
+    """The last window folds in; eight became one, and now one becomes none."""
+    authorize(client)
+    announce(client, state="connected")
+    press_f7(client)
+    page_ready(client)
+
+    open_settings(client)
+
+    assert last_state(client)["section"] == "settings"
+    titles = client.widget_texts("window")
+    assert not [title for title in titles if "Settings" in title], titles
+
+
+def test_every_setting_the_schema_owns_is_offered(client: MtaSandbox) -> None:
+    """Built from the schema, so a setting added later cannot go unreachable."""
+    authorize(client)
+    announce(client, state="connected")
+    press_f7(client)
+    page_ready(client)
+    open_settings(client)
+
+    offered = {row["key"] for row in settings_rows(client)}
+    expected = set(
+        client.eval(
+            """
+            function()
+                local keys = {}
+                for key in pairs(ANKIGTA.Settings.schema) do
+                    table.insert(keys, key)
+                end
+                return keys
+            end
+            """
+        )().values()
+    )
+    # The two the panel deliberately keeps elsewhere: a secret is never shown
+    # back, and placement is dragged rather than typed.
+    assert expected - offered <= {"connectionToken", "uiPlacement"}
+
+
+def test_a_row_carries_the_control_its_rule_asks_for(client: MtaSandbox) -> None:
+    authorize(client)
+    announce(client, state="connected")
+    press_f7(client)
+    page_ready(client)
+    open_settings(client)
+
+    assert row_for(client, "activationRadius")["kind"] == "number"
+    assert row_for(client, "reviewProtection")["kind"] == "boolean"
+    assert row_for(client, "indicatorMode")["kind"] == "choice"
+    assert row_for(client, "indicatorMode")["options"]
+
+
+def test_a_number_row_carries_its_range_so_the_field_can_say_it(
+    client: MtaSandbox,
+) -> None:
+    """Helper text beats discovering the range by being refused."""
+    authorize(client)
+    announce(client, state="connected")
+    press_f7(client)
+    page_ready(client)
+    open_settings(client)
+
+    row = row_for(client, "activationRadius")
+    assert row["min"] == 0.5
+    assert row["max"] == 50
+    assert row["step"]
+
+
+def test_a_refused_value_is_reported_on_its_own_row(client: MtaSandbox) -> None:
+    """Errors belong next to the field, never collected at the top."""
+    authorize(client)
+    announce(client, state="connected")
+    press_f7(client)
+    page_ready(client)
+    open_settings(client)
+
+    act(client, "setSetting", {"key": "activationRadius", "value": 500})
+
+    row = row_for(client, "activationRadius")
+    assert row["error"], row
+    # The reason is a key the string table translates, not a sentence from here.
+    assert row["error"].startswith("settings.error.")
+
+
+def test_an_accepted_value_clears_the_reason_it_replaced(
+    client: MtaSandbox,
+) -> None:
+    authorize(client)
+    announce(client, state="connected")
+    press_f7(client)
+    page_ready(client)
+    open_settings(client)
+    act(client, "setSetting", {"key": "activationRadius", "value": 500})
+    assert row_for(client, "activationRadius")["error"]
+
+    act(client, "setSetting", {"key": "activationRadius", "value": 7})
+
+    assert not row_for(client, "activationRadius")["error"]
+    # The value itself does not move yet: this one is the server's, and
+    # snapping the field while it is still deciding would read as a refusal.
+    # The snapshot is what shows the new number.
+    client.eval(
+        """
+        function()
+            triggerEvent("ankigta:settingsSnapshot", resourceRoot,
+                {activationRadius = 7})
+        end
+        """
+    )()
+    assert row_for(client, "activationRadius")["value"] == 7
+
+
+def test_a_client_owned_setting_is_stored_without_asking_the_server(
+    client: MtaSandbox,
+) -> None:
+    """ADR 0014: the player's machine owns it, so nothing is sent anywhere."""
+    authorize(client)
+    announce(client, state="connected")
+    press_f7(client)
+    page_ready(client)
+    open_settings(client)
+    before = len(client.recorder.server_events)
+
+    act(client, "setSetting", {"key": "reviewProtection", "value": False})
+
+    assert not [
+        event
+        for event in client.recorder.server_events[before:]
+        if event.name == "ankigta:updateSetting"
+    ]
+    assert row_for(client, "reviewProtection")["value"] is False
+
+
+def test_a_server_owned_setting_is_asked_for_rather_than_stored_here(
+    client: MtaSandbox,
+) -> None:
+    authorize(client)
+    announce(client, state="connected")
+    press_f7(client)
+    page_ready(client)
+    open_settings(client)
+
+    act(client, "setSetting", {"key": "activationRadius", "value": 7})
+
+    assert [
+        event
+        for event in client.recorder.server_events
+        if event.name == "ankigta:updateSetting"
+    ]
+
+
+def test_the_ui_scale_lives_here_too(client: MtaSandbox) -> None:
+    """Ticket 28's own panel folds in with the rest."""
+    authorize(client)
+    announce(client, state="connected")
+    press_f7(client)
+    page_ready(client)
+    open_settings(client)
+
+    assert row_for(client, "uiScale")["kind"] == "number"
+
+    act(client, "setSetting", {"key": "uiScale", "value": 1.25})
+
+    assert client.eval("function() return ANKIGTA.Layout.scale() end")() == 1.25
+
+
+def test_leaving_settings_returns_to_where_the_player_was(
+    client: MtaSandbox,
+) -> None:
+    authorize(client)
+    announce(client, state="connected")
+    press_f7(client)
+    page_ready(client)
+    open_settings(client)
+
+    act(client, "closeSettings")
+
+    assert last_state(client)["section"] == "entities"
+
+
+def test_the_secret_is_never_sent_back_to_the_page(client: MtaSandbox) -> None:
+    authorize(client)
+    announce(client, state="connected")
+    press_f7(client)
+    page_ready(client)
+    open_settings(client)
+
+    blob = json.dumps(last_state(client))
+    assert "connectionToken" not in [row["key"] for row in settings_rows(client)]
+    assert "Bearer" not in blob
