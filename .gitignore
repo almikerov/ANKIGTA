@@ -8,3 +8,5 @@ dist/
 .scratch/*
 !.scratch/ankigta-v1/
 !.scratch/ankigta-v1/**
+!.scratch/panel-usability/
+!.scratch/panel-usability/**
