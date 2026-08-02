@@ -12,6 +12,7 @@ from .collection_identity import (
     CollectionIdentityService,
 )
 from .cards import CardPickerService, CollectionLike
+from .notes import EditableCollection, NoteEditorService
 from .connection import CompanionConnectionManager
 from .contract import (
     CollectionObservation,
@@ -114,10 +115,21 @@ class CompanionAddon:
         self._identity_service = identity_service
         self._study_lifecycle = study_lifecycle
         effective_card_picker = card_picker
+        effective_note_editor = None
         if effective_card_picker is None and identity_service is not None:
             effective_card_picker = CardPickerService(
                 self.current_collection_identity,
                 lambda: cast(CollectionLike | None, self._main_window.col),
+            )
+        if identity_service is not None:
+            # The one writer outside rating, and it reaches the same collection
+            # the picker reads: a panel that can see a card can fix a typo on
+            # it without the two disagreeing about which collection that is.
+            effective_note_editor = NoteEditorService(
+                self.current_collection_identity,
+                lambda: cast(
+                    "EditableCollection | None", self._main_window.col
+                ),
             )
         self._observations = ObservationStore(
             RuntimeObservation(
@@ -133,6 +145,7 @@ class CompanionAddon:
                 settings_path=connection_settings_path,
                 generate_token=generate_connection_token,
                 card_picker=effective_card_picker,
+                note_editor=effective_note_editor,
                 session_coordinator=session_coordinator,
             )
             if connection_settings_path is not None
@@ -145,6 +158,7 @@ class CompanionAddon:
                 self._observations.get,
                 port=port,
                 card_picker=effective_card_picker,
+                note_editor=effective_note_editor,
                 session_coordinator=session_coordinator,
             )
         )

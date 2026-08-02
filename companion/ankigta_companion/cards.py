@@ -66,7 +66,12 @@ class CardState(StrEnum):
 
 
 class NoteLike(Protocol):
+    id: int
     tags: Sequence[str]
+
+    def keys(self) -> Sequence[str]: ...
+
+    def items(self) -> Sequence[tuple[str, str]]: ...
 
 
 class CardLike(Protocol):
@@ -98,6 +103,17 @@ class CardView:
     state: CardState
     due: int
     tags: tuple[str, ...]
+    #: The note behind the card, for the one card being inspected. Empty on a
+    #: search page: reading every field of every card to draw a list would pay
+    #: for a whole page what only one card is ever looked at.
+    note_id: int = 0
+    fields: tuple[NoteField, ...] = ()
+
+
+@dataclass(frozen=True)
+class NoteField:
+    name: str
+    value: str
 
 
 @dataclass(frozen=True)
@@ -201,7 +217,9 @@ class CardPickerService:
             ) from error
         if card is None:
             raise CardPickerError("card_missing", "card is missing from the bound collection")
-        return self._view(collection, collection_uuid, card)
+        # Reading one card is where the note is worth the read: this is the
+        # card being inspected, not one of fifty being listed.
+        return self._view(collection, collection_uuid, card, with_note=True)
 
     def refresh_card_state(self, identity: AnkiCardIdentity) -> bool:
         """Refresh one persisted link without ever matching a new card heuristically."""
@@ -329,19 +347,56 @@ class CardPickerService:
                 )
         return tuple(result)
 
+    @staticmethod
+    def _note_fields(note: NoteLike) -> tuple[int, tuple[NoteField, ...]]:
+        """The note's own fields, in the order its note type declares them.
+
+        Anki has spelt a note's fields more than one way. `items()` gives name
+        and value together where it exists; otherwise `keys()` names them and
+        the note indexes by name. A build that answers to neither leaves the
+        fields empty rather than guessing -- an inspector showing nothing is
+        recoverable, one showing the wrong field under the right name is not.
+        """
+        try:
+            note_id = int(note.id)
+        except Exception:
+            note_id = 0
+        try:
+            pairs = note.items()
+        except Exception:
+            pairs = None
+        if pairs is not None:
+            try:
+                return note_id, tuple(
+                    NoteField(name=str(name), value=str(value))
+                    for name, value in pairs
+                )
+            except Exception:
+                return note_id, ()
+        try:
+            return note_id, tuple(
+                NoteField(name=str(name), value=str(note[name]))  # type: ignore[index]
+                for name in note.keys()
+            )
+        except Exception:
+            return note_id, ()
+
     def _view(
         self,
         collection: CollectionLike,
         collection_uuid: str,
         card: CardLike,
         deck_names: dict[int, str] | None = None,
+        *,
+        with_note: bool = False,
     ) -> CardView:
         try:
             card_id = int(card.id)
             deck_id = int(card.did)
             due = int(card.due)
             queue = int(card.queue)
-            tags = tuple(str(tag) for tag in card.note().tags)
+            note = card.note()
+            tags = tuple(str(tag) for tag in note.tags)
         except Exception as error:
             raise CardPickerError(
                 "card_state_invalid",
@@ -349,6 +404,7 @@ class CardPickerService:
             ) from error
         if deck_names is None:
             deck_names = self._deck_names(collection)
+        note_id, fields = self._note_fields(note) if with_note else (0, ())
         return CardView(
             identity=AnkiCardIdentity(collection_uuid, card_id),
             deck_id=deck_id,
@@ -356,6 +412,8 @@ class CardPickerService:
             state=self._state(queue, due),
             due=due,
             tags=tags,
+            note_id=note_id,
+            fields=fields,
         )
 
     def _state(self, queue: int, due: int) -> CardState:

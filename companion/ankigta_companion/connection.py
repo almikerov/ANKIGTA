@@ -18,6 +18,7 @@ from .connection_config import (
 )
 from .contract import RuntimeObservation
 from .cards import CardPickerService
+from .notes import NoteEditorService
 from .http_server import HealthServer
 from .session import SessionCoordinator
 
@@ -42,6 +43,7 @@ class CompanionConnectionManager:
         settings_path: Path,
         generate_token: Callable[[], str] | None = None,
         card_picker: CardPickerService | None = None,
+        note_editor: NoteEditorService | None = None,
         session_coordinator: SessionCoordinator | None = None,
     ) -> None:
         self._observe = observe
@@ -50,6 +52,7 @@ class CompanionConnectionManager:
             lambda: secrets.token_urlsafe(32)
         )
         self._card_picker = card_picker
+        self._note_editor = note_editor
         self._session_coordinator = session_coordinator
         self._settings: _ConnectionSettings | None = None
         self._server: HealthServer | None = None
@@ -295,6 +298,7 @@ class CompanionConnectionManager:
             port=port,
             token=token,
             card_picker=self._card_picker,
+            note_editor=self._note_editor,
             session_coordinator=self._session_coordinator,
         )
 

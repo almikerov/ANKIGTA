@@ -14,11 +14,13 @@ from .contract import (
     error_response,
     card_read_response,
     card_search_response,
+    note_update_response,
     health_response,
     session_response,
     validate_request,
 )
 from .cards import CardPickerError, CardPickerService
+from .notes import NoteEditorService
 from .collection_identity import AnkiCardIdentity
 from .content import ContentServer
 from .review import ReviewCoordinator, ReviewError
@@ -27,6 +29,7 @@ from .session import SessionCoordinator, SessionError
 HEALTH_PATH = "/v1/health"
 CARD_SEARCH_PATH = "/v1/cards/search"
 CARD_READ_PATH = "/v1/cards/read"
+NOTE_UPDATE_PATH = "/v1/notes/update"
 SESSION_START_PATH = "/v1/session/start"
 SESSION_REBUILD_PATH = "/v1/session/rebuild"
 SESSION_PAUSE_PATH = "/v1/session/pause"
@@ -201,6 +204,7 @@ class HealthServer:
         port: int = 0,
         token: str | None = None,
         card_picker: CardPickerService | None = None,
+        note_editor: NoteEditorService | None = None,
         session_coordinator: SessionCoordinator | None = None,
         review_coordinator: ReviewCoordinator | None = None,
         content_server: ContentServer | None = None,
@@ -208,6 +212,7 @@ class HealthServer:
         self._observe = observe
         self._token = token or None
         self._card_picker = card_picker
+        self._note_editor = note_editor
         self._session = session_coordinator
         self._review = review_coordinator
         self._content = content_server
@@ -229,6 +234,7 @@ class HealthServer:
         observe = self._observe
         token = self._token
         card_picker = self._card_picker
+        note_editor = self._note_editor
         session = self._session
         review = self._review
         content = self._content
@@ -300,6 +306,42 @@ class HealthServer:
                         observe(),
                         study,
                     )
+                    self._write_json(status, response)
+                    return
+                if self.path == NOTE_UPDATE_PATH:
+                    if note_editor is None:
+                        unavailable = ContractError(
+                            "note_editor_unavailable",
+                            "editing notes is unavailable",
+                            request_id,
+                        )
+                        self._write_json(503, error_response(unavailable))
+                        return
+                    try:
+                        status, response = note_update_response(
+                            request_id,
+                            note_editor.update(
+                                AnkiCardIdentity(
+                                    str(request.get("collectionUuid", "")),
+                                    request.get("cardId")
+                                    if isinstance(request.get("cardId"), int)
+                                    and not isinstance(request.get("cardId"), bool)
+                                    else 0,
+                                ),
+                                fields=_requested_fields(request.get("fields")),
+                                tags=_requested_tags(request.get("tags")),
+                            ),
+                        )
+                    except CardPickerError as error:
+                        self._write_json(
+                            400,
+                            error_response(
+                                ContractError(
+                                    error.category, str(error), request_id
+                                )
+                            ),
+                        )
+                        return
                     self._write_json(status, response)
                     return
                 if self.path in {CARD_SEARCH_PATH, CARD_READ_PATH}:
@@ -790,3 +832,39 @@ class HealthServer:
 
     def __exit__(self, *args: object) -> None:
         self.stop()
+
+
+def _requested_fields(raw: object) -> tuple[tuple[str, str], ...]:
+    """The fields a request asked to change, as name/value pairs.
+
+    Shaped as a list of records rather than an object so a note whose field is
+    literally named `tags` -- or anything else the envelope uses -- cannot
+    collide with the envelope.
+    """
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise CardPickerError("invalid_note_fields", "fields must be a list")
+    pairs: list[tuple[str, str]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise CardPickerError(
+                "invalid_note_fields", "each field must be an object"
+            )
+        name = entry.get("name")
+        value = entry.get("value")
+        if not isinstance(name, str) or not isinstance(value, str):
+            raise CardPickerError(
+                "invalid_note_fields",
+                "field names and values must be strings",
+            )
+        pairs.append((name, value))
+    return tuple(pairs)
+
+
+def _requested_tags(raw: object) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise CardPickerError("invalid_note_tags", "tags must be a list")
+    return tuple(tag for tag in raw if isinstance(tag, str))

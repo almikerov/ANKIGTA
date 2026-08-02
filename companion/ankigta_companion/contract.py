@@ -8,6 +8,7 @@ from .collection_identity import (
     CollectionIdentityState,
 )
 from .cards import CardSearchPage, CardView
+from .notes import NoteUpdate
 
 
 PROTOCOL_NAME = "ankigta-control"
@@ -212,6 +213,15 @@ def card_view_payload(card: CardView) -> dict[str, object]:
         "state": card.state.value,
         "due": card.due,
         "tags": list(card.tags),
+        # Present only where the note was read, which is the single card being
+        # inspected rather than any card on a list.
+        "note": {
+            "noteId": card.note_id,
+            "fields": [
+                {"name": field.name, "value": field.value}
+                for field in card.fields
+            ],
+        },
     }
 
 
@@ -240,6 +250,32 @@ def card_search_response(
                 {"deckId": deck.deck_id, "name": deck.name}
                 for deck in page.decks
             ],
+        },
+    }
+
+
+def note_update_response(
+    request_id: str,
+    update: NoteUpdate,
+) -> tuple[int, dict[str, object]]:
+    return 200, {
+        "protocol": PROTOCOL_NAME,
+        "protocolVersion": PROTOCOL_VERSION,
+        "requestId": request_id,
+        "ok": True,
+        "error": None,
+        "payload": {
+            # What the note says now, read back after the write: Anki
+            # normalises tags and may rewrite a field on save, so echoing the
+            # request would report a change the collection did not make.
+            "note": {
+                "noteId": update.note_id,
+                "fields": [
+                    {"name": field.name, "value": field.value}
+                    for field in update.fields
+                ],
+                "tags": list(update.tags),
+            },
         },
     }
 
