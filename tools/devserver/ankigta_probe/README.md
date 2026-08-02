@@ -39,3 +39,20 @@ else it is a way in.
 It is registered in `mtaserver.conf` with `startup="1"` and is in the `Admin`
 ACL group, which is what lets it start and stop resources and edit the ACL.
 Remove both when this server stops being a development one.
+
+
+## Granting rights at runtime
+
+`acl-grant <resource>` puts `resource.<name>` in the `Admin` group and saves.
+`acl-check <resource>` reports what it may actually do, asked of the server
+rather than read off the file.
+
+That distinction is the whole point. MTA reads `acl.xml` at start and writes it
+back **from memory** on the way out, so editing the file under a running server
+is overwritten and silently lost — the file looks right and the server
+disagrees. Going through the ACL API changes the memory the server will write,
+so it sticks.
+
+This resource is the one exception and has to be bootstrapped by hand: put
+`resource.ankigta_probe` in the `Admin` group with the server **stopped**.
+After that it can grant to anything else without one.

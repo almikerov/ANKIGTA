@@ -156,6 +156,9 @@ function commands.help()
         "refreshall                -- the same, forcing a full rescan",
         "players                   -- who is connected, and their account",
         "say <text>                -- into the chat of every player",
+        "acl-grant <resource>      -- make it an admin, and save",
+        "acl-revoke <resource>",
+        "acl-check <resource>      -- what it may actually do, right now",
         "acl-add <group> <object>  -- e.g. acl-add Admin resource.foo",
         "acl-right <acl> <right> <true|false>",
         "call <resource> <export> [args...]",
@@ -263,6 +266,79 @@ function commands.acl_right(aclName, rightName, access)
     return granted and aclSave()
         and string.format("%s.%s = %s", aclName, rightName, tostring(access))
         or "could not set right"
+end
+
+--- Make a resource an admin, the way that survives a shutdown.
+--
+-- Editing `acl.xml` under a running server is the thing that does *not* work:
+-- MTA reads it at start and writes it back from memory on the way out, so the
+-- edit is overwritten and silently lost. Going through the ACL API changes the
+-- memory the server will write, which is why this sticks and a text editor
+-- does not.
+--
+-- `general.ModifyOtherObjects` is the one that matters most in practice: every
+-- look inside another resource is gated on it, so a file watcher without it
+-- reads nothing and cannot tell that from nothing having changed.
+function commands.acl_grant(resourceName)
+    if type(resourceName) ~= "string" or resourceName == "" then
+        return "usage: acl-grant <resource>"
+    end
+    local group = aclGetGroup("Admin")
+    if not group then
+        return "no Admin ACL group on this server"
+    end
+    local object = "resource." .. resourceName
+    if not getResourceFromName(resourceName) then
+        return "no such resource: " .. resourceName
+    end
+    if not aclGroupAddObject(group, object) then
+        return object .. " is already in Admin, or could not be added"
+    end
+    if not aclSave() then
+        return "added, but the ACL could not be saved"
+    end
+    return object .. " is in Admin now, and saved"
+end
+
+function commands.acl_revoke(resourceName)
+    local group = aclGetGroup("Admin")
+    if not group then
+        return "no Admin ACL group on this server"
+    end
+    local object = "resource." .. tostring(resourceName)
+    if not aclGroupRemoveObject(group, object) then
+        return object .. " was not in Admin"
+    end
+    aclSave()
+    return object .. " is out of Admin now, and saved"
+end
+
+--- What a resource may actually do, asked of the server rather than the file.
+function commands.acl_check(resourceName)
+    local target = getResourceFromName(resourceName or "")
+    if not target then
+        return "no such resource: " .. tostring(resourceName)
+    end
+    local rows = {}
+    for _, right in ipairs({
+        "general.ModifyOtherObjects",
+        "general.http",
+        "function.refreshResources",
+        "function.restartResource",
+        "function.startResource",
+        "function.stopResource",
+        "function.loadstring",
+        "function.aclSave",
+        "function.shutdown",
+    }) do
+        rows[#rows + 1] = string.format(
+            "  %-34s %s",
+            right,
+            hasObjectPermissionTo(target, right, false) and "yes" or "NO"
+        )
+    end
+    return table.concat(rows, "
+")
 end
 
 function commands.call(resourceName, exportName, ...)
