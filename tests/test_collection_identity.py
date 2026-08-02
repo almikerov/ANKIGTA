@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import UUID
@@ -70,8 +71,79 @@ def test_first_open_atomically_assigns_a_persistent_collection_uuid(
     assert collection.config[COLLECTION_UUID_CONFIG_KEY] == str(assigned_uuid)
     assert first.collection_uuid == str(assigned_uuid)
     assert restarted.collection_uuid == str(assigned_uuid)
-    assert first.state is CollectionIdentityState.UNBOUND
-    assert restarted.state is CollectionIdentityState.UNBOUND
+    # The first collection to arrive is adopted, without being asked about.
+    # Binding exists to notice a *different* collection later, and there is no
+    # decision to take until one turns up.
+    assert first.state is CollectionIdentityState.BOUND
+    assert restarted.state is CollectionIdentityState.BOUND
+
+
+def test_a_second_collection_is_reported_rather_than_adopted(
+    tmp_path: Path,
+) -> None:
+    """The whole point of binding, and the only moment it speaks.
+
+    A `cardId` names a card only inside the collection that issued it, so a
+    Spatial Link resolved against a different collection would quietly open
+    someone else's card.
+    """
+    registry_path = tmp_path / "addon" / "collection-registry.json"
+
+    first_collection = FakeCollection()
+    first_locator = tmp_path / "Profile A" / "collection.anki2"
+    first_locator.parent.mkdir()
+    first_locator.touch()
+    adopted = CollectionIdentityService(
+        registry_path,
+        uuid_factory=lambda: UUID("c26d12be-04da-43d4-a2af-2e7b183f32c6"),
+    ).observe_open_collection(first_collection, first_locator)
+
+    second_collection = FakeCollection()
+    second_locator = tmp_path / "Profile B" / "collection.anki2"
+    second_locator.parent.mkdir()
+    second_locator.touch()
+    other = CollectionIdentityService(
+        registry_path,
+        uuid_factory=lambda: UUID("2e4b0a2f-8d51-4c33-9b0e-1f6d0f4c9a77"),
+    ).observe_open_collection(second_collection, second_locator)
+
+    assert adopted.state is CollectionIdentityState.BOUND
+    assert other.state is CollectionIdentityState.WRONG_COLLECTION
+    assert other.collection_uuid != adopted.collection_uuid
+
+
+def test_adoption_that_cannot_be_saved_does_not_claim_to_have_happened(
+    tmp_path: Path,
+) -> None:
+    """Adopting is only real once it survives a restart."""
+    collection = FakeCollection()
+    locator = tmp_path / "Profile A" / "collection.anki2"
+    locator.parent.mkdir()
+    locator.touch()
+    registry_path = tmp_path / "addon" / "collection-registry.json"
+    service = CollectionIdentityService(
+        registry_path,
+        uuid_factory=lambda: UUID("c26d12be-04da-43d4-a2af-2e7b183f32c6"),
+    )
+    # The UUID is assigned and registered before adoption is attempted, so let
+    # that succeed and fail only the write that would record the binding.
+    original_save = service._save_registry
+    calls = {"count": 0}
+
+    def failing_save(registry: dict[str, object]) -> None:
+        calls["count"] += 1
+        if registry.get("boundCollectionUuid") is not None:
+            raise OSError("registry is read-only")
+        original_save(registry)
+
+    service._save_registry = failing_save  # type: ignore[method-assign]
+
+    observed = service.observe_open_collection(collection, locator)
+
+    assert observed.state is CollectionIdentityState.UNBOUND
+    assert calls["count"] >= 1
+    saved = json.loads(registry_path.read_text(encoding="utf-8"))
+    assert saved["boundCollectionUuid"] is None
 
 
 def test_present_original_forces_a_copy_to_a_new_unbound_identity(

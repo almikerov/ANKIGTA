@@ -168,6 +168,27 @@ class CollectionIdentityService:
                 )
 
         bound_collection_uuid = registry["boundCollectionUuid"]
+        if bound_collection_uuid is None:
+            # The first collection to arrive is adopted without asking. Binding
+            # exists to notice a *different* collection later -- a `cardId` only
+            # identifies a card inside the collection that issued it, so a
+            # Spatial Link stored against another one would quietly point at
+            # someone else's card. Nothing about that needs a decision up front,
+            # and asking for one made "open Anki and play" a setup task.
+            registry["boundCollectionUuid"] = collection_uuid
+            try:
+                self._save_registry(registry)
+            except OSError:
+                # Adopting is only real once it survives a restart. Staying
+                # unbound is the honest answer, and the next observation retries.
+                return self._remember(
+                    CollectionIdentityObservation(
+                        state=CollectionIdentityState.UNBOUND,
+                        collection_uuid=collection_uuid,
+                    )
+                )
+            bound_collection_uuid = collection_uuid
+
         state = self._binding_state(bound_collection_uuid, collection_uuid)
         return self._remember(
             CollectionIdentityObservation(

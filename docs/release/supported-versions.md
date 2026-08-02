@@ -7,7 +7,7 @@ ANKIGTA v1 supports exactly this:
 | Component | Certified |
 | --- | --- |
 | Operating system | Windows |
-| Anki Desktop | 26.05, **V3 scheduler**, **FSRS enabled** |
+| Anki Desktop | 26.05, **V3 scheduler**. FSRS on or off |
 | MTA Server | 1.6 release build 24124 |
 | MTA Client | 1.6 release build 24124 |
 | ANKIGTA | 1.0.0 (resource and companion add-on, same number) |
@@ -31,9 +31,16 @@ Concretely:
   been tested against.
 - **Another MTA build.** It is not listed as supported until the IPv4 transport
   and stock CEF smoke/lifecycle suites pass on it.
-- **A different scheduler or FSRS setting.** The certified matrix is V3 with
-  FSRS on. Anki's own scheduling differs otherwise, and ANKIGTA's job is to
-  hand ratings to Anki rather than to reproduce its arithmetic.
+- **A scheduler other than V3.** ANKIGTA's job is to hand ratings to Anki
+  rather than to reproduce its arithmetic, and the admission sequence it uses
+  is V3's.
+
+FSRS is deliberately *not* in that list. Nothing ANKIGTA does reads the
+scheduling algorithm: Exact Card Admission asks the V3 scheduler for its top
+card and Anki computes the interval. Prototype 0002 measured the
+filtered-deck rating against an ordinary review with FSRS on, so that is the
+configuration the equivalence was measured in — but refusing to connect over a
+setting ANKIGTA never reads would have been refusing over nothing.
 
 Adding a build to this table is a release operation with evidence attached, not
 an edit to this file.

@@ -86,17 +86,19 @@ Anki is not launched or modified by ANKIGTA; you install this by hand.
    Only `127.0.0.1` is used. LAN addresses and IPv6 `::1` are not supported
    (Prototype 0004).
 
-### 3. Bind the Anki collection
+### 3. The Anki collection
 
-ANKIGTA studies exactly one **Bound Anki Collection** and will not follow you
-to another profile (story 8).
+There is nothing to do here. ANKIGTA studies exactly one **Bound Anki
+Collection**, and it adopts the first one it sees — open the profile you intend
+to study and that is the one. The add-on writes a UUID of its own into the
+collection's configuration; that UUID, not the profile name or path, is what a
+Spatial Link points at.
 
-1. With the profile you want open, use *Tools → ANKIGTA: Bound Anki
-   Collection…* in Anki.
-2. Confirm the binding. The add-on writes a UUID of its own into the
-   collection's configuration; that UUID, not the profile name or path, is what
-   a Spatial Link points at.
-3. If ANKIGTA finds a collection that looks like a copy of an already-registered
+*Tools → ANKIGTA: Bound Anki Collection…* exists for the two cases where the
+answer is not obvious:
+
+1. You opened a different collection and want ANKIGTA to follow you to it.
+2. If ANKIGTA finds a collection that looks like a copy of an already-registered
    one, it asks you to choose: *This is the previous collection* keeps the
    existing Spatial Links, *This is a new copy* takes a new UUID and starts with
    none. New copy is the default, and it is the safe answer. If the previous

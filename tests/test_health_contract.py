@@ -487,7 +487,6 @@ def test_unavailable_collection_is_not_reported_as_success(
     [
         ("25.07.3", True, True, ["unsupported_anki_version"]),
         ("26.05", False, True, ["v3_scheduler_disabled"]),
-        ("26.05", True, False, ["fsrs_disabled"]),
     ],
 )
 def test_incompatible_anki_configuration_is_an_explicit_failure(
@@ -536,3 +535,45 @@ def test_incompatible_anki_configuration_is_an_explicit_failure(
         "filteredDeckCreated": False,
         "reviewModeOpened": False,
     }
+
+
+def test_fsrs_off_is_reported_and_not_judged() -> None:
+    """FSRS is not a requirement, and its absence is not a warning either.
+
+    Nothing here depends on the scheduling algorithm: Exact Card Admission asks
+    the V3 scheduler for its top card and hands the rating to Anki, which
+    computes the interval. Refusing to connect over it would have been refusing
+    over a setting ANKIGTA never reads.
+    """
+    observation = RuntimeObservation(
+        anki_version="26.05",
+        v3_scheduler=True,
+        fsrs_enabled=False,
+        collection=CollectionObservation(
+            state=CollectionState.OPEN,
+            profile_name="Test Profile",
+        ),
+    )
+
+    with HealthServer(lambda: observation) as server:
+        status, response = post_health(
+            server,
+            {
+                "protocol": "ankigta-control",
+                "protocolVersion": 1,
+                "requestId": "health-fsrs-off",
+            },
+        )
+
+    assert status == 200
+    assert response["ok"] is True
+    assert response["error"] is None
+    assert response["payload"]["compatibility"] == {
+        "status": "supported",
+        "previewReadOnlyCompatible": True,
+        "sessionCompatible": True,
+        "ratingCompatible": True,
+    }
+    # Still reported: a diagnostic that says which scheduler produced an
+    # interval is worth having, even though nothing branches on it.
+    assert response["payload"]["anki"]["fsrsEnabled"] is False

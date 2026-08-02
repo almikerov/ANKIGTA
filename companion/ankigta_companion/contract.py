@@ -99,8 +99,11 @@ def health_response(
         compatibility_reasons.append("unsupported_anki_version")
     if not observation.v3_scheduler:
         compatibility_reasons.append("v3_scheduler_disabled")
-    if not observation.fsrs_enabled:
-        compatibility_reasons.append("fsrs_disabled")
+    # FSRS is reported and not judged. Nothing ANKIGTA does depends on the
+    # scheduling algorithm: Exact Card Admission asks the V3 scheduler for its
+    # top card and hands the rating to Anki, which computes the interval. The
+    # setting still travels in the payload, because a diagnostic that says which
+    # scheduler produced an interval is worth having.
     supported = not compatibility_reasons
     collection: dict[str, object] = {
         "state": observation.collection.state.value,
