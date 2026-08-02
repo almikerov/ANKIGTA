@@ -28,3 +28,21 @@ through all four. A question put to the running server answers each of them in
 one line, and that is the loop worth having.
 
 The suite is still the regression net. This is the loop that finds things.
+
+
+## Granting it rights
+
+Put `resource.<name>` in the `Admin` ACL group, **with the server stopped**.
+MTA reads `acl.xml` at start and writes it back from memory on the way out, so
+an edit made under a running server is overwritten and silently lost. From a
+running server the supported route is the console:
+
+```
+aclrequest allow <resource> all
+```
+
+Reading another resource's files — which is how a file watcher notices a change
+— is gated on `general.ModifyOtherObjects`, and MTA logs a warning per attempt
+when it is missing. A watcher that retries twice a second turns one unfixed
+permission into an unreadable console, so it stops asking after the first
+refusal and says so once.
