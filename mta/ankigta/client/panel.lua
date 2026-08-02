@@ -19,6 +19,7 @@ local AUTHORIZATION_EVENT = "ankigta:setAuthorized"
 local AUTHORIZATION_REQUEST_EVENT = "ankigta:requestAuthorization"
 local CONNECT_EVENT = "ankigta:connectCompanion"
 local SETTINGS_UPDATE_EVENT = "ankigta:updateConnectionSettings"
+local START_STUDY_REQUEST_EVENT = "ankigta:startStudy"
 local PAGE_URL = "http://mta/local/client/panel/index.html"
 
 local authorized = false
@@ -146,6 +147,31 @@ local function localeTable()
     return merged
 end
 
+--- What the top bar says about studying.
+--
+-- A line, not a menu. The session lifts itself when nobody has decided
+-- otherwise, so the only action worth offering is the way back from a decision
+-- someone made -- and that one is offered only when it applies.
+local function studyState()
+    local study = lastStatus and lastStatus.study or nil
+    if type(study) ~= "table" then
+        return {active = false, resumable = false}
+    end
+    local pausedReason = study.pausedReason or false
+    return {
+        active = study.sessionActive == true,
+        progress = tonumber(study.progress) or 0,
+        total = tonumber(study.total) or 0,
+        pausedReason = pausedReason,
+        -- `rebuilding` is a transition and `not_started` lifts itself, so
+        -- neither is something to offer a button for.
+        resumable = study.sessionActive ~= true
+            and pausedReason ~= false
+            and pausedReason ~= "rebuilding"
+            and pausedReason ~= "not_started",
+    }
+end
+
 local function push()
     if not pageReady or not isElement(browser) then
         return
@@ -161,6 +187,7 @@ local function push()
             warningCategory = lastStatus and lastStatus.warningCategory or false,
         },
         entities = entityRows(lastSnapshot),
+        study = studyState(),
     }
     local encoded = toJSON(state, true)
     if not encoded then
@@ -253,6 +280,10 @@ function actions.connect()
     triggerServerEvent(CONNECT_EVENT, resourceRoot)
 end
 
+function actions.startStudy()
+    triggerServerEvent(START_STUDY_REQUEST_EVENT, resourceRoot)
+end
+
 function actions.updateConnection(payload)
     triggerServerEvent(SETTINGS_UPDATE_EVENT, resourceRoot, payload)
 end
@@ -282,6 +313,23 @@ addEventHandler(STATUS_EVENT, resourceRoot, function(status)
         return
     end
     lastStatus = status
+    if ANKIGTA.Diagnostics then
+        -- What the session is doing, for the same report the spatial and F7
+        -- state go into. A rebuild in flight is the state most worth having in
+        -- a bug report, and it is the one hardest to describe in words. This
+        -- moved here from the study window; the window went, the report did
+        -- not.
+        local study = type(status.study) == "table" and status.study or {}
+        ANKIGTA.Diagnostics.record("session", {
+            connection = status.state or false,
+            sessionActive = study.sessionActive == true,
+            pausedReason = study.pausedReason or false,
+            cardCount = study.cardCount or false,
+            progress = study.progress or false,
+            total = study.total or false,
+            filteredDeckCreated = study.filteredDeckCreated == true,
+        })
+    end
     push()
 end)
 

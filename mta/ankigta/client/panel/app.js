@@ -108,6 +108,30 @@
     }
   }
 
+  function renderStudy(study) {
+    var detail = document.getElementById("study-detail");
+    if (study.active) {
+      detail.textContent = format(t("study.session"), study.progress, study.total);
+    } else if (study.pausedReason) {
+      detail.textContent = t("study.paused");
+    } else {
+      detail.textContent = "";
+    }
+    document.getElementById("start-study").hidden = !study.resumable;
+  }
+
+  /* Lua's string.format lives on the other side, so the two placeholders the
+   * session line uses are filled here rather than shipped pre-rendered. */
+  function format(template, first, second) {
+    var next = [first, second];
+    var index = 0;
+    return String(template).replace(/%d/g, function () {
+      var value = next[index];
+      index += 1;
+      return value === undefined ? "" : String(value);
+    });
+  }
+
   function show(section) {
     document.getElementById("section-connection").hidden = section !== "connection";
     document.getElementById("section-entities").hidden = section !== "entities";
@@ -119,6 +143,7 @@
     document.documentElement.lang = state.language || "en";
     applyLocale();
     renderConnection(state.connection || {state: "disconnected"});
+    renderStudy(state.study || {active: false, resumable: false});
     renderRows(state.entities);
     document.getElementById("entity-count").textContent =
       (state.entities || []).length;
@@ -130,6 +155,9 @@
   });
   document.getElementById("connect").addEventListener("click", function () {
     send("connect");
+  });
+  document.getElementById("start-study").addEventListener("click", function () {
+    send("startStudy");
   });
   document.getElementById("save-connection").addEventListener("click", function () {
     var port = parseInt(document.getElementById("port").value, 10);

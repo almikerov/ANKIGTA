@@ -44,7 +44,6 @@ WINDOW_SURFACES = [
     "f7",
     "cardPicker",
     "f7Modal",
-    "study",
     "settings",
 ]
 DRAWN_SURFACES = ["review", "hud"]
@@ -183,17 +182,12 @@ def select_first_row(sandbox: MtaSandbox) -> None:
     sandbox.click_widget(grid)
 
 
-def open_study(sandbox: MtaSandbox) -> None:
-    sandbox.commands["ankigta"][0]()
-
-
 def open_every_window(sandbox: MtaSandbox) -> None:
     """Put one of every window on screen, including a modal warning."""
     open_f7(sandbox)
     select_first_row(sandbox)
     sandbox.click_widget(text(sandbox, "f7.unlink"))
     open_card_picker(sandbox)
-    open_study(sandbox)
     sandbox.commands["ankigta-ui"][0]()
 
 

@@ -39,16 +39,32 @@ def test_server_study_start_is_acl_bound_and_deduplicates_active_links() -> None
     assert "requestSessionStop" in main
 
 
-def test_study_ui_exposes_only_explicit_start_and_safe_cleanup_actions() -> None:
+def test_study_needs_no_menu_and_still_cleans_up_safely() -> None:
+    """Ticket 32 deleted the study window; the session lifts itself.
+
+    What ticket 12 actually asked for was that a session starts explicitly
+    rather than by accident and is cleaned up safely. Starting is now the
+    server's, on the one paused reason that means nobody has decided anything;
+    the panel offers a way back from a decision and nothing else.
+    """
     manifest = ET.parse(RESOURCE / "meta.xml").getroot()
     scripts = [script.get("src") for script in manifest.findall("script")]
-    assert "client/study.lua" in scripts
-    study = source("client/study.lua")
-    study_keys = string_constants(RESOURCE / "client" / "study.lua")
-    assert "study.start" in study_keys
-    assert "study.session" in study_keys
-    assert "study.pause" in study_keys
-    assert "study.stop" in study_keys
-    assert 'triggerServerEvent(\n            START_STUDY_REQUEST_EVENT' in study
-    assert "PAUSE_STUDY_REQUEST_EVENT" in study
-    assert "STOP_STUDY_REQUEST_EVENT" in study
+    assert "client/study.lua" not in scripts
+    assert "client/panel.lua" in scripts
+
+    main = source("server/main.lua")
+    # The trigger is narrow on purpose: paused and stopped are decisions, and
+    # opening Anki's own Reviewer is one of them.
+    assert 'local UNDECIDED_SESSION = "not_started"' in main
+    assert "maybeAutoStartStudy(player, study)" in main
+    # Cleanup is unchanged and still server-side.
+    assert "requestStudyCleanup" in main
+    assert "requestSessionStop" in main
+
+    panel_keys = string_constants(RESOURCE / "client" / "panel.lua")
+    assert "ankigta:startStudy" in panel_keys
+    # No pause, rebuild or stop button reaches the server from the panel.
+    for gone in ("ankigta:pauseStudy", "ankigta:stopStudy", "ankigta:rebuildStudy"):
+        assert gone not in panel_keys
+
+

@@ -29,7 +29,6 @@
     <!-- Before the surfaces that leave their last outcome in it. -->
     <script src="client/diagnostics.lua" type="client" cache="false" />
     <script src="client/connection_status.lua" type="client" cache="false" />
-    <script src="client/study.lua" type="client" cache="false" />
     <script src="client/f7.lua" type="client" cache="false" />
     <script src="client/panel.lua" type="client" cache="false" />
     <script src="client/pick_entity.lua" type="client" cache="false" />

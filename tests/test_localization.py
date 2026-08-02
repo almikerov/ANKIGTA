@@ -97,10 +97,9 @@ def test_every_script_in_the_manifest_is_covered_by_the_guard() -> None:
     for relative in (
         "shared/locale.lua",
         "client/f7.lua",
-        "client/study.lua",
+        "client/panel.lua",
         "client/review_mode.lua",
         "client/connection_status.lua",
-        "client/panel.lua",
         "server/main.lua",
         "server/map_identity.lua",
     ):
@@ -394,7 +393,7 @@ def test_switching_language_reaches_the_next_f7_render() -> None:
         sandbox.close()
 
 
-# --- the Study window ---------------------------------------------------------
+# --- the study line and the counter HUD ---------------------------------------
 
 
 def study_status(sandbox: MtaSandbox, *, active: bool) -> None:
@@ -412,54 +411,6 @@ def study_status(sandbox: MtaSandbox, *, active: bool) -> None:
         end
         """
     )(active)
-
-
-@pytest.mark.parametrize("language", ["en", "ru"])
-def test_the_study_window_is_written_in_the_active_language(
-    language: str,
-) -> None:
-    sandbox = client(language)
-    try:
-        sandbox.load("client/study.lua")
-
-        study_status(sandbox, active=True)
-
-        written = sandbox.widget_texts()
-        for key in (
-            "study.title",
-            "study.start",
-            "study.pause",
-            "study.rebuild",
-            "study.stop",
-            "study.cancelRebuild",
-            "settings.allowEarlyReview",
-        ):
-            assert text(sandbox, key) in written, f"{key} never reached a control"
-        assert text(sandbox, "study.session", 2, 9) in written
-    finally:
-        sandbox.close()
-
-
-def test_switching_language_relabels_the_open_study_window() -> None:
-    sandbox = client("en")
-    try:
-        sandbox.load("client/study.lua")
-        study_status(sandbox, active=True)
-        assert "Start studying" in sandbox.widget_texts()
-
-        # No further status from the companion: the window rebuilds from the
-        # last one it was given.
-        sandbox.eval('function() ANKIGTA.Locale.setLanguage("ru") end')()
-
-        written = sandbox.widget_texts()
-        assert "Начать обучение" in written
-        assert "Start studying" not in written
-        assert text(sandbox, "study.session", 2, 9) in written
-    finally:
-        sandbox.close()
-
-
-# --- the Next Card Indicator HUD ----------------------------------------------
 
 
 @pytest.mark.parametrize("language", ["en", "ru"])
@@ -712,6 +663,22 @@ def manifest_client_scripts() -> list[str]:
     ]
 
 
+def study_status_reaches_the_panel(sandbox: MtaSandbox, expected: str) -> bool:
+    """The panel is a page, so its language arrives as a pushed state."""
+    import json
+
+    for code in reversed(sandbox.browser_javascript):
+        start, end = code.find("("), code.rfind(")")
+        if start == -1 or end == -1:
+            continue
+        try:
+            state = json.loads(code[start + 1 : end])
+        except json.JSONDecodeError:
+            continue
+        return state["locale"]["connection.connect"] == expected
+    return False
+
+
 def test_the_language_setting_moves_the_whole_interface_with_no_restart() -> None:
     """The acceptance criterion, driven the way the player would drive it.
 
@@ -730,20 +697,31 @@ def test_the_language_setting_moves_the_whole_interface_with_no_restart() -> Non
         )
         label = sandbox.eval("function(key) return ANKIGTA.Locale.text(key) end")
 
+        # The panel has to be open and listening before a pushed state exists.
+        sandbox.eval(
+            'function() triggerEvent("ankigta:setAuthorized", resourceRoot, true) end'
+        )()
+        for handler in sandbox.bound_keys.get(("F7", "down"), []):
+            handler()
+        sandbox.eval(
+            'function() triggerEvent('
+            '"ankigta:panelAction", resourceRoot, "ready", "{}") end'
+        )()
+
         assert set_setting("language", "ru") is True
         f7_snapshot(sandbox)
-        study_status(sandbox, active=True)
         russian = sandbox.widget_texts()
         assert str(label("f7.recheck")) in russian
-        assert str(label("study.start")) in russian
         assert "Проверить ещё раз" in russian
+        # The panel is told in whole, so the same switch reaches it too.
+        assert study_status_reaches_the_panel(sandbox, "Подключиться")
 
         assert set_setting("language", "en") is True
         f7_snapshot(sandbox)
-        study_status(sandbox, active=True)
         english = sandbox.widget_texts()
         assert "Check again" in english
         assert "Проверить ещё раз" not in english
+        assert study_status_reaches_the_panel(sandbox, "Connect")
     finally:
         sandbox.close()
 

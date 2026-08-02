@@ -1680,6 +1680,37 @@ addEventHandler(CARD_STATES_REFRESHED_EVENT, resourceRoot, function(
     )
 end)
 
+--- The one paused reason that means nobody has decided anything yet.
+--
+-- `paused` and `stopped` are decisions, `rebuilding` is a transition, and an
+-- identity state is a question for a person. Starting through any of them would
+-- be arguing with whoever put the session down — and opening Anki's own
+-- Reviewer is exactly that, with no automatic return by design (CONTEXT.md).
+local UNDECIDED_SESSION = "not_started"
+
+--- Start studying without being asked to.
+--
+-- The session is a consequence of Exact Card Admission, not a preference: a
+-- filtered deck the add-on owns has to exist before a card can be rated
+-- legitimately. Nobody needs to press a button for that to be true, and the
+-- four buttons that used to exist were there because something had to be
+-- pressed rather than because anything had to be decided.
+local function maybeAutoStartStudy(player, study)
+    if type(study) ~= "table" or study.sessionActive == true then
+        return false
+    end
+    if study.pausedReason ~= UNDECIDED_SESSION then
+        return false
+    end
+    local identities = activeCardIdentities()
+    if not identities or #identities == 0 then
+        -- Nothing is linked, so there is no session to build and no message
+        -- worth sending about it.
+        return false
+    end
+    return requestStudyStart(player, false, nil)
+end
+
 addEvent(STUDY_STATE_EVENT, false)
 addEventHandler(STUDY_STATE_EVENT, resourceRoot, function(player, status)
     if source ~= resourceRoot or not playerAuthorization(player) then
@@ -1687,6 +1718,7 @@ addEventHandler(STUDY_STATE_EVENT, resourceRoot, function(player, status)
     end
     local study = type(status) == "table" and status.study or nil
     if type(study) ~= "table" or study.sessionActive ~= true then
+        maybeAutoStartStudy(player, study)
         sendPausedStudyState(player)
         return
     end
