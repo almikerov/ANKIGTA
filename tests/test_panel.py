@@ -79,17 +79,7 @@ def act(sandbox: MtaSandbox, action: str, payload: dict[str, Any] | None = None)
 
 def sent_states(sandbox: MtaSandbox) -> list[dict[str, Any]]:
     """Every state Lua pushed into the page, decoded."""
-    states = []
-    for code in sandbox.browser_javascript:
-        start = code.find("(")
-        end = code.rfind(")")
-        if start == -1 or end == -1:
-            continue
-        try:
-            states.append(json.loads(code[start + 1 : end]))
-        except json.JSONDecodeError:
-            continue
-    return states
+    return sandbox.pushed_panel_states()
 
 
 def last_state(sandbox: MtaSandbox) -> dict[str, Any]:

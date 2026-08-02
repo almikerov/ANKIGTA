@@ -39,6 +39,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -734,13 +735,28 @@ class MtaSandbox:
             return hashlib.sha256(str(data).encode("utf-8")).hexdigest().upper()
 
         def to_json(value: Any, _compact: Any = None, *_rest: Any) -> str:
-            return json.dumps(self._from_lua(value), ensure_ascii=False)
+            # MTA serialises its *argument list*, so one table comes out
+            # wrapped: `toJSON({a = 1})` is `[{"a":1}]`, not `{"a":1}`. A
+            # double that returns the bare object is how the panel shipped
+            # pushing `[state]` into a page that reads `state` -- green suite,
+            # blank window. See the test-double rule in
+            # docs/design/remaining-work-plan.md.
+            return json.dumps([self._from_lua(value)], ensure_ascii=False)
 
         def from_json(text: str) -> Any:
             try:
                 decoded = json.loads(text)
             except (TypeError, ValueError):
                 return False
+            # The other half of the argument-list symmetry: `toJSON` packs its
+            # arguments into a list and `fromJSON` unpacks them again, one Lua
+            # return value each. Every consumer here assigns to a single name,
+            # which takes the first -- so a top-level list yields its head, and
+            # `toJSON` round-trips back to the table that went in. An object,
+            # such as a payload from `JSON.stringify` on the page, is not a
+            # list and passes through untouched.
+            if isinstance(decoded, list):
+                decoded = decoded[0] if decoded else None
             return self._to_lua(decoded)
 
         def mta_hash(algorithm: str, data: str, *_rest: Any) -> Any:
@@ -1837,6 +1853,43 @@ class MtaSandbox:
             for widget in self.widgets
             if not widget.destroyed and (kind is None or widget.kind == kind)
         ]
+
+    #: The call `push` writes, with the state as its one captured group.
+    _PANEL_PUSH = re.compile(r"ANKIGTA\.receive\((.*)\);\s*$", re.S)
+
+    def pushed_panel_states(self) -> list[dict[str, Any]]:
+        """Every whole state Lua pushed into the panel page, in order.
+
+        Decoded the way the page decodes it, wrapper and all. Reading the JSON
+        out of the call by hand is what let `[state]` reach a page expecting
+        `state`: four tests each had their own parser, and every one of them
+        was happy to hand back the list. One reader here, and it asserts the
+        shape rather than shrugging at one it does not recognise.
+        """
+        states = []
+        for code in self.browser_javascript:
+            found = self._PANEL_PUSH.search(code)
+            if not found:
+                continue
+            argument = found.group(1)
+            # What `push` writes: the `toJSON` list, indexed back to the table.
+            assert argument.endswith(")[0]"), (
+                "the panel must unwrap toJSON's argument list before the page "
+                f"sees it, and this call does not: {argument[:80]}"
+            )
+            decoded = json.loads(argument[1:-4])
+            assert isinstance(decoded, list) and len(decoded) == 1, (
+                "toJSON wraps one table in a one-item list, got "
+                f"{decoded!r:.80}"
+            )
+            states.append(dict(decoded[0]))
+        return states
+
+    def pushed_panel_state(self) -> dict[str, Any]:
+        """The last whole state Lua pushed into the panel page."""
+        states = self.pushed_panel_states()
+        assert states, "the panel pushed no state"
+        return states[-1]
 
     # ------------------------------------------------------------- controls
 

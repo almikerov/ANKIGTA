@@ -146,17 +146,7 @@ def select(sandbox: MtaSandbox, entity_id: str, *, map_id: str = "m1") -> None:
 
 def panel_state(sandbox: MtaSandbox) -> dict[str, Any]:
     """The last whole state Lua pushed into the page."""
-    import json
-
-    for code in reversed(sandbox.browser_javascript):
-        first, last = code.find("("), code.rfind(")")
-        if first == -1 or last == -1:
-            continue
-        try:
-            return dict(json.loads(code[first + 1 : last]))
-        except json.JSONDecodeError:
-            continue
-    raise AssertionError("Lua never pushed a state into the page")
+    return sandbox.pushed_panel_state()
 
 
 def grid_entity_ids(sandbox: MtaSandbox) -> list[str]:

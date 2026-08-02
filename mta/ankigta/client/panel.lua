@@ -481,9 +481,14 @@ local function push()
         outputDebugString("[ANKIGTA] panel_state_encode_failed", 2)
         return
     end
+    -- `toJSON` serialises its argument *list*, so one table comes back wrapped:
+    -- `[{...}]`. Unwrapped here rather than on the page, because the page is a
+    -- view and has no business knowing how Lua packed the trip. Sending the
+    -- list is how every label rendered as its own key: `state.section` was
+    -- undefined, so every section stayed hidden and `locale` was empty.
     executeBrowserJavascript(
         browser,
-        "window.ANKIGTA && window.ANKIGTA.receive(" .. encoded .. ");"
+        "window.ANKIGTA && window.ANKIGTA.receive((" .. encoded .. ")[0]);"
     )
 end
 
