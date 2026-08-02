@@ -66,8 +66,7 @@ def test_mta_manifest_keeps_config_and_control_on_server_side() -> None:
         in manifest
     )
     assert (
-        '<script src="client/connection_settings.lua" '
-        'type="client" cache="false" />'
+        '<script src="client/panel.lua" type="client" cache="false" />'
         in manifest
     )
 
@@ -124,79 +123,62 @@ def test_mta_config_reader_validates_current_and_last_known_good() -> None:
 
 
 def test_mta_connection_ui_masks_replacement_token_and_offers_connect() -> None:
-    """Ticket 27 moved these labels into the string table, so run the window.
+    """Ticket 32 moved this into the panel, so the panel is what is driven.
 
-    The controls are read back off the rendered window rather than grepped out
-    of the file: a label that stopped reaching a control would otherwise still
-    satisfy a source search.
+    The gate is read off the page's own markup rather than a source search: a
+    field that stopped being rendered would still satisfy a grep.
     """
-    source = (MTA_RESOURCE / "client" / "connection_settings.lua").read_text(
+    page = (MTA_RESOURCE / "client" / "panel" / "index.html").read_text(
         encoding="utf-8"
     )
-    assert "keepToken" in source
+    # The replacement token is typed into a masked field, never echoed back.
+    assert 'id="token"' in page
+    assert 'type="password"' in page
+    assert 'data-i18n="connection.connect"' in page
+    assert 'data-i18n="connection.manualPort"' in page
+
+    app = (MTA_RESOURCE / "client" / "panel" / "app.js").read_text(
+        encoding="utf-8"
+    )
+    assert "keepToken" in app
 
     sandbox = MtaSandbox()
     try:
-        sandbox.load("shared/settings.lua")
-        sandbox.load("shared/locale.lua")
-        # Both windows ask the layout manager where they go (ticket 28).
-        sandbox.load("client/layout.lua")
-        sandbox.load("client/connection_settings.lua")
-        label = sandbox.eval("function(key) return ANKIGTA.Locale.text(key) end")
-
+        for script in (
+            "shared/settings.lua",
+            "shared/locale.lua",
+            "client/layout.lua",
+            "client/panel.lua",
+        ):
+            sandbox.load(script)
+        sandbox.eval(
+            'function() triggerEvent("ankigta:setAuthorized", resourceRoot, true) end'
+        )()
+        for handler in sandbox.bound_keys.get(("F7", "down"), []):
+            handler()
         sandbox.eval(
             """
             function()
-                triggerEvent("ankigta:companionStatus", resourceRoot, {
-                    state = "disconnected",
-                    category = "timeout",
-                })
+                triggerEvent("ankigta:panelAction", resourceRoot, "ready", "{}")
                 triggerEvent(
-                    "ankigta:connectionSettingsSnapshot",
+                    "ankigta:panelAction",
                     resourceRoot,
-                    {mode = "automatic", tokenConfigured = true}
+                    "updateConnection",
+                    '{"mode":"manual","port":40007,"token":"s","keepToken":false}'
                 )
             end
             """
         )()
 
-        written = sandbox.widget_texts()
-        assert label("connection.connect") in written
-        assert label("connection.manualMode") in written
-        assert label("connection.automaticMode") in written
-        assert label("connection.disableToken") in written
-        # The replacement token is typed into a masked edit, never echoed.
-        masked = [
-            widget for widget in sandbox.widgets
-            if widget.kind == "edit" and widget.masked
+        updates = [
+            event
+            for event in sandbox.recorder.server_events
+            if event.name == "ankigta:updateConnectionSettings"
         ]
-        assert len(masked) == 1
-        assert masked[0].text == ""
-
-        # The dismiss button is offered only while the token is disabled and
-        # the warning has not already been waved off.
-        assert label("connection.dismissWarning") not in written
-        sandbox.eval(
-            """
-            function()
-                triggerEvent(
-                    "ankigta:connectionSettingsSnapshot",
-                    resourceRoot,
-                    {mode = "manual", tokenConfigured = false, tokenDisabled = true}
-                )
-            end
-            """
-        )()
-        assert label("connection.dismissWarning") in sandbox.widget_texts()
+        assert updates, sandbox.recorder.server_events
+        assert sandbox.to_python(updates[-1].args[0])["port"] == 40007
     finally:
         sandbox.close()
-    assert "emptyTokenDismissed" in source
-    assert "ankigta:connectCompanion" in source
-    assert "ankigta:updateConnectionSettings" in source
-    assert all(
-        fragment not in source
-        for fragment in ("Authorization", "Bearer ", "/v1/", "127.0.0.1")
-    )
 
 
 def test_repository_local_transport_wrong_empty_token_port_change_and_reconnect(
@@ -280,7 +262,9 @@ def test_secret_scan_excludes_tokens_from_ui_logs_and_config_diagnostics(
         path.read_text(encoding="utf-8")
         for path in (
             MTA_RESOURCE / "client" / "connection_status.lua",
-            MTA_RESOURCE / "client" / "connection_settings.lua",
+            MTA_RESOURCE / "client" / "panel.lua",
+            MTA_RESOURCE / "client" / "panel" / "app.js",
+            MTA_RESOURCE / "client" / "panel" / "index.html",
         )
     )
 

@@ -29,9 +29,9 @@
     <!-- Before the surfaces that leave their last outcome in it. -->
     <script src="client/diagnostics.lua" type="client" cache="false" />
     <script src="client/connection_status.lua" type="client" cache="false" />
-    <script src="client/connection_settings.lua" type="client" cache="false" />
     <script src="client/study.lua" type="client" cache="false" />
     <script src="client/f7.lua" type="client" cache="false" />
+    <script src="client/panel.lua" type="client" cache="false" />
     <script src="client/pick_entity.lua" type="client" cache="false" />
     <script src="client/review_mode.lua" type="client" cache="false" />
     <script src="client/activation.lua" type="client" cache="false" />
@@ -45,6 +45,9 @@
     <script src="client/settings_store.lua" type="client" cache="false" />
     <!-- After the store it reads from, and after the windows it opens over. -->
     <script src="client/settings_ui.lua" type="client" cache="false" />
+    <file src="client/panel/index.html" />
+    <file src="client/panel/styles.css" />
+    <file src="client/panel/app.js" />
     <map src="maps/ticket05.map" dimension="0" />
     <map src="maps/ticket07-matrix.map" dimension="0" />
     <export function="requestCompanionHealth" type="server" />

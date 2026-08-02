@@ -419,6 +419,8 @@ class MtaSandbox:
         self.localization = {"code": "en-US", "name": "English"}
         #: Every string handed to `dxDrawText`, in draw order.
         self.drawn_text: list[str] = []
+        #: Every script Lua asked the panel page to run, in order.
+        self.browser_javascript: list[str] = []
         #: The same strings with the box they were drawn into, for the surfaces
         #: that have no CEGUI control to read geometry off.
         self.drawn_text_boxes: list[dict[str, Any]] = []
@@ -1353,7 +1355,19 @@ class MtaSandbox:
                 )
             return True
 
+        def execute_browser_javascript(_browser: Any, code: str) -> bool:
+            """Record what Lua asked the page to run.
+
+            The page itself is not executed here. What a test can honestly
+            assert is the call the resource made -- the view is HTML, and its
+            behaviour is a manual checklist item.
+            """
+            self.browser_javascript.append(str(code))
+            return True
+
         g.createBrowser = create_browser
+        g.executeBrowserJavascript = execute_browser_javascript
+        g.isBrowserLoading = lambda _browser=None: False
         g.loadBrowserURL = load_browser_url
         g.requestBrowserDomains = request_browser_domains
         def set_browser_volume(_browser: Any, volume: float) -> bool:
@@ -1569,6 +1583,40 @@ class MtaSandbox:
         ) -> Any:
             return register("gridlist", "", parent, (x, y, w, h))
 
+        def create_gui_browser(
+            x: float, y: float, w: float, h: float,
+            is_local: Any = False, transparent: Any = False,
+            _relative: Any = False, parent: Any = None,
+        ) -> Any:
+            """`guiCreateBrowser` wraps a browser in a GUI element.
+
+            Only a local browser has its `window.mta` bridge honoured by the
+            browser process (prototype 0006), so `isLocal` is recorded rather
+            than ignored: a panel created remote would look identical here and
+            be dead in the game.
+            """
+            if not self.browser_available:
+                return False
+            handle = register("browser", "", parent, (x, y, w, h))
+            browser = self.lua.table_from(
+                {
+                    "__element": True,
+                    "type": "browser",
+                    "width": float(w),
+                    "height": float(h),
+                    "isLocal": is_local is True,
+                    "transparent": transparent is True,
+                }
+            )
+            self.browsers.append(browser)
+            handle["__browser"] = browser
+            return handle
+
+        def get_gui_browser(handle: Any) -> Any:
+            if lua_type(handle) != "table":
+                return False
+            return handle["__browser"] or False
+
         def set_position(
             handle: Any, x: float, y: float, _relative: Any = False
         ) -> bool:
@@ -1695,6 +1743,8 @@ class MtaSandbox:
         g.guiCreateEdit = create_edit
         g.guiCreateCheckBox = create_check_box
         g.guiCreateGridList = create_grid_list
+        g.guiCreateBrowser = create_gui_browser
+        g.guiGetBrowser = get_gui_browser
         def get_position(handle: Any, _relative: Any = False) -> Any:
             widget = widget_of(handle)
             if widget is None:

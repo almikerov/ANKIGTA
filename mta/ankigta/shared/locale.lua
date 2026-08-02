@@ -226,6 +226,12 @@ Locale.strings = {
         ["recovery.noVerifiedBackup"] =
             "No backup passed verification. Nothing will be replaced; "
             .. "the files below are kept for diagnosis.",
+        ["panel.title"] = "ANKIGTA",
+        ["panel.connection.explain"] =
+            "ANKIGTA talks to the companion add-on in your running Anki, "
+            .. "on this computer only. Leave the fields empty to use the "
+            .. "port and token the add-on published.",
+        ["panel.entities.empty"] = "No Map Entity is loaded",
         ["connection.title"] = "ANKIGTA — Companion Connection",
         ["connection.disconnected"] = "Connection is down: %s",
         ["connection.connect"] = "Connect",
@@ -482,6 +488,12 @@ Locale.strings = {
         ["recovery.noVerifiedBackup"] =
             "Ни одна копия не прошла проверку. Ничего не будет заменено; "
             .. "файлы ниже сохранены для диагностики.",
+        ["panel.title"] = "ANKIGTA",
+        ["panel.connection.explain"] =
+            "ANKIGTA общается с companion add-on в запущенном у вас Anki, "
+            .. "только на этом компьютере. Оставьте поля пустыми, чтобы "
+            .. "использовать порт и токен, опубликованные add-on.",
+        ["panel.entities.empty"] = "Ни одна Map Entity не загружена",
         ["connection.title"] = "ANKIGTA — Companion Connection",
         ["connection.disconnected"] = "Соединение отключено: %s",
         ["connection.connect"] = "Подключиться",

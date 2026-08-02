@@ -45,8 +45,6 @@ WINDOW_SURFACES = [
     "cardPicker",
     "f7Modal",
     "study",
-    "connection",
-    "connectionSettings",
     "settings",
 ]
 DRAWN_SURFACES = ["review", "hud"]
@@ -189,24 +187,6 @@ def open_study(sandbox: MtaSandbox) -> None:
     sandbox.commands["ankigta"][0]()
 
 
-def open_connection_windows(sandbox: MtaSandbox) -> None:
-    sandbox.eval(
-        """
-        function()
-            triggerEvent("ankigta:companionStatus", resourceRoot, {
-                state = "disconnected",
-                category = "timeout",
-            })
-            triggerEvent("ankigta:connectionSettingsSnapshot", resourceRoot, {
-                mode = "automatic",
-                port = 40007,
-                tokenConfigured = true,
-            })
-        end
-        """
-    )()
-
-
 def open_every_window(sandbox: MtaSandbox) -> None:
     """Put one of every window on screen, including a modal warning."""
     open_f7(sandbox)
@@ -214,7 +194,6 @@ def open_every_window(sandbox: MtaSandbox) -> None:
     sandbox.click_widget(text(sandbox, "f7.unlink"))
     open_card_picker(sandbox)
     open_study(sandbox)
-    open_connection_windows(sandbox)
     sandbox.commands["ankigta-ui"][0]()
 
 

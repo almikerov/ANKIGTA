@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>ANKIGTA</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<!--
+  Every readable string carries a `data-i18n` key and is filled from the table
+  Lua sends. Nothing here is written in one language: the page ships with the
+  key visible, and the first state replaces it.
+-->
+<body>
+<div class="shell">
+
+  <header class="topbar">
+    <div class="brand">
+      <h1>ANKIGTA</h1>
+    </div>
+    <div class="status" id="status" data-state="disconnected">
+      <span class="dot" aria-hidden="true"></span>
+      <span class="detail" id="status-detail"></span>
+    </div>
+    <button type="button" id="close" class="quiet" data-i18n="common.close"></button>
+  </header>
+
+  <p class="notice" id="notice" hidden></p>
+
+  <!-- The gate. Shown whenever there is no companion to talk to, and always
+       leaveable: the window this replaces could not be dismissed at all. -->
+  <section class="section gate" id="section-connection" hidden>
+    <div class="gate-card">
+      <h2 data-i18n="connection.title"></h2>
+      <p data-i18n="panel.connection.explain"></p>
+      <div class="gate-fields">
+        <label>
+          <span data-i18n="connection.manualPort"></span>
+          <input type="number" id="port" min="1" max="65535" />
+        </label>
+        <label>
+          <span data-i18n="connection.replacementToken"></span>
+          <input type="password" id="token" autocomplete="off" />
+        </label>
+      </div>
+      <div class="gate-actions">
+        <button type="button" id="save-connection" data-i18n="settings.apply"></button>
+        <button type="button" id="connect" class="primary" data-i18n="connection.connect"></button>
+      </div>
+    </div>
+  </section>
+
+  <section class="section entities" id="section-entities" hidden>
+    <div class="entities-head">
+      <h2 data-i18n="f7.title"></h2>
+      <span class="count" id="entity-count"></span>
+    </div>
+    <div class="rows" id="rows" role="list"></div>
+  </section>
+
+</div>
+<script src="app.js"></script>
+</body>
+</html>

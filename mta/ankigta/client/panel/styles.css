@@ -1,0 +1,258 @@
+/* ANKIGTA panel.
+ *
+ * An overlay drawn over the game world, so it is dark and slightly
+ * translucent rather than a document: a light surface would blind the player
+ * every time they opened it at night.
+ *
+ * No web fonts. The page loads from the resource with no network, and a font
+ * that fails to arrive would reflow the whole panel on a machine that happens
+ * to be offline — which is every machine here.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* Palette: the "Digital Signage / Kiosk" dark scheme — a surface read at a
+   * glance under whatever light happens to be there, which is what an overlay
+   * over a game world is. Semantic names only; no component reaches for a hex.
+   *
+   * Accent is sky rather than the scheme's red, because red is already the
+   * refusal colour here and an interactive accent that means "danger" turns
+   * every button into a warning. */
+  --bg: #020617;
+  --panel: #0e1223;
+  --surface: #1a1e2f;
+  --line: #334155;
+  --line-soft: rgba(51, 65, 85, 0.6);
+  --text: #f8fafc;
+  --muted: #94a3b8;
+  --accent: #38bdf8;
+  --on-accent: #020617;
+  --danger: #ef4444;
+  --success: #22c55e;
+  --warning: #fbbf24;
+
+  /* Dense scale: this is a dashboard over a game, not a reading surface. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --radius: 10px;
+  --radius-sm: 7px;
+
+  font-family: "Segoe UI", Inter, system-ui, sans-serif;
+  font-size: 14px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  color: var(--text);
+}
+
+.shell {
+  height: 100%;
+  display: grid;
+  grid-template-rows: 56px auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(145deg, rgba(14, 18, 35, 0.97), rgba(2, 6, 23, 0.97));
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.05);
+}
+
+/* --- top bar ---------------------------------------------------------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--line);
+  user-select: none;
+}
+
+.brand { display: flex; align-items: baseline; gap: var(--space-3); min-width: 0; }
+.brand h1 { margin: 0; font-size: 17px; letter-spacing: 0.02em; }
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.status .dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.status[data-state="connected"] { color: var(--success); }
+.status[data-state="connected"] .dot { background: var(--success); box-shadow: 0 0 8px rgba(34, 197, 94, 0.7); }
+.status[data-state="connecting"] { color: var(--accent); }
+.status[data-state="connecting"] .dot { background: var(--accent); }
+.status[data-state="disconnected"] { color: var(--danger); }
+.status[data-state="disconnected"] .dot { background: var(--danger); }
+.status .detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* --- notice ----------------------------------------------------------- */
+
+.notice {
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.notice[hidden] { display: none; }
+.notice.warning { background: rgba(251, 191, 36, 0.12); color: #fde68a; }
+.notice.error { background: rgba(239, 68, 68, 0.14); color: #fecaca; }
+
+/* --- sections --------------------------------------------------------- */
+
+.section { min-height: 0; overflow: hidden; }
+.section[hidden] { display: none; }
+
+/* --- controls --------------------------------------------------------- */
+
+button {
+  font: inherit;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  /* 44px is the touch target the guidance asks for; this is mouse-only, so
+     36 with generous padding is the honest equivalent for a dense list. */
+  min-height: 36px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+button:hover { border-color: var(--accent); }
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+button:disabled { opacity: 0.45; cursor: default; }
+button.primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--on-accent);
+  font-weight: 700;
+}
+button.quiet { background: transparent; }
+
+input {
+  font: inherit;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  background: var(--bg);
+  color: var(--text);
+}
+input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* --- connection gate -------------------------------------------------- */
+
+.gate {
+  display: grid;
+  place-items: center;
+  padding: var(--space-5);
+}
+.gate-card {
+  width: min(460px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: var(--space-5);
+  background: rgba(14, 18, 35, 0.92);
+}
+.gate-card h2 { margin: 0; font-size: 17px; }
+.gate-card p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.gate-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.gate-fields { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
+
+/* --- entity table ----------------------------------------------------- */
+
+.entities { display: flex; flex-direction: column; height: 100%; }
+.entities-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+.count { color: var(--muted); font-size: 12px; }
+
+.rows {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  margin: 0 var(--space-4) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(2, 6, 23, 0.5);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) 84px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  padding: var(--space-2) var(--space-3);
+  background: transparent;
+  text-align: left;
+  min-height: 40px;
+}
+.row:last-child { border-bottom: 0; }
+.row:hover, .row.selected { background: rgba(56, 189, 248, 0.14); }
+.row.selected { box-shadow: inset 3px 0 var(--accent); }
+.row .primary-cell { min-width: 0; }
+.row strong { display: block; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .sub { display: block; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .type { color: var(--muted); font-size: 11px; }
+
+/* State is carried by a word as well as a colour: colour alone is not a
+   message a colour-blind player receives. */
+.state { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; min-width: 0; }
+.state .marker { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 2px; background: var(--muted); }
+.state[data-tone="good"] { color: var(--success); }
+.state[data-tone="good"] .marker { background: var(--success); }
+.state[data-tone="warn"] { color: var(--warning); }
+.state[data-tone="warn"] .marker { background: var(--warning); }
+.state[data-tone="bad"] { color: var(--danger); }
+.state[data-tone="bad"] .marker { background: var(--danger); }
+.state .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.empty { padding: var(--space-5); text-align: center; color: var(--muted); font-size: 12px; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}

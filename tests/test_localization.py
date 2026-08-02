@@ -100,7 +100,7 @@ def test_every_script_in_the_manifest_is_covered_by_the_guard() -> None:
         "client/study.lua",
         "client/review_mode.lua",
         "client/connection_status.lua",
-        "client/connection_settings.lua",
+        "client/panel.lua",
         "server/main.lua",
         "server/map_identity.lua",
     ):
