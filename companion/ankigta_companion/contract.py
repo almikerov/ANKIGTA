@@ -232,6 +232,14 @@ def card_search_response(
             "total": page.total,
             "query": page.query,
             "deckFilter": page.deck_filter,
+            # Every deck, with the page rather than behind a second request.
+            # The search already had to read them all to name one page of
+            # cards, so this costs nothing and cannot disagree with what the
+            # page says a card's deck is.
+            "decks": [
+                {"deckId": deck.deck_id, "name": deck.name}
+                for deck in page.decks
+            ],
         },
     }
 

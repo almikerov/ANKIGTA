@@ -186,6 +186,7 @@ Locale.strings = {
         ["f7.replace.confirm"] = "Confirm Replace",
         -- The state itself is a stable technical value; only its display
         -- follows the language.
+        ["cardPicker.anyDeck"] = "Every deck",
         ["f7.teleport"] = "Take me there",
         ["f7.activation"] = "Activation Zone",
         ["f7.radius"] = "Radius (m)",
@@ -463,6 +464,7 @@ Locale.strings = {
         ["f7.replace.explanation"] =
             "Замена атомарна; промежуточный Unlink не выполняется.",
         ["f7.replace.confirm"] = "Подтвердить замену",
+        ["cardPicker.anyDeck"] = "Все колоды",
         ["f7.teleport"] = "Перенести меня",
         ["f7.activation"] = "Зона активации",
         ["f7.radius"] = "Радиус (м)",

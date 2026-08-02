@@ -462,6 +462,20 @@ local function cardRows(snapshot)
     return rows
 end
 
+--- The decks a filter can be chosen from, by name.
+--
+-- The picker took a deck as typed text, so a name spelled wrong and a deck
+-- with nothing in it looked exactly alike. A list cannot be misspelled.
+local function deckNames(snapshot)
+    local names = {}
+    for _, deck in ipairs(snapshot and snapshot.decks or {}) do
+        if type(deck.name) == "string" and deck.name ~= "" then
+            names[#names + 1] = deck.name
+        end
+    end
+    return names
+end
+
 local function localeTable()
     local strings = ANKIGTA.Locale and ANKIGTA.Locale.strings
     if not strings then
@@ -542,6 +556,8 @@ local function push()
             enabled = lastSnapshot and lastSnapshot.cardPicker
                 and lastSnapshot.cardPicker.enabled == true or false,
             cards = cardRows(lastCards),
+            decks = deckNames(lastCards),
+            deckFilter = lastCards and lastCards.deckFilter or false,
         },
         notice = notice,
         settings = {rows = settingsRows()},

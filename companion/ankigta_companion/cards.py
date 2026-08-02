@@ -101,6 +101,12 @@ class CardView:
 
 
 @dataclass(frozen=True)
+class DeckView:
+    deck_id: int
+    name: str
+
+
+@dataclass(frozen=True)
 class CardSearchPage:
     cards: tuple[CardView, ...]
     page: int
@@ -108,6 +114,10 @@ class CardSearchPage:
     total: int
     query: str
     deck_filter: str | None
+    #: Every deck in the collection, so the filter can be chosen from a list
+    #: rather than typed. Carried with the page because the search already read
+    #: them all to name its cards.
+    decks: tuple[DeckView, ...] = ()
 
 
 IdentityProvider = Callable[[], CollectionIdentityObservation | None]
@@ -155,17 +165,27 @@ class CardPickerService:
 
         matched = self._matched_card_ids(raw_ids)
         start = page * page_size
+        # Read once for the whole answer: the page's names and the deck list
+        # are the same list, and asking twice made a page cost two reads.
+        names = self._deck_names(collection)
         return CardSearchPage(
             cards=self._read_page(
                 collection,
                 collection_uuid,
                 matched[start : start + page_size],
+                names,
             ),
             page=page,
             page_size=page_size,
             total=len(matched),
             query=normalized_query,
             deck_filter=normalized_deck,
+            decks=tuple(
+                DeckView(deck_id=deck_id, name=name)
+                # By name, not by id: the name is what is read, and Anki's `::`
+                # nesting sorts into a tree correctly as plain text.
+                for deck_id, name in sorted(names.items(), key=lambda p: p[1])
+            ),
         )
 
     def read(self, card_id: int) -> CardView:
@@ -285,6 +305,7 @@ class CardPickerService:
         collection: CollectionLike,
         collection_uuid: str,
         card_ids: Sequence[int],
+        deck_names: dict[int, str],
     ) -> tuple[CardView, ...]:
         """Read exactly these cards.
 
@@ -293,7 +314,6 @@ class CardPickerService:
         card forward: the collection changed under the search, and hiding that
         by silently reflowing would make the page disagree with `total`.
         """
-        deck_names = self._deck_names(collection)
         result: list[CardView] = []
         for card_id in card_ids:
             try:

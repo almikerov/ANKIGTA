@@ -1136,8 +1136,16 @@ local function validCardPickerPayload(payload)
         or payload.total < 0
         or type(payload.query) ~= "string"
         or (payload.deckFilter ~= false and type(payload.deckFilter) ~= "string")
+        -- Optional: an older companion answers without it, and a picker with
+        -- no deck list is worse than a refused search, not better.
+        or (payload.decks ~= nil and type(payload.decks) ~= "table")
     then
         return false
+    end
+    for _, deck in ipairs(payload.decks or {}) do
+        if type(deck) ~= "table" or type(deck.name) ~= "string" then
+            return false
+        end
     end
     for _, card in ipairs(payload.cards) do
         if not validCardView(card) then
