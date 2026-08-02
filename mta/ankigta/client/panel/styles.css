@@ -77,7 +77,10 @@ html, body {
   padding: 0 var(--space-4);
   border-bottom: 1px solid var(--line);
   user-select: none;
+  cursor: move;
 }
+/* The controls in the bar are not the handle, and say so. */
+.topbar button { cursor: pointer; }
 
 .brand { display: flex; align-items: baseline; gap: var(--space-3); min-width: 0; }
 .brand h1 { margin: 0; font-size: 17px; letter-spacing: 0.02em; }

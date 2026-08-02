@@ -301,6 +301,21 @@
     });
   });
 
+  /* The page cannot move its own window, so it only reports that a drag began
+   * and Lua follows the cursor. Buttons and fields in the bar keep their own
+   * clicks: a drag that starts on Close is a drag nobody meant. */
+  var dragHandle = document.querySelector("[data-window-drag]");
+  if (dragHandle) {
+    dragHandle.addEventListener("mousedown", function (event) {
+      if (event.button !== 0 || event.target.closest("button, input")) return;
+      event.preventDefault();
+      send("dragStart");
+    });
+  }
+  document.addEventListener("mouseup", function () {
+    send("dragEnd");
+  });
+
   /* Escape closes, because a panel that traps the cursor and cannot be left is
    * the defect this replaces. */
   document.addEventListener("keydown", function (event) {

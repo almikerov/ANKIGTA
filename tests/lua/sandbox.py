@@ -421,6 +421,11 @@ class MtaSandbox:
         self.drawn_text: list[str] = []
         #: Every script Lua asked the panel page to run, in order.
         self.browser_javascript: list[str] = []
+        #: Cursor position as MTA reports it: a fraction of the screen.
+        self.cursor_position: tuple[float, float] = (0.5, 0.5)
+        #: Which keys are held, for the loops that watch a button rather than
+        #: waiting for an event that may land outside the page.
+        self.key_states: dict[str, bool] = {}
         #: The same strings with the box they were drawn into, for the surfaces
         #: that have no CEGUI control to read geometry off.
         self.drawn_text_boxes: list[dict[str, Any]] = []
@@ -1225,6 +1230,10 @@ class MtaSandbox:
         g.isControlEnabled = is_control_enabled
         g.showCursor = show_cursor
         g.isCursorShowing = lambda: self.cursor_visible
+        g.getCursorPosition = lambda: (
+            self.cursor_position if self.cursor_visible else (False, False)
+        )
+        g.getKeyState = lambda key: self.key_states.get(str(key), False)
         g.bindKey = lambda key, state, handler, *_rest: self.bound_keys.setdefault(
             (str(key), str(state)), []
         ).append(handler) or True

@@ -105,6 +105,7 @@ local function takeCursor()
 end
 
 local function closePanel()
+    dragFrom = nil
     if isElement(guiBrowser) then
         destroyElement(guiBrowser)
     end
@@ -384,24 +385,37 @@ local function push()
     )
 end
 
+-- The panel is a surface like the windows it replaces, so UI Scale sizes it and
+-- a placement is stored as a fraction of the screen (ticket 28). Being a page
+-- rather than a CEGUI window changes only who moves it.
+if ANKIGTA.Layout then
+    ANKIGTA.Layout.define("panel", {
+        width = 1180,
+        height = 700,
+        margin = 20,
+        anchorX = 0.5,
+        anchorY = 0.5,
+    })
+end
+
+local function panelRect()
+    if ANKIGTA.Layout then
+        return ANKIGTA.Layout.rect("panel")
+    end
+    local screenWidth, screenHeight = guiGetScreenSize()
+    local width = math.min(screenWidth - 40, 1180)
+    local height = math.min(screenHeight - 40, 700)
+    return (screenWidth - width) / 2, (screenHeight - height) / 2, width, height
+end
+
 local function openPanel()
     if isPanelOpen() then
         return
     end
-    local screenWidth, screenHeight = guiGetScreenSize()
-    -- UI Scale reaches the panel too (ticket 28). The rendered size gives way
-    -- before the screen does; the setting itself is never clamped, so a scale
-    -- chosen for a bigger monitor survives being played on a smaller one.
-    local scale = ANKIGTA.Layout and ANKIGTA.Layout.scale() or 1
-    local width = math.min(
-        screenWidth - 40, math.floor(screenWidth * 0.82 * scale)
-    )
-    local height = math.min(
-        screenHeight - 40, math.floor(screenHeight * 0.8 * scale)
-    )
+    local x, y, width, height = panelRect()
     guiBrowser = guiCreateBrowser(
-        (screenWidth - width) / 2,
-        (screenHeight - height) / 2,
+        x,
+        y,
         width,
         height,
         true,
@@ -423,6 +437,42 @@ local function openPanel()
         loadBrowserURL(browser, PAGE_URL)
     end
 end
+
+-- Where the cursor and the panel were when the drag began. The page reports
+-- only that a drag started: the cursor is MTA's to report, and a mouse button
+-- released outside the page never reaches it, so the loop watches the button.
+local dragFrom = nil
+
+local function stopDrag()
+    dragFrom = nil
+end
+
+local function followCursor()
+    if not dragFrom or not isPanelOpen() then
+        return stopDrag()
+    end
+    if not getKeyState("mouse1") then
+        return stopDrag()
+    end
+    local cursorX, cursorY = getCursorPosition()
+    if not cursorX or not cursorY then
+        return stopDrag()
+    end
+    local screenWidth, screenHeight = guiGetScreenSize()
+    local x = dragFrom.x + (cursorX * screenWidth - dragFrom.cursorX)
+    local y = dragFrom.y + (cursorY * screenHeight - dragFrom.cursorY)
+    if ANKIGTA.Layout then
+        -- Clamping, storing and repositioning are the layout manager's, so a
+        -- drag cannot put the panel somewhere the next resolution cannot show.
+        ANKIGTA.Layout.moveTo("panel", x, y)
+        local placedX, placedY = ANKIGTA.Layout.rect("panel")
+        guiSetPosition(guiBrowser, placedX, placedY, false)
+        return
+    end
+    guiSetPosition(guiBrowser, x, y, false)
+end
+
+addEventHandler("onClientRender", root, followCursor)
 
 function togglePanel()
     if not authorized then
@@ -482,6 +532,28 @@ end
 -- to fix one wrong default.
 function actions.openSettings()
     triggerEvent(OPEN_SETTINGS_EVENT, resourceRoot)
+end
+
+function actions.dragStart()
+    if not isPanelOpen() or not isCursorShowing() then
+        return
+    end
+    local cursorX, cursorY = getCursorPosition()
+    if not cursorX or not cursorY then
+        return
+    end
+    local screenWidth, screenHeight = guiGetScreenSize()
+    local x, y = guiGetPosition(guiBrowser, false)
+    dragFrom = {
+        cursorX = cursorX * screenWidth,
+        cursorY = cursorY * screenHeight,
+        x = x,
+        y = y,
+    }
+end
+
+function actions.dragEnd()
+    stopDrag()
 end
 
 function actions.startStudy()

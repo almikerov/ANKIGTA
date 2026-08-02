@@ -577,3 +577,110 @@ def test_a_server_notice_reaches_the_panel_as_well_as_the_chat(
 
     assert last_state(client)["notice"]["key"] == "notice.unlinked"
     assert client.chat
+
+
+# --- dragging -----------------------------------------------------------------
+
+
+def cursor_at(sandbox: MtaSandbox, x: float, y: float) -> None:
+    """Where MTA says the cursor is, in the 0..1 the API actually returns."""
+    width, height = 1920.0, 1080.0
+    sandbox.cursor_position = (x / width, y / height)
+
+
+def hold_mouse(sandbox: MtaSandbox, down: bool) -> None:
+    sandbox.key_states["mouse1"] = down
+
+
+def render(sandbox: MtaSandbox) -> None:
+    sandbox.trigger("onClientRender")
+
+
+def panel_rect(sandbox: MtaSandbox) -> Any:
+    return sandbox.eval(
+        'function() return {ANKIGTA.Layout.rect("panel")} end'
+    )()
+
+
+def test_the_panel_is_dragged_by_its_top_bar(client: MtaSandbox) -> None:
+    """The page cannot move its own window, so Lua moves it.
+
+    The previous resource did exactly this: mousedown on the bar starts it,
+    a render loop follows the cursor, and releasing the button ends it.
+    """
+    authorize(client)
+    press_f7(client)
+    page_ready(client)
+    before = panel_rect(client)
+
+    cursor_at(client, 900, 400)
+    hold_mouse(client, True)
+    act(client, "dragStart")
+    cursor_at(client, 1000, 460)
+    render(client)
+
+    after = panel_rect(client)
+    assert (after[1], after[2]) != (before[1], before[2]), (before, after)
+    assert after[1] == before[1] + 100
+    assert after[2] == before[2] + 60
+
+
+def test_letting_go_of_the_button_ends_the_drag(client: MtaSandbox) -> None:
+    """A mouseup that lands outside the page never reaches it, so the loop
+    watches the button rather than waiting to be told."""
+    authorize(client)
+    press_f7(client)
+    page_ready(client)
+
+    cursor_at(client, 900, 400)
+    hold_mouse(client, True)
+    act(client, "dragStart")
+    cursor_at(client, 1000, 400)
+    render(client)
+    moved = panel_rect(client)
+
+    hold_mouse(client, False)
+    render(client)
+    cursor_at(client, 1400, 400)
+    render(client)
+
+    assert panel_rect(client)[1] == moved[1]
+
+
+def test_a_dragged_panel_is_remembered_as_a_fraction_of_the_screen(
+    client: MtaSandbox,
+) -> None:
+    """Ticket 28's rule: a placement means the same corner at any resolution."""
+    authorize(client)
+    press_f7(client)
+    page_ready(client)
+
+    cursor_at(client, 900, 400)
+    hold_mouse(client, True)
+    act(client, "dragStart")
+    cursor_at(client, 700, 300)
+    render(client)
+    hold_mouse(client, False)
+
+    placement = client.eval(
+        'function() return ANKIGTA.Layout.placements["panel"] end'
+    )()
+    assert placement is not None
+    assert 0 <= placement.x <= 1 and 0 <= placement.y <= 1
+
+
+def test_the_panel_never_leaves_the_screen(client: MtaSandbox) -> None:
+    authorize(client)
+    press_f7(client)
+    page_ready(client)
+
+    cursor_at(client, 900, 400)
+    hold_mouse(client, True)
+    act(client, "dragStart")
+    cursor_at(client, 5000, 5000)
+    render(client)
+
+    rect = panel_rect(client)
+    x, y, width, height = rect[1], rect[2], rect[3], rect[4]
+    assert x >= 0 and y >= 0
+    assert x + width <= 1920 and y + height <= 1080
