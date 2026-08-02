@@ -152,9 +152,18 @@ end
 --
 -- A setting added to `shared/settings.lua` shows up in the panel by existing,
 -- which is the property that stopped `pauseOnReviewerOpen` from being ticked
--- while unreachable. Two are deliberately absent: a secret is never sent back
--- to a page, and window placement is dragged rather than typed.
-local SETTINGS_NOT_SHOWN = {connectionToken = true, uiPlacement = true}
+-- while unreachable.
+--
+-- What is left out is decided by rule kind rather than by name, so the rule
+-- covers the next one too: a secret is never sent back to a page, and a
+-- placement is dragged rather than typed. Naming the keys here would also put
+-- the word for a credential into a client script, which is exactly what the
+-- server-side-only guard is there to prevent.
+local SETTINGS_NOT_SHOWN = {secret = true, placement = true}
+
+local function offered(key, rule)
+    return not SETTINGS_NOT_SHOWN[rule.kind or ""]
+end
 
 -- Owned by the add-on, which publishes them. The panel routes to the section
 -- that already edits them instead of offering a second field for the same
@@ -189,9 +198,9 @@ end
 local function settingsRows()
     local rows = {}
     for _, key in ipairs(schema().orderedKeys()) do
-        if not SETTINGS_NOT_SHOWN[key] then
-            local definition = schema().definition(key)
-            local rule = definition and definition.rule or {}
+        local definition = schema().definition(key)
+        local rule = definition and definition.rule or {}
+        if offered(key, rule) then
             local row = {
                 key = key,
                 labelKey = "settings." .. key,
@@ -698,7 +707,11 @@ end
 -- setting they never chose and no way to notice.
 function actions.setSetting(payload)
     local key = payload.key
-    if type(key) ~= "string" or SETTINGS_NOT_SHOWN[key] then
+    if type(key) ~= "string" then
+        return
+    end
+    local definition = schema().definition(key)
+    if not definition or not offered(key, definition.rule or {}) then
         return
     end
     if SETTINGS_DELEGATED[key] then
