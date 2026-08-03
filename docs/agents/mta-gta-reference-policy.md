@@ -12,33 +12,54 @@ They must not:
 - verify anything by driving a graphical program through screenshots, synthetic
   mouse clicks or synthetic keystrokes (computer-use automation). It is slow,
   costly and unreliable, and it never becomes repeatable evidence;
-- modify an installed MTA/GTA directory, its resources, configuration, logs,
-  caches, registry state or user data;
-- copy an ANKIGTA build into an installed MTA resource directory;
+- modify an installed MTA/GTA directory beyond what the deployment section
+  below permits — never its logs, caches or registry state;
 - modify GTA saves/settings or use a real user map as a test fixture.
 
-### Deployment for a human pass is not verification
+### The owner's server is a working development server
 
-The owner may ask for an ANKIGTA build to be installed into their own MTA
-server so that *they* can run the manual checklist. That is a deployment, not a
-check, and it is allowed on request. It does not relax anything above: a
-deployed build produces no automated evidence, every automated check still runs
-against a disposable copy, and GUI automation stays prohibited whatever is
-installed where.
+The owner runs one MTA server and works against it directly. Deploying an
+ANKIGTA build into it is standing permission, not a per-ticket request, and so
+is keeping the development tooling under `tools/devserver/` installed and
+started there.
 
-A deployment on request must:
+Deployment is still not verification. A deployed build produces no automated
+evidence, every automated check still runs against a disposable copy, and GUI
+automation stays prohibited whatever is installed where.
 
-- write only the named resource directory and, where the resource cannot work
-  without it, the ACL — backing up each installed file it edits alongside the
-  original;
-- leave the server's startup list alone, so nothing begins running that the
-  owner did not start;
+What a deployment must still do:
+
+- write only the named resource directory, the development tooling, and the
+  ACL and startup list those need in order to run at all;
+- back up each installed file it edits that it did not author, alongside the
+  original, before the first edit;
+- treat the owner's database, saves and maps as data rather than fixtures: back
+  one up before touching it, and say what changed;
 - be reported file by file, so it can be undone.
 
-Installing the companion add-on into a real Anki profile is a separate decision
-and needs its own request: the add-on builds and rebuilds a filtered deck in the
-bound collection and applies ratings through the scheduler, so it changes the
-owner's review history rather than only their game.
+Installing the companion add-on into a real Anki profile remains a separate
+decision and needs its own request: the add-on builds and rebuilds a filtered
+deck in the bound collection and applies ratings through the scheduler, so it
+changes the owner's review history rather than only their game.
+
+### Asking the running server instead of asking the owner
+
+`tools/devserver/` is a resource that turns the running server into something
+an agent can question and drive: what is loaded in the world and what identity
+each element carries, which resources are running, starting and stopping them,
+the ACL, and arbitrary server Lua.
+
+Prefer it over asking the owner to look. Four bugs in a row here lived in the
+gap between real MTA and its test doubles, and each one cost a round trip
+through a person pressing a key and describing what they saw. A question put to
+the server answers in one line and can be repeated.
+
+It does not relax the testing rule below. What it produces is diagnosis, not
+evidence: a finding from the live server becomes a test at the highest
+programmatic seam, or it did not happen.
+
+Two things it cannot do, and neither is a reason to reach for GUI automation:
+render a frame, and tell you whether what rendered is readable.
 
 ## Launching programs
 
