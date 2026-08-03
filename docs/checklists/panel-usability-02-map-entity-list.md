@@ -48,9 +48,12 @@ an owner's map.
 The on-foot case was sampled once from the owner's development server on
 2026-08-04: with a distant focus held, the player stayed at
 `(2486.77, -1652.80, 13.48)` for 38 consecutive one-second samples and then
-walked away with Z following the ground again. That is diagnosis from a running
-server, not this checklist's acceptance pass — the vehicle case, the
-already-frozen case, and every rendering item below still need a human.
+walked away with Z following the ground again.
+
+The owner then confirmed on 2026-08-04 that the fall no longer happens, testing
+in their own way rather than by walking this checklist. So the defect is settled
+and the fix is accepted; what is still owed is the itemised pass — the vehicle
+case, the already-frozen case, and every rendering item below.
 - Reopen F7, select the same row, and press Teleport. Confirm F7 closes first
   and the player is then moved to the Map Entity.
 - Link, unlink, and adopt an editor Map Entity. After each action, confirm both
