@@ -1,0 +1,25 @@
+<meta>
+    <info author="Codex" name="MTA Development Hot Reload" version="1.1.0" type="script" />
+
+    <script src="config.lua" type="server" />
+    <script src="server.lua" type="server" />
+    <script src="client.lua" type="client" cache="false" />
+
+    <export function="reloadResourceByName" type="server" http="true" />
+    <export function="getHotReloadStatus" type="server" http="true" />
+
+    <min_mta_version server="1.6.0" />
+
+    <aclrequest>
+        <right name="function.refreshResources" access="true" />
+        <right name="function.restartResource" access="true" />
+        <right name="function.startResource" access="true" />
+        <!-- The panel's plain resource control can stop one too, which reload
+             never needed. A right added after the first `aclrequest allow`
+             is not granted by it: run that again after updating. -->
+        <right name="function.stopResource" access="true" />
+        <!-- Autoupdate reads the files of the resources it watches, and
+             MTA gates every look inside another resource on this. -->
+        <right name="general.ModifyOtherObjects" access="true" />
+    </aclrequest>
+</meta>

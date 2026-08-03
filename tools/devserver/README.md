@@ -18,6 +18,27 @@ sleep 2 && tail -40 <resources>/ankigta_probe/result.txt
 Read its own `README.md` for the command list and for why it must never be on a
 public server.
 
+## Hot Reload
+
+`dev_hotreload/` and `mta_hotreload_watcher/` are the other half of the loop:
+the probe answers questions about the running server, Hot Reload puts edited
+files into it without a restart by hand. `dev_hotreload/` is the MTA resource —
+a panel, a file watch, a change report and plain start/stop/restart control.
+`mta_hotreload_watcher/` is the Python side that watches the resources
+directory and calls the resource over HTTP. Each has its own `README.md`.
+
+They are **vendored here, not authored here**: they run from the installed
+server tree, and this copy exists so that reinstalling the server does not eat
+them. Edits belong in one place and get copied to the other — a change made
+only in the installed tree is a change one reinstall away from being lost, and
+a change made only here is one nothing is running.
+
+What is deliberately not vendored: `config.json`, which holds the watcher's
+real HTTP credentials, `hotreload_state.xml` and `ui_settings.xml`, which are
+one machine's runtime state, and the logs and virtualenv. Copy
+`config.example.json` to `config.json` on the machine that runs the watcher and
+fill it in there.
+
 ## Why this is here
 
 Four bugs in a row lived in the gap between real MTA and the test doubles that

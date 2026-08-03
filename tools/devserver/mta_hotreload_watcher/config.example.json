@@ -1,0 +1,23 @@
+{
+  "mta": {
+    "base_url": "http://127.0.0.1:22005",
+    "username": "hotreload",
+    "password": "CHANGE_ME",
+    "hotreload_resource": "dev_hotreload",
+    "timeout_seconds": 5
+  },
+  "watch": {
+    "debounce_ms": 800,
+    "ignore_initial_events": true,
+    "resources_root": "C:\\MTA\\server\\mods\\deathmatch\\resources",
+    "auto_sync_from_mta": true,
+    "sync_interval_seconds": 3,
+    "resources": []
+  },
+  "validation": {
+    "enabled": true,
+    "lua_compiler": "",
+    "validate_xml": true,
+    "block_reload_on_error": true
+  }
+}
