@@ -299,6 +299,21 @@ class _QueryHandle:
 
 
 @dataclass
+class _Resource:
+    """One resource as `getResources` reports it.
+
+    `state` is what `getResourceState` answers, because that is what a script
+    has to check before it may call into another resource: `exports.name:m()`
+    on a resource that is not running is a script error, not `false`.
+    """
+
+    name: str
+    table: Any
+    root: Any
+    state: str = "running"
+
+
+@dataclass
 class Widget:
     """One CEGUI control, with the text the resource actually wrote into it.
 
@@ -365,6 +380,17 @@ class MtaSandbox:
         #: Handlers attached to one control, as `(widget index, handler)`.
         self._gui_handlers: dict[str, list[tuple[int, Any]]] = {}
         self._exports: dict[str, Any] = {}
+        #: Every resource `getResources` reports, by name, in registration
+        #: order. `ankigta` is registered while the globals are installed.
+        self._resources: dict[str, _Resource] = {}
+        #: Which map the stock Map Editor has open, and the dimension it works
+        #: in — what `editor_main` answers when it is running. Deleted elements
+        #: are parked in `working dimension + 1`, which is why a test needs to
+        #: be able to say what that dimension is.
+        self.editor_map_name: str | None = None
+        self.editor_working_dimension: int | None = None
+        #: What `getZoneName` reports for any position.
+        self.zone_name = "Ganton"
         # The resource directory. A caller that named a database file gets that
         # file's directory, so `ankigta.sqlite` resolves to the path it passed.
         self._owned_directory: tempfile.TemporaryDirectory[str] | None = None
@@ -938,9 +964,37 @@ class MtaSandbox:
         # so the ownership walk finds a resource that owns it.
         self._resource_root = resource_root
         g.root = self.lua.table_from({"type": "root"})
-        g.getResourceName = lambda _resource=None: "ankigta"
+        self._resources["ankigta"] = _Resource(
+            name="ankigta", table=resource, root=resource_root, state="running"
+        )
         g.getThisResource = lambda: resource
-        g.getResourceRootElement = lambda _resource=None: resource_root
+
+        def resource_named(name: Any) -> _Resource | None:
+            return self._resources.get(str(name))
+
+        def resource_of(handle: Any) -> _Resource | None:
+            if lua_type(handle) != "table" or not handle["name"]:
+                return None
+            return resource_named(handle["name"])
+
+        g.getResourceName = lambda handle=None: (
+            str(handle["name"])
+            if lua_type(handle) == "table" and handle["name"]
+            else "ankigta"
+        )
+        g.getResourceFromName = lambda name=None: (
+            resource_named(name).table if resource_named(name) else False
+        )
+        g.getResourceState = lambda handle=None: (
+            resource_of(handle).state if resource_of(handle) else False
+        )
+        g.getResources = lambda: self.lua.table_from(
+            [entry.table for entry in self._resources.values()]
+        )
+        g.getResourceRootElement = lambda handle=None: (
+            resource_of(handle).root if resource_of(handle) else resource_root
+        )
+        self._install_export_globals()
 
         # --- http -----------------------------------------------------------
         def fetch_remote(
@@ -2133,7 +2187,15 @@ class MtaSandbox:
         if isinstance(value, list):
             return self.lua.table_from([self._to_lua(item) for item in value])
         if value is None:
-            return False
+            # JSON `null` is `nil`, not `false`. `CLuaArgument::
+            # ReadFromJSONObject` reads `json_type_null` as `LUA_TNIL`, and
+            # `CLuaArguments::PushAsTable` settables that nil, so the key is
+            # simply absent from the decoded table. A double that answered
+            # `false` here is how the gateway shipped validators written
+            # against `false` -- and rejected every real answer that carried a
+            # null. See the test-double rule in
+            # docs/design/remaining-work-plan.md.
+            return None
         return value
 
     def _from_lua(self, value: Any) -> Any:
