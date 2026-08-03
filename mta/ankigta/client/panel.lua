@@ -1056,6 +1056,9 @@ function actions.teleport()
     if not entry then
         return
     end
+    -- Teleport is the one row action that leaves F7. Capture the identity
+    -- first, then restore the camera/cursor before the server moves the player.
+    closePanel()
     triggerServerEvent(
         TELEPORT_REQUEST_EVENT,
         resourceRoot,

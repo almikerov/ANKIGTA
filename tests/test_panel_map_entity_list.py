@@ -780,6 +780,62 @@ def test_focusing_a_distant_row_uses_its_authored_position_without_streaming(
     assert panel_client.moved == before_moves
 
 
+def test_closing_after_camera_focus_never_requests_a_teleport(
+    panel_client: MtaSandbox,
+) -> None:
+    push_client_snapshot(panel_client, entities=[panel_entry(available=False)])
+    panel_action(
+        panel_client,
+        "focusEntity",
+        {"mapId": "current-map-id", "entityId": "gate-17"},
+    )
+
+    panel_action(panel_client, "close")
+
+    assert not [
+        event
+        for event in panel_client.recorder.server_events
+        if event.name == "ankigta:teleportToEntity"
+    ]
+    assert panel_client.moved == []
+
+
+def test_teleport_closes_the_panel_before_requesting_the_move(
+    panel_client: MtaSandbox,
+) -> None:
+    push_client_snapshot(panel_client, entities=[panel_entry(available=False)])
+    panel_action(
+        panel_client,
+        "select",
+        {"mapId": "current-map-id", "entityId": "gate-17"},
+    )
+    panel_client.eval(
+        """
+        function()
+            local originalTriggerServerEvent = triggerServerEvent
+            triggerServerEvent = function(name, ...)
+                if name == "ankigta:teleportToEntity" then
+                    panelOpenAtTeleportRequest = isPanelOpen()
+                end
+                return originalTriggerServerEvent(name, ...)
+            end
+        end
+        """
+    )()
+
+    panel_action(panel_client, "teleport")
+
+    assert panel_client.eval("function() return panelOpenAtTeleportRequest end")() is False
+    assert panel_client.eval("function() return isPanelOpen() end")() is False
+    sent = [
+        event
+        for event in panel_client.recorder.server_events
+        if event.name == "ankigta:teleportToEntity"
+    ]
+    assert len(sent) == 1
+    assert sent[0].args == ("current-map-id", "gate-17")
+
+
 def test_a_fresh_f7_snapshot_updates_entity_and_card_rows_without_reopening(
     panel_client: MtaSandbox,
 ) -> None:

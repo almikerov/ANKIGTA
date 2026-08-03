@@ -67,6 +67,11 @@ than moved into the link column. Camera focus now uses an unstreamed Runtime
 Instance when present and falls back to the stored authored position when the
 client has no element at all.
 
+Camera focus and Teleport remain separate actions: closing F7 after focusing a
+row only restores the camera and never requests a move. The explicit Teleport
+action captures the selected identity, closes F7, then requests the server-side
+move.
+
 Verification: 190 passed, 1 skipped across the ticket's affected Lua/UI test
 modules. The full repository suite was started but exceeded the 120-second
 command budget without a verdict. The stock MTA CEF/readability observation

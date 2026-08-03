@@ -37,6 +37,8 @@ an owner's map.
 - Record the player's XYZ, double-click a row, and confirm the camera points at
   the entity while the player's XYZ does not change. Close F7 and confirm the
   prior camera target/matrix is restored.
+- Reopen F7, select the same row, and press Teleport. Confirm F7 closes first
+  and the player is then moved to the Map Entity.
 - Link, unlink, and adopt an editor Map Entity. After each action, confirm both
   the entity list and Card Picker update without closing or reopening F7.
 
