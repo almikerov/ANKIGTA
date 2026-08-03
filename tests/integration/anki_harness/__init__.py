@@ -22,6 +22,7 @@ stage = "initial"
 profile_name = ""
 before_snapshot: dict[str, Any] | None = None
 open_response: dict[str, Any] | None = None
+card_search_response: dict[str, Any] | None = None
 closing_response: dict[str, Any] | None = None
 after_unload_response: dict[str, Any] | None = None
 
@@ -96,14 +97,20 @@ def setup_profile() -> None:
     finish_process()
 
 
-def health_request(addon: Any, request_id: str) -> dict[str, Any]:
+def control_request(
+    addon: Any,
+    path: str,
+    request_id: str,
+    payload: dict[str, object] | None = None,
+) -> dict[str, Any]:
     request = urllib.request.Request(
-        f"http://{addon.server.host}:{addon.server.port}/v1/health",
+        f"http://{addon.server.host}:{addon.server.port}{path}",
         data=json.dumps(
             {
                 "protocol": "ankigta-control",
                 "protocolVersion": 1,
                 "requestId": request_id,
+                **(payload or {}),
             }
         ).encode("utf-8"),
         headers={"Content-Type": "application/json"},
@@ -119,8 +126,21 @@ def health_request(addon: Any, request_id: str) -> dict[str, Any]:
     return {"status": status, "body": payload}
 
 
+def health_request(addon: Any, request_id: str) -> dict[str, Any]:
+    return control_request(addon, "/v1/health", request_id)
+
+
+def card_search_request(addon: Any, request_id: str) -> dict[str, Any]:
+    return control_request(
+        addon,
+        "/v1/cards/search",
+        request_id,
+        {"query": "", "deckFilter": False, "page": 0, "pageSize": 50},
+    )
+
+
 def begin_verification() -> None:
-    global before_snapshot, open_response, profile_name, stage
+    global before_snapshot, card_search_response, open_response, profile_name, stage
     import ankigta_companion
 
     addon = ankigta_companion.addon
@@ -129,6 +149,7 @@ def begin_verification() -> None:
     profile_name = mw.pm.name
     before_snapshot = semantic_snapshot()
     open_response = health_request(addon, "real-open")
+    card_search_response = card_search_request(addon, "real-card-search")
     stage = "closing"
 
     def after_unload() -> None:
@@ -174,6 +195,7 @@ def complete_verification() -> None:
             "beforeSnapshot": before_snapshot,
             "afterSnapshot": after_snapshot,
             "open": open_response,
+            "cardSearch": card_search_response,
             "closing": closing_response,
             "afterUnload": after_unload_response,
             "reopened": reopened_response,

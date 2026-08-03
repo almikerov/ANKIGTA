@@ -25,6 +25,18 @@ def main() -> None:
     assert verification["open"]["body"]["payload"]["compatibility"]["status"] == (
         "supported"
     )
+    search = verification["cardSearch"]
+    assert search["status"] == 200
+    assert search["body"]["ok"] is True
+    search_payload = search["body"]["payload"]
+    assert search_payload["query"] == ""
+    assert search_payload["deckFilter"] is None
+    assert search_payload["cards"]
+    deck_names = sorted(deck["name"] for deck in search_payload["decks"])
+    assert deck_names == verification["beforeSnapshot"]["deckNames"]
+    assert all(
+        card["deck"]["name"] in deck_names for card in search_payload["cards"]
+    )
     assert verification["closing"]["status"] == 503
     assert (
         verification["closing"]["body"]["payload"]["collection"]["state"]

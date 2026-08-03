@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$runtime = Join-Path $repoRoot '.scratch\ticket-01-anki-integration-runtime'
+$runtime = Join-Path $repoRoot '.scratch\panel-usability-ticket-01-anki-integration-runtime'
 $evidence = Join-Path $runtime 'evidence'
 $setupBase = Join-Path $runtime 'setup-base'
 $testBase = Join-Path $runtime 'test-base'
