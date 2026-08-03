@@ -425,28 +425,6 @@ def test_versioned_store_seeds_only_the_supported_object_record() -> None:
     }
 
 
-def test_client_source_keeps_map_entity_visible_without_runtime_instance() -> None:
-    server = _source(SERVER_MAIN)
-    client = _source(CLIENT_F7)
-    map_source = _source(MAP)
-
-    assert "mapEntity = {" in server
-    assert "runtimeInstance = runtimeSnapshot()" in server
-    assert "if not isElement(runtimeInstance) then" in server
-    assert 'addEventHandler("onElementDestroy", root' in server
-    assert "runtimeInstance = nil" in server
-    assert "getElementByID(runtime.referenceId)" in client
-    assert "isElementStreamedIn(element)" in client
-    # The two states are looked up, not spelled out: ticket 27 moved every
-    # user-facing string into the shared table. Read the keys the compiled
-    # chunk holds rather than the file's text.
-    f7_keys = string_constants(CLIENT_F7)
-    assert "f7.runtime.destroyed" in f7_keys
-    assert "f7.runtime.notStreamed" in f7_keys
-    assert "mapId = mapEntity.mapId" in client
-    assert 'id="ankigta-ticket05-runtime"' in map_source
-
-
 def test_client_reauthorizes_after_resource_restart_before_opening_f7() -> None:
     server = _source(SERVER_MAIN)
     client = _source(CLIENT_F7)

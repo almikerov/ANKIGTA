@@ -419,6 +419,8 @@ class MtaSandbox:
         self._cursor_wanted_here = False
         self._cursor_requests = 0
         self.camera_target: Any = None
+        self.camera_matrix: tuple[float, ...] = (0.0, 0.0, 10.0, 0.0, 0.0, 0.0)
+        self.camera_interior = 0
         self.radio_channel = 0
         self.bound_keys: dict[tuple[str, str], list[Any]] = {}
         self.commands: dict[str, list[Any]] = {}
@@ -757,7 +759,8 @@ class MtaSandbox:
             (
                 element
                 for element in self.world_elements
-                if lua_type(element) == "table" and element["id"] == str(element_id)
+                if lua_type(element) == "table"
+                and (element["__id"] or element["id"]) == str(element_id)
             ),
             False,
         )
@@ -988,6 +991,11 @@ class MtaSandbox:
         g.getResourceState = lambda handle=None: (
             resource_of(handle).state if resource_of(handle) else False
         )
+        g.getResourceInfo = lambda handle=None, key="": (
+            handle[str(key)]
+            if lua_type(handle) == "table" and handle[str(key)] is not None
+            else False
+        )
         g.getResources = lambda: self.lua.table_from(
             [entry.table for entry in self._resources.values()]
         )
@@ -1073,6 +1081,76 @@ class MtaSandbox:
 
         self._install_file_globals(g)
         self._install_client_globals(g)
+
+    def _install_export_globals(self) -> None:
+        """Install the small public surface ANKIGTA uses from other resources.
+
+        Lua's ``resource:method(value)`` call passes the resource table as the
+        first argument.  Keeping that convention here matters: a Python double
+        that accepts only ``value`` makes every real colon call observe the
+        export table instead of the element it was given.
+        """
+        g = self.lua.globals()
+
+        def export_argument(args: tuple[Any, ...], index: int) -> Any:
+            return args[index + 1] if len(args) > index + 1 else None
+
+        def edf_is_representation(*args: Any) -> bool:
+            element = export_argument(args, 0)
+            return (
+                lua_type(element) == "table"
+                and element["__edf_representation"] is True
+            )
+
+        def edf_set_element_property(*args: Any) -> bool:
+            element = export_argument(args, 0)
+            key = export_argument(args, 1)
+            value = export_argument(args, 2)
+            if lua_type(element) != "table" or key is None:
+                return False
+            element[str(key)] = value
+            return True
+
+        def edf_create_element(*args: Any) -> Any:
+            kind = export_argument(args, 0)
+            properties = export_argument(args, 3)
+            if not isinstance(kind, str) or not kind:
+                return False
+            element = self.lua.table_from(
+                {"__element": True, "type": kind, "__parent": False}
+            )
+            if lua_type(properties) == "table":
+                for key in properties.keys():
+                    element[str(key)] = properties[key]
+            self.world_elements.append(element)
+            return element
+
+        def editor_current_map(*_args: Any) -> Any:
+            return self.editor_map_name or False
+
+        def editor_working_dimension(*_args: Any) -> Any:
+            if self.editor_working_dimension is None:
+                return False
+            return self.editor_working_dimension
+
+        edf = self.lua.table_from(
+            {
+                "edfIsRepresentation": edf_is_representation,
+                "edfSetElementProperty": edf_set_element_property,
+                "edfCreateElement": edf_create_element,
+            }
+        )
+        editor_main = self.lua.table_from(
+            {
+                "getCurrentMapName": editor_current_map,
+                "getWorkingDimension": editor_working_dimension,
+                "getSelectedElement": lambda *_args: False,
+                "import": lambda *_args: True,
+            }
+        )
+        g.exports = self.lua.table_from(
+            {"edf": edf, "editor_main": editor_main}
+        )
 
     def _xml_node(self, element: ElementTree.Element) -> Any:
         """A Lua handle for one parsed XML element.
@@ -1241,7 +1319,13 @@ class MtaSandbox:
     def add_study_player(self, *, right: str = "resource.ankigta.study") -> Any:
         """A logged-in player holding the study right, as the resource expects."""
         player = self.lua.table_from(
-            {"__element": True, "type": "player", "name": "study-player"}
+            {
+                "__element": True,
+                "type": "player",
+                "name": "study-player",
+                "interior": 0,
+                "dimension": 0,
+            }
         )
         player["__account"] = self.lua.table_from(
             {"__element": True, "type": "account", "guest": False}
@@ -1356,6 +1440,15 @@ class MtaSandbox:
         g.getCameraTarget = lambda *_args: self.camera_target
         g.setCameraTarget = lambda target, *_rest: (
             setattr(self, "camera_target", target) or True
+        )
+        g.getCameraMatrix = lambda *_args: self.camera_matrix
+        g.setCameraMatrix = lambda *values: (
+            setattr(self, "camera_matrix", tuple(float(value) for value in values))
+            or True
+        )
+        g.getCameraInterior = lambda *_args: self.camera_interior
+        g.setCameraInterior = lambda value, *_rest: (
+            setattr(self, "camera_interior", int(value)) or True
         )
         g.getRadioChannel = lambda: self.radio_channel
         g.setRadioChannel = lambda channel: (
@@ -1558,6 +1651,14 @@ class MtaSandbox:
 
         g.getElementPosition = get_element_position
         g.getElementVelocity = get_element_velocity
+        g.getDistanceBetweenPoints3D = (
+            lambda x1, y1, z1, x2, y2, z2: (
+                (float(x2) - float(x1)) ** 2
+                + (float(y2) - float(y1)) ** 2
+                + (float(z2) - float(z1)) ** 2
+            )
+            ** 0.5
+        )
         g.isElementStreamedIn = is_element_streamed_in
         g.getElementInterior = lambda e=None: (
             e["interior"]
@@ -1577,9 +1678,7 @@ class MtaSandbox:
             if lua_type(e) == "table"
             else (0, 0, 0)
         )
-        # Every element the tests build belongs to this resource, which is what
-        # the ownership walk in `findMapEntityByRuntimeElement` checks.
-        g.getResources = lambda: self.lua.table_from([resource])
+        g.getZoneName = lambda *_args: self.zone_name
         g.setElementData = lambda e, key, value, *_r: (
             e.__setitem__(str(key), value) if lua_type(e) == "table" else None
         ) or True

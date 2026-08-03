@@ -26,6 +26,7 @@ def f7() -> Iterator[MtaSandbox]:
     sandbox = MtaSandbox()
     sandbox.load("shared/settings.lua")
     sandbox.load("shared/locale.lua")
+    sandbox.load("shared/entity_types.lua")
     sandbox.load("client/layout.lua")
     sandbox.load("client/panel.lua")
     sandbox.eval('function() ANKIGTA.Locale.setLanguage("en") end')()

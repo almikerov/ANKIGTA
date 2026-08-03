@@ -147,6 +147,7 @@ def test_mta_connection_ui_masks_replacement_token_and_offers_connect() -> None:
         for script in (
             "shared/settings.lua",
             "shared/locale.lua",
+            "shared/entity_types.lua",
             "client/layout.lua",
             "client/panel.lua",
         ):

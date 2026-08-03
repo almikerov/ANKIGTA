@@ -28,6 +28,7 @@ from tests.lua import MtaSandbox
 CLIENT_SCRIPTS = (
     "shared/settings.lua",
     "shared/locale.lua",
+    "shared/entity_types.lua",
     # Every window asks the layout manager where it goes and how big it is
     # (ticket 28), so it is part of the client baseline the way the schema and
     # the string table are.
@@ -726,6 +727,7 @@ def test_an_accepted_client_setting_reaches_the_module_that_uses_it() -> None:
         scripts=(
             "shared/settings.lua",
             "shared/locale.lua",
+            "shared/entity_types.lua",
             "client/layout.lua",
             "client/indicator.lua",
             "client/review_mode.lua",
@@ -758,6 +760,7 @@ def test_the_panel_offers_a_way_into_the_settings_panel() -> None:
         scripts=(
             "shared/settings.lua",
             "shared/locale.lua",
+            "shared/entity_types.lua",
             "client/layout.lua",
             "client/settings_store.lua",
             "client/panel.lua",
@@ -800,6 +803,7 @@ def test_review_mode_offers_a_way_into_the_settings_panel() -> None:
         scripts=(
             "shared/settings.lua",
             "shared/locale.lua",
+            "shared/entity_types.lua",
             "client/layout.lua",
             "client/review_mode.lua",
             "client/settings_store.lua",

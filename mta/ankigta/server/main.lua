@@ -58,15 +58,8 @@ local runtimeInstance = nil
 -- A marker is a thing a map author places on purpose to mean "here", which is
 -- exactly what a card wants to hang on. The prior resource allowed pickups and
 -- colshapes too; those are a spec question, this one is not.
-local SUPPORTED_ENTITY_TYPES = {
-    object = true,
-    vehicle = true,
-    ped = true,
-    marker = true,
-}
-
---- The same set, in the order a scan should walk it.
-local SUPPORTED_ENTITY_ORDER = {"object", "vehicle", "ped", "marker"}
+local SUPPORTED_ENTITY_TYPES = ANKIGTA.EntityTypes.supported
+local SUPPORTED_ENTITY_ORDER = ANKIGTA.EntityTypes.order
 
 local function denial(category)
     return {
@@ -145,7 +138,7 @@ local function positionalName(element)
 end
 
 --- Everything the store needs to write an object down, read off the object.
-local function adoptionRecord(element)
+local function adoptionRecord(element, context)
     -- The name in a `.map` file if there is one, because it survives the
     -- object being moved; otherwise where the object stands, which is what
     -- lets a freeroam vehicle be taken at all.
@@ -156,7 +149,8 @@ local function adoptionRecord(element)
     if type(entityId) ~= "string" or entityId == "" then
         return false, "entity_has_no_durable_id"
     end
-    local resourceName = owningResource(element) or "world"
+    local resourceName = context and context.resourceName
+        or owningResource(element) or "world"
     local x, y, z = getElementPosition(element)
     local rotationX, rotationY, rotationZ = getElementRotation(element)
     return {
@@ -194,8 +188,8 @@ local function playerAuthorization(player)
     return true
 end
 
-local function runtimeSnapshot()
-    if not isElement(runtimeInstance) then
+local function runtimeSnapshot(element)
+    if not isElement(element) then
         return {
             available = false,
             streamed = false,
@@ -205,12 +199,16 @@ local function runtimeSnapshot()
     return {
         available = true,
         streamed = false,
-        referenceId = RUNTIME_REFERENCE_ID,
+        referenceId = getElementID(element) or "",
     }
 end
 
 local function entityContract(row)
     local link = ANKIGTA.MapIdentity.linkSnapshot(row)
+    local element = ANKIGTA.Teleport.findRuntimeInstance(
+        row.map_id,
+        row.entity_id
+    )
     return {
         mapEntity = {
             mapId = row.map_id,
@@ -244,7 +242,7 @@ local function entityContract(row)
                 },
             },
         },
-        runtimeInstance = runtimeSnapshot(),
+        runtimeInstance = runtimeSnapshot(element),
         metadata = {
             name = row.entity_name or "",
             entityTag = row.entity_tag or "",
@@ -329,7 +327,148 @@ end
 -- reported rather than applied quietly.
 local CANDIDATE_LIMIT = 150
 
-local function worldCandidates(player, storedRows)
+local function isEditorRepresentation(element)
+    local ok, answer = pcall(function()
+        return exports.edf:edfIsRepresentation(element)
+    end)
+    return ok and answer == true
+end
+
+local function mapIdsForOwner(owner)
+    local mapIds = {}
+    local function collect(kind)
+        for _, element in ipairs(getElementsByType(kind)) do
+            if owningResource(element) == owner then
+                local mapId = getElementData(element, "ankigtaMapId")
+                if type(mapId) == "string" and mapId ~= "" then
+                    mapIds[mapId] = true
+                end
+            end
+        end
+    end
+    collect("ankigta_map_identity")
+    for _, kind in ipairs(SUPPORTED_ENTITY_ORDER) do
+        collect(kind)
+    end
+    return next(mapIds) and mapIds or false
+end
+
+local function playerWorldScore(owner, player)
+    if not isElement(player) then
+        return 0
+    end
+    local score = 0
+    for _, kind in ipairs(SUPPORTED_ENTITY_ORDER) do
+        for _, element in ipairs(getElementsByType(kind)) do
+            if owningResource(element) == owner
+                and getElementDimension(element) == getElementDimension(player)
+                and getElementInterior(element) == getElementInterior(player)
+            then
+                score = score + 1
+            end
+        end
+    end
+    return score
+end
+
+--- The map the player is actually working in or playing on.
+--
+-- The stock editor keeps an editable copy under `editor_main` in its working
+-- dimension while a play-test may keep the map resource itself running in the
+-- ordinary world.  Looking at every element therefore lists the same authored
+-- entity twice.  The player's dimension decides which of those two worlds is
+-- current; outside the editor, the one running resource of type `map` wins.
+local function currentMapContext(player, storedRows)
+    local editor = getResourceFromName("editor_main")
+    if editor and getResourceState(editor) == "running" then
+        local dimensionOk, workingDimension = pcall(function()
+            return exports.editor_main:getWorkingDimension()
+        end)
+        workingDimension = dimensionOk and tonumber(workingDimension) or nil
+        if workingDimension ~= nil
+            and isElement(player)
+            and getElementDimension(player) == workingDimension
+        then
+            local nameOk, mapName = pcall(function()
+                return exports.editor_main:getCurrentMapName()
+            end)
+            if nameOk and type(mapName) == "string" and mapName ~= "" then
+                return {
+                    resourceName = mapName,
+                    candidateOwner = "editor_main",
+                    workingDimension = workingDimension,
+                    mapIds = mapIdsForOwner("editor_main"),
+                }
+            end
+        end
+    end
+
+    local runningMaps = {}
+    for _, candidate in ipairs(getResources() or {}) do
+        if getResourceState(candidate) == "running"
+            and getResourceInfo(candidate, "type") == "map"
+        then
+            runningMaps[#runningMaps + 1] = getResourceName(candidate)
+        end
+    end
+    table.sort(runningMaps)
+    local runningMap = nil
+    if #runningMaps == 1 then
+        runningMap = runningMaps[1]
+    elseif #runningMaps > 1 then
+        local bestScore, tied = 0, false
+        for _, resourceName in ipairs(runningMaps) do
+            local score = playerWorldScore(resourceName, player)
+            if score > bestScore then
+                runningMap, bestScore, tied = resourceName, score, false
+            elseif score > 0 and score == bestScore then
+                tied = true
+            end
+        end
+        if tied then
+            runningMap = nil
+        end
+    end
+    if runningMap then
+        return {
+            resourceName = runningMap,
+            candidateOwner = runningMap,
+            workingDimension = false,
+            mapIds = mapIdsForOwner(runningMap),
+        }
+    end
+
+    -- Disposable/server-only runs have no map manager, but a database that
+    -- contains exactly one map still has an unambiguous current scope.  This
+    -- is also the useful headless-server answer: one known map is that map;
+    -- two known maps without runtime context are deliberately not guessed.
+    local onlyResourceName, onlyMapId = nil, nil
+    for _, row in ipairs(storedRows or {}) do
+        if onlyResourceName == nil then
+            onlyResourceName = row.resource_name
+            onlyMapId = row.map_id
+        elseif row.resource_name ~= onlyResourceName then
+            onlyResourceName = false
+            break
+        elseif row.map_id ~= onlyMapId then
+            onlyMapId = false
+        end
+    end
+    if type(onlyResourceName) == "string" and onlyResourceName ~= ""
+        and type(onlyMapId) == "string" and onlyMapId ~= ""
+    then
+        return {
+            resourceName = onlyResourceName,
+            candidateOwner = onlyResourceName,
+            workingDimension = false,
+            mapIds = {[onlyMapId] = true},
+        }
+    end
+
+    return false
+end
+
+local function worldCandidates(player, storedRows, context)
     local taken = {}
     for _, row in ipairs(storedRows) do
         taken[row.entity_id] = true
@@ -339,24 +478,42 @@ local function worldCandidates(player, storedRows)
         originX, originY, originZ = getElementPosition(player)
     end
 
-    local found = {}
+    local found, seen = {}, {}
     for _, kind in ipairs(SUPPORTED_ENTITY_ORDER) do
         for _, element in ipairs(getElementsByType(kind)) do
-            local name = getElementID(element)
-            if type(name) ~= "string" or name == "" then
-                name = positionalName(element)
-            end
-            if type(name) == "string" and name ~= "" and not taken[name] then
-                local x, y, z = getElementPosition(element)
-                found[#found + 1] = {
-                    element = element,
-                    name = name,
-                    distance = isElement(player)
-                        and getDistanceBetweenPoints3D(
-                            originX, originY, originZ, x or 0, y or 0, z or 0
-                        )
-                        or 0,
-                }
+            local owner = owningResource(element)
+            local deletedDimension = context.workingDimension
+                and context.workingDimension + 1 or false
+            local isRepresentation = isEditorRepresentation(element)
+            if owner == context.candidateOwner
+                and not isRepresentation
+                and (not deletedDimension
+                    or getElementDimension(element) ~= deletedDimension)
+            then
+                local name = getElementID(element)
+                if type(name) ~= "string" or name == "" then
+                    name = positionalName(element)
+                end
+                local persistentId = getElementData(element, "ankigtaEntityId")
+                local editorId = getElementData(element, "me:ID")
+                local alreadyTaken = taken[name]
+                    or (persistentId and taken[persistentId])
+                    or (editorId and taken[editorId])
+                if type(name) == "string" and name ~= ""
+                    and not alreadyTaken and not seen[name]
+                then
+                    seen[name] = true
+                    local x, y, z = getElementPosition(element)
+                    found[#found + 1] = {
+                        element = element,
+                        name = name,
+                        distance = isElement(player)
+                            and getDistanceBetweenPoints3D(
+                                originX, originY, originZ, x or 0, y or 0, z or 0
+                            )
+                            or 0,
+                    }
+                end
             end
         end
     end
@@ -371,7 +528,7 @@ local function worldCandidates(player, storedRows)
     for index = 1, math.min(total, CANDIDATE_LIMIT) do
         local entry = found[index]
         rows[#rows + 1] = candidateContract(
-            entry.element, entry.name, owningResource(entry.element) or "world"
+            entry.element, entry.name, context.resourceName
         )
     end
     return rows, total
@@ -388,18 +545,43 @@ local function buildF7Snapshot(player)
         return false, denial(readError or "storage_unavailable")
     end
 
-    local entities = {}
-    local linkCount = 0
+    local context = currentMapContext(player, rows)
+    local currentRows, currentMapIds, seenMapIds = {}, {}, {}
+    local cardLinks = {}
     for _, row in ipairs(rows) do
-        table.insert(entities, entityContract(row))
-        if row.link_state == "active" or row.link_state == "card_missing" then
-            linkCount = linkCount + 1
+        if context then
+            if row.resource_name == context.resourceName
+                and (not context.mapIds or context.mapIds[row.map_id])
+            then
+                currentRows[#currentRows + 1] = row
+                if not seenMapIds[row.map_id] then
+                    seenMapIds[row.map_id] = true
+                    currentMapIds[#currentMapIds + 1] = row.map_id
+                end
+            end
         end
+        if row.link_state == "active" or row.link_state == "card_missing" then
+            cardLinks[#cardLinks + 1] = {
+                mapId = row.map_id,
+                entityId = row.entity_id,
+                mapName = row.map_name or row.resource_name,
+                collectionUuid = row.collection_uuid,
+                cardId = tonumber(row.card_id),
+            }
+        end
+    end
+
+    local entities = {}
+    for _, row in ipairs(currentRows) do
+        table.insert(entities, entityContract(row))
     end
 
     -- After the stored rows, so what ANKIGTA already knows about is what the
     -- player sees first and the offers follow.
-    local candidates, candidateTotal = worldCandidates(player, rows)
+    local candidates, candidateTotal = {}, 0
+    if context then
+        candidates, candidateTotal = worldCandidates(player, currentRows, context)
+    end
     for _, candidate in ipairs(candidates) do
         entities[#entities + 1] = candidate
     end
@@ -421,11 +603,16 @@ local function buildF7Snapshot(player)
             enabled = true,
             deckFilterScope = "initial_card_picker_filter",
         },
+        currentMap = context and {
+            resourceName = context.resourceName,
+            mapIds = currentMapIds,
+        } or false,
+        cardLinks = cardLinks,
         entities = entities,
         candidatesShown = #candidates,
         candidatesFound = candidateTotal,
         history = history,
-        diagnostics = snapshotDiagnostics(startedAt, #entities, linkCount),
+        diagnostics = snapshotDiagnostics(startedAt, #entities, #cardLinks),
     }
 end
 
@@ -1491,14 +1678,25 @@ end
 --- The element a name refers to, for a row the list offered rather than one
 --- the player pointed at. The name is derived from the element, so deriving it
 --- again over the world finds the same one -- or nothing, if it has gone.
-local function elementByAdoptionName(name)
+local function elementByAdoptionName(name, player)
+    local context = currentMapContext(player)
+    if not context then
+        return nil
+    end
+    local deletedDimension = context.workingDimension
+        and context.workingDimension + 1 or false
     for _, kind in ipairs(SUPPORTED_ENTITY_ORDER) do
         for _, element in ipairs(getElementsByType(kind)) do
             local candidate = getElementID(element)
             if type(candidate) ~= "string" or candidate == "" then
                 candidate = positionalName(element)
             end
-            if candidate == name then
+            if candidate == name
+                and owningResource(element) == context.candidateOwner
+                and not isEditorRepresentation(element)
+                and (not deletedDimension
+                    or getElementDimension(element) ~= deletedDimension)
+            then
                 return element
             end
         end
@@ -1517,7 +1715,7 @@ addEventHandler(ADOPT_ENTITY_REQUEST_EVENT, resourceRoot, function(
     -- Pick Entity sends the element it was aimed at; the list sends the name
     -- it displayed. Both end up here as the same thing.
     if type(entityElement) == "string" then
-        entityElement = elementByAdoptionName(entityElement)
+        entityElement = elementByAdoptionName(entityElement, client)
         if not entityElement then
             return failAdoption(client, "entity_no_longer_in_the_world")
         end
@@ -1529,7 +1727,10 @@ addEventHandler(ADOPT_ENTITY_REQUEST_EVENT, resourceRoot, function(
     if not target.adoptable then
         return failAdoption(client, "entity_already_adopted")
     end
-    local record, recordError = adoptionRecord(entityElement)
+    local record, recordError = adoptionRecord(
+        entityElement,
+        currentMapContext(client)
+    )
     if not record then
         return failAdoption(client, recordError)
     end
@@ -1579,6 +1780,9 @@ addEventHandler(ENTITY_METADATA_REQUEST_EVENT, resourceRoot, function(
     if type(metadata) ~= "table" then
         return
     end
+    if metadata.name ~= nil and type(metadata.name) ~= "string" then
+        return
+    end
     local row, readError = ANKIGTA.Store.getMapEntity(mapId, entityId)
     if not row then
         triggerClientEvent(
@@ -1609,7 +1813,8 @@ addEventHandler(ENTITY_METADATA_REQUEST_EVENT, resourceRoot, function(
         {
             -- Everything the row already says, so setting one field does not
             -- quietly erase the others.
-            name = row.entity_name or "",
+            name = metadata.name ~= nil and metadata.name
+                or (row.entity_name or ""),
             entityTag = row.entity_tag or "",
             radius = radius or tonumber(row.radius) or 3,
             showRadius = metadata.showRadius ~= nil

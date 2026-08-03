@@ -59,6 +59,7 @@ local browser = nil
 local dragFrom = nil
 local pageReady = false
 local cursorOwned = false
+local focusedCamera = nil
 
 -- The last thing each source told us. The page is redrawn from these, so a
 -- language change or a new status repaints without asking anyone again.
@@ -152,8 +153,24 @@ local function takeCursor()
     showCursor(true)
 end
 
+local function restoreFocusedCamera()
+    if not focusedCamera then
+        return
+    end
+    setCameraInterior(focusedCamera.interior or 0)
+    if isElement(focusedCamera.target) then
+        setCameraTarget(focusedCamera.target)
+    elseif type(focusedCamera.matrix) == "table"
+        and #focusedCamera.matrix >= 6
+    then
+        setCameraMatrix(unpack(focusedCamera.matrix))
+    end
+    focusedCamera = nil
+end
+
 local function closePanel()
     dragFrom = nil
+    restoreFocusedCamera()
     if isElement(guiBrowser) then
         destroyElement(guiBrowser)
     end
@@ -271,11 +288,56 @@ local LINK_STATE_RANK = {
 -- Decided on this side because only this side can look at the element: the
 -- server knows whether the Map Entity still exists, not whether it is
 -- streamed in around the player.
-local function runtimeStatusKey(runtime)
+-- A running MTA client can receive this changed cache=false script one restart
+-- before a newly-added shared manifest script.  Keep F7 alive during that
+-- incremental reload; entity_types.lua installs the same canonical values on
+-- a clean resource start.
+ANKIGTA.EntityTypes = ANKIGTA.EntityTypes or {
+    order = {"object", "vehicle", "ped", "marker"},
+    supported = {object = true, vehicle = true, ped = true, marker = true},
+}
+local PANEL_ENTITY_TYPES = ANKIGTA.EntityTypes.order
+local PANEL_ENTITY_TYPE = ANKIGTA.EntityTypes.supported
+
+local function isEditorRepresentation(element)
+    local ok, answer = pcall(function()
+        return exports.edf:edfIsRepresentation(element)
+    end)
+    return ok and answer == true
+end
+
+--- Resolve the real copy of a Map Entity when editor and play-test copies
+-- temporarily share the same MTA ID. Prefer the streamed copy because that is
+-- the one the player can actually see and focus right now.
+local function runtimeElement(mapId, entityId, streamedOnly)
+    local unstreamed = false
+    for _, kind in ipairs(PANEL_ENTITY_TYPES) do
+        for _, element in ipairs(getElementsByType(kind)) do
+            local persistentId = getElementData(element, "ankigtaEntityId")
+            local editorId = getElementData(element, "me:ID")
+            local elementMapId = getElementData(element, "ankigtaMapId")
+            if (persistentId == entityId or editorId == entityId
+                    or getElementID(element) == entityId)
+                and (not elementMapId or elementMapId == mapId)
+                and not isEditorRepresentation(element)
+            then
+                if isElementStreamedIn(element) then
+                    return element
+                end
+                if not streamedOnly then
+                    unstreamed = element
+                end
+            end
+        end
+    end
+    return unstreamed
+end
+
+local function runtimeStatusKey(runtime, mapEntity)
     if type(runtime) ~= "table" or not runtime.available then
         return "f7.runtime.destroyed"
     end
-    local element = getElementByID(runtime.referenceId)
+    local element = runtimeElement(mapEntity.mapId, mapEntity.entityId, false)
     if not isElement(element) or not isElementStreamedIn(element) then
         return "f7.runtime.notStreamed"
     end
@@ -374,7 +436,7 @@ local function readableName(entry)
     local mapEntity = entry.mapEntity
     local model = tonumber(mapEntity.model)
     if not model then
-        return ""
+        return ANKIGTA.Locale.text("f7.entity.unnamed")
     end
     if mapEntity.type == "vehicle" and getVehicleNameFromModel then
         local name = getVehicleNameFromModel(model)
@@ -388,7 +450,26 @@ local function readableName(entry)
             return name
         end
     end
-    return ""
+    return ANKIGTA.Locale.text("f7.entity.unnamed")
+end
+
+--- Where the Map Entity stands, in the language people use for the world.
+-- The persistent identity remains on the row for actions, but is not its
+-- description.  Coordinates stay useful everywhere; the GTA zone follows
+-- when the client can name one for that position.
+local function entityDescription(mapEntity)
+    local position = mapEntity and mapEntity.authored
+        and mapEntity.authored.position or {}
+    local x, y, z = tonumber(position.x), tonumber(position.y), tonumber(position.z)
+    if not x or not y or not z then
+        return ""
+    end
+    local coordinates = string.format("%.2f, %.2f, %.2f", x, y, z)
+    local location = getZoneName and getZoneName(x, y, z) or false
+    if type(location) == "string" and location ~= "" then
+        return coordinates .. " · " .. location
+    end
+    return coordinates
 end
 
 local function entityRows(snapshot)
@@ -397,15 +478,17 @@ local function entityRows(snapshot)
     local rows = {}
     for _, entry in ipairs(snapshot and snapshot.entities or {}) do
         local mapEntity = entry.mapEntity
+        local availabilityKey = runtimeStatusKey(entry.runtimeInstance, mapEntity)
         table.insert(rows, {
             mapId = mapEntity.mapId,
             entityId = mapEntity.entityId,
             type = mapEntity.type,
             name = readableName(entry),
+            description = entityDescription(mapEntity),
             model = tonumber(entry.mapEntity.model) or 0,
             linkState = entry.link.state,
             guidanceKey = entry.link.guidanceKey or false,
-            runtimeKey = runtimeStatusKey(entry.runtimeInstance),
+            availabilityKey = availabilityKey,
             radius = tonumber(entry.metadata and entry.metadata.radius) or 3,
             showRadius = entry.metadata
                 and entry.metadata.showRadius == true or false,
@@ -444,11 +527,49 @@ end
 -- Never by cardId. The deck is what someone searched by, the state is what
 -- decides whether the card can be used at all, and the id is the tie-break of
 -- last resort rather than the first sort key.
-local function cardRows(snapshot)
-    local rows = {}
-    for _, card in ipairs(snapshot and snapshot.cards or {}) do
+local function mapNamesForCard(cardIdentity, f7Snapshot)
+    local current = {}
+    local currentMap = f7Snapshot and f7Snapshot.currentMap or {}
+    for _, mapId in ipairs(currentMap.mapIds or {}) do
+        current[tostring(mapId)] = true
+    end
+    local names, foreignNames, seen, seenForeign = {}, {}, {}, {}
+    for _, link in ipairs(f7Snapshot and f7Snapshot.cardLinks or {}) do
+        if tostring(link.collectionUuid or "")
+                == tostring(cardIdentity.collectionUuid or "")
+            and tostring(link.cardId or "") == tostring(cardIdentity.cardId or "")
+        then
+            local name = tostring(link.mapName or link.mapId or "")
+            if name ~= "" and not seen[name] then
+                seen[name] = true
+                names[#names + 1] = name
+            end
+            if name ~= "" and not current[tostring(link.mapId)]
+                and not seenForeign[name]
+            then
+                seenForeign[name] = true
+                foreignNames[#foreignNames + 1] = name
+            end
+        end
+    end
+    table.sort(names)
+    table.sort(foreignNames)
+    return #names > 0 and table.concat(names, ", ") or false,
+        #foreignNames > 0 and table.concat(foreignNames, ", ") or false
+end
+
+local function cardRows(snapshot, f7Snapshot)
+    local rows, seenCards = {}, {}
+    local function appendCard(card)
         local identity = card.identity or {}
         local deck = card.deck or {}
+        local identityKey = tostring(identity.collectionUuid or "")
+            .. "\0" .. tostring(identity.cardId or "")
+        if seenCards[identityKey] then
+            return
+        end
+        seenCards[identityKey] = true
+        local linkedMapName, foreignMapName = mapNamesForCard(identity, f7Snapshot)
         table.insert(rows, {
             cardId = tostring(identity.cardId or ""),
             collectionUuid = tostring(identity.collectionUuid or ""),
@@ -456,7 +577,27 @@ local function cardRows(snapshot)
             state = tostring(card.state or ""),
             question = tostring(card.question or ""),
             linkedTo = card.linkedTo or false,
+            linked = linkedMapName ~= false,
+            linkedMapName = linkedMapName,
+            foreignMap = foreignMapName ~= false,
+            foreignMapName = foreignMapName,
         })
+    end
+    for _, card in ipairs(snapshot and snapshot.cards or {}) do
+        appendCard(card)
+    end
+    -- A foreign link must remain visible even when the current Anki search or
+    -- page did not return that card. Its durable identity is enough to offer a
+    -- selectable placeholder; a later search can enrich the same row.
+    for _, link in ipairs(f7Snapshot and f7Snapshot.cardLinks or {}) do
+        local identity = {
+            collectionUuid = link.collectionUuid,
+            cardId = link.cardId,
+        }
+        local _, foreignMapName = mapNamesForCard(identity, f7Snapshot)
+        if foreignMapName then
+            appendCard({identity = identity})
+        end
     end
     table.sort(rows, function(left, right)
         if left.deck ~= right.deck then
@@ -563,7 +704,7 @@ local function push()
         cardPicker = {
             enabled = lastSnapshot and lastSnapshot.cardPicker
                 and lastSnapshot.cardPicker.enabled == true or false,
-            cards = cardRows(lastCards),
+            cards = cardRows(lastCards, lastSnapshot),
             decks = deckNames(lastCards),
             deckFilter = lastCards and lastCards.deckFilter or false,
         },
@@ -941,6 +1082,68 @@ function actions.setEntityRadius(payload)
             radius = tonumber(payload.radius),
             showRadius = payload.showRadius,
         }
+    )
+end
+
+--- Point the camera at a row without moving the Study Player.
+-- The identity arrives with the double-click itself so two click events and a
+-- browser/Lua round-trip cannot leave the camera acting on the previous row.
+function actions.focusEntity(payload)
+    if type(payload.mapId) ~= "string" or type(payload.entityId) ~= "string" then
+        return
+    end
+    local entry = nil
+    for _, candidate in ipairs(lastSnapshot and lastSnapshot.entities or {}) do
+        if candidate.mapEntity.mapId == payload.mapId
+            and candidate.mapEntity.entityId == payload.entityId
+        then
+            entry = candidate
+            break
+        end
+    end
+    if not entry then
+        return
+    end
+    local element = runtimeElement(payload.mapId, payload.entityId, true)
+    if not isElement(element) then
+        return
+    end
+    local x, y, z = getElementPosition(element)
+    if type(x) ~= "number" then
+        return
+    end
+    local distance = getElementType(element) == "vehicle" and 9 or 6
+    if not focusedCamera then
+        focusedCamera = {
+            matrix = {getCameraMatrix()},
+            target = getCameraTarget(),
+            interior = getCameraInterior(),
+        }
+    end
+    setCameraInterior(getElementInterior(element) or 0)
+    setCameraMatrix(
+        x + distance,
+        y + distance,
+        z + math.max(3, distance * 0.55),
+        x,
+        y,
+        z,
+        0,
+        70
+    )
+end
+
+function actions.setEntityName(payload)
+    local entry = selectedEntry()
+    if not entry or entry.adoptable == true or type(payload.name) ~= "string" then
+        return
+    end
+    triggerServerEvent(
+        ENTITY_METADATA_REQUEST_EVENT,
+        resourceRoot,
+        entry.mapEntity.mapId,
+        entry.mapEntity.entityId,
+        {name = payload.name}
     )
 end
 
@@ -1353,6 +1556,50 @@ addEventHandler(SETTINGS_REJECTED_EVENT, resourceRoot, function(key, reason)
     settingsPending[key] = nil
     push()
 end)
+
+local entityRefreshTimer = nil
+
+local function scheduleEntityRefresh()
+    if not authorized or not isPanelOpen() then
+        return
+    end
+    if isTimer(entityRefreshTimer) then
+        killTimer(entityRefreshTimer)
+    end
+    entityRefreshTimer = setTimer(function()
+        entityRefreshTimer = nil
+        if authorized and isPanelOpen() then
+            triggerServerEvent(F7_REQUEST_EVENT, resourceRoot)
+        end
+    end, 100, 1)
+end
+
+addEventHandler("onClientElementCreate", root, function()
+    if PANEL_ENTITY_TYPE[getElementType(source)] then
+        scheduleEntityRefresh()
+    end
+end)
+
+addEventHandler("onClientElementDestroy", root, function()
+    if PANEL_ENTITY_TYPE[getElementType(source)] then
+        scheduleEntityRefresh()
+    end
+end)
+
+addEventHandler("onClientElementDataChange", root, function()
+    if PANEL_ENTITY_TYPE[getElementType(source)] then
+        scheduleEntityRefresh()
+    end
+end)
+
+local function refreshRuntimeAvailability()
+    if authorized and isPanelOpen() then
+        push()
+    end
+end
+
+addEventHandler("onClientElementStreamIn", root, refreshRuntimeAvailability)
+addEventHandler("onClientElementStreamOut", root, refreshRuntimeAvailability)
 
 addEvent(AUTHORIZATION_EVENT, true)
 addEventHandler(AUTHORIZATION_EVENT, resourceRoot, function(value)

@@ -5,11 +5,7 @@ local pendingByEntity = {}
 local collisionsByEntity = {}
 local PENDING_NOTICE_EVENT = "ankigta:pendingMapSaveNotice"
 local IDENTITY_CHANGED_EVENT = "ankigta:mapIdentityChanged"
-local SUPPORTED_ENTITY_TYPES = {
-    object = true,
-    vehicle = true,
-    ped = true,
-}
+local SUPPORTED_ENTITY_TYPES = ANKIGTA.EntityTypes.supported
 
 local function assignIdentity(mapIdentity, objectElement, mapId, entityId)
     exports.edf:edfSetElementProperty(mapIdentity, "ankigtaMapId", mapId)

@@ -20,6 +20,7 @@ from tests.lua import MtaSandbox
 @pytest.fixture
 def teleport() -> Iterator[MtaSandbox]:
     sandbox = MtaSandbox()
+    sandbox.load("shared/entity_types.lua")
     sandbox.load("server/teleport.lua")
     try:
         yield sandbox

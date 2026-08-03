@@ -12,6 +12,7 @@
     <!-- Both the Activation Zone and the Next Card Indicator pick "the nearest
          one". They share the order so they cannot drift into two answers. -->
     <script src="shared/nearest.lua" type="shared" />
+    <script src="shared/entity_types.lua" type="shared" />
     <script src="server/connection_config.lua" type="server" />
     <script src="server/companion.lua" type="server" />
     <!-- Before the store: the store asks it for a verified copy before it

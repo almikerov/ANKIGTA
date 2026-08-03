@@ -77,15 +77,14 @@
 
       var primary = element("div", "primary-cell");
       primary.appendChild(
-        element("strong", null, entry.name || entry.entityId)
+        element("strong", null, entry.name)
       );
       primary.appendChild(
-        element("span", "sub", entry.mapId + " / " + entry.entityId)
+        element("span", "sub", entry.description || "")
       );
       row.appendChild(primary);
 
       row.appendChild(element("span", "type", entry.type));
-      row.appendChild(element("span", "runtime", t(entry.runtimeKey)));
 
       var state = element("span", "state");
       var tone = TONES[entry.linkState];
@@ -94,6 +93,11 @@
       state.appendChild(
         element("span", "label", t("f7.linkState." + entry.linkState))
       );
+      if (entry.availabilityKey !== "f7.runtime.streamed") {
+        state.appendChild(
+          element("span", "availability", t(entry.availabilityKey))
+        );
+      }
       row.appendChild(state);
 
       if (entry.mapId === selected.mapId && entry.entityId === selected.entityId) {
@@ -110,6 +114,9 @@
   function bindSelect(row, entry) {
     row.addEventListener("click", function () {
       send("select", {mapId: entry.mapId, entityId: entry.entityId});
+    });
+    row.addEventListener("dblclick", function () {
+      send("focusEntity", {mapId: entry.mapId, entityId: entry.entityId});
     });
   }
 
@@ -160,6 +167,15 @@
       var primary = element("div", "primary-cell");
       primary.appendChild(element("strong", null, card.question || card.cardId));
       primary.appendChild(element("span", "sub", card.deck));
+      if (card.foreignMapName) {
+        primary.appendChild(
+          element(
+            "span",
+            "sub foreign-map",
+            card.foreignMapName
+          )
+        );
+      }
       row.appendChild(primary);
       row.appendChild(element("span", "type", card.state));
 
@@ -447,6 +463,7 @@
     var settings = document.getElementById("entity-settings");
     settings.hidden = !entity || entity.adoptable === true;
     if (!settings.hidden) {
+      document.getElementById("entity-name").value = entity.name || "";
       document.getElementById("entity-radius").value = entity.radius;
       document.getElementById("entity-show-radius").checked =
         entity.showRadius === true;
@@ -528,6 +545,11 @@
   document.getElementById("entity-radius").addEventListener("change", function () {
     send("setEntityRadius", {
       radius: parseFloat(document.getElementById("entity-radius").value)
+    });
+  });
+  document.getElementById("entity-name").addEventListener("change", function () {
+    send("setEntityName", {
+      name: document.getElementById("entity-name").value
     });
   });
   document.getElementById("entity-show-radius").addEventListener("change", function () {

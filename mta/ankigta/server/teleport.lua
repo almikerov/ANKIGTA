@@ -4,14 +4,14 @@ ANKIGTA = ANKIGTA or {}
 --
 -- ANKIGTA observes a Runtime Instance; it never owns one. Respawn belongs to
 -- the map or the resource that created the entity (ADR 0004), so nothing here
--- recreates an object, vehicle or ped. When one reappears with the same
+-- recreates an object, vehicle, ped or marker. When one reappears with the same
 -- persistent identity, its Spatial Link simply becomes usable again.
 --
 -- Teleport goes straight to the target (ADR 0005): no safe-landing search, and
 -- no refusal over water, empty space, collision or a vehicle interior. Those
 -- are places a player may legitimately want to stand.
 
-local SUPPORTED_ENTITY_TYPES = {"object", "vehicle", "ped"}
+local SUPPORTED_ENTITY_TYPES = ANKIGTA.EntityTypes.order
 
 local Teleport = {}
 

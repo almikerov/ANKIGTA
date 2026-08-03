@@ -41,6 +41,7 @@ def client(language: str) -> MtaSandbox:
     sandbox = MtaSandbox()
     sandbox.load("shared/settings.lua")
     sandbox.load("shared/locale.lua")
+    sandbox.load("shared/entity_types.lua")
     # Every window asks the layout manager where it goes (ticket 28), so it is
     # part of the client baseline the way the schema and the string table are.
     sandbox.load("client/layout.lua")
@@ -196,7 +197,7 @@ def test_the_panel_translates_a_link_state_without_changing_it(
         # And translated, through a key the page builds from it.
         assert state["locale"]["f7.linkState.Unlinked"]
         assert state["locale"]["f7.runtime.destroyed"]
-        assert state["entities"][0]["runtimeKey"] == "f7.runtime.destroyed"
+        assert state["entities"][0]["availabilityKey"] == "f7.runtime.destroyed"
     finally:
         sandbox.close()
 

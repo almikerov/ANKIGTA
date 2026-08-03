@@ -36,15 +36,34 @@ waiting for the panel to be closed and reopened.
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Each object appears exactly once with the Map Editor running
-- [ ] Elements in the editor's deleted dimension are not offered
-- [ ] Only entities of the current map are listed
-- [ ] A card linked to another map names that map on the card, in the danger colour
-- [ ] An entity can be renamed, and the name survives a restart
-- [ ] The sub-line reads as coordinates and a location, not as identifiers
-- [ ] A gone or unstreamed entity says so in the link column
-- [ ] The selected row is visibly the selected row
-- [ ] Double-click points the camera at the entity without moving the player
-- [ ] Linking, unlinking or adopting updates both lists without reopening F7
+- [x] Each object appears exactly once with the Map Editor running
+- [x] Elements in the editor's deleted dimension are not offered
+- [x] Only entities of the current map are listed
+- [x] A card linked to another map names that map on the card, in the danger colour
+- [x] An entity can be renamed, and the name survives a restart
+- [x] The sub-line reads as coordinates and a location, not as identifiers
+- [x] A gone or unstreamed entity says so in the link column
+- [x] The selected row is visibly the selected row
+- [x] Double-click points the camera at the entity without moving the player
+- [x] Linking, unlinking or adopting updates both lists without reopening F7
+
+## Comments
+
+Implemented the current-map entity list, representation/deleted-dimension
+suppression, durable cosmetic names, readable position/location rows, foreign
+map card warnings, runtime availability in the link column, camera focus with
+restoration, and event-driven list refreshes.
+
+The live development client exposed an incremental-reload failure in which the
+new `panel.lua` arrived before the new shared entity-type module. That stopped
+the script at load time and left F7 unbound. The panel now installs the same
+canonical entity-type values as a reload-safe fallback, covered by a regression
+test that loads the panel before the new shared script.
+
+Verification: 190 passed, 1 skipped across the ticket's affected Lua/UI test
+modules. The full repository suite was started but exceeded the 120-second
+command budget without a verdict. The stock MTA CEF/readability observation
+check remains explicitly `not run` in
+`docs/checklists/panel-usability-02-map-entity-list.md`.

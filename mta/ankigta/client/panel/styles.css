@@ -276,7 +276,7 @@ label {
 
 .row {
   display: grid;
-  grid-template-columns: minmax(0, 1.3fr) 70px minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.5fr) 70px minmax(0, 1fr);
   align-items: center;
   gap: var(--space-3);
   width: 100%;
@@ -294,8 +294,10 @@ label {
 .row .primary-cell { min-width: 0; }
 .row strong { display: block; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row .sub { display: block; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row .type, .row .runtime { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .type { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row.card { grid-template-columns: minmax(0, 1fr) 90px; }
+.row .foreign-map, .row .availability { color: var(--danger); }
+.row .availability { display: block; font-size: 11px; margin-top: 2px; }
 
 /* State is carried by a word as well as a colour: colour alone is not a
    message a colour-blind player receives. */
@@ -399,6 +401,8 @@ label {
 .entity-settings h3 { margin: 0; font-size: 12px; color: var(--muted); flex: 1 1 100%; }
 .entity-settings .inline { flex-direction: row; align-items: center; gap: var(--space-2); }
 .entity-settings input[type="number"] { width: 90px; }
+.entity-settings .entity-name-control { flex: 1 1 100%; }
+.entity-settings .entity-name-control input { flex: 1; }
 .entity-settings .check input { width: auto; }
 
 /* --- confirmation ----------------------------------------------------- */
