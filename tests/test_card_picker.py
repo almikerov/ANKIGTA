@@ -50,6 +50,22 @@ class FakeDecks:
         return [("Languages", 10), ("Archive", 20)]
 
 
+@dataclass(frozen=True)
+class AnkiDeckNameId:
+    """The record shape returned by Anki 26.05's deck manager."""
+
+    id: int
+    name: str
+
+
+class AnkiDecks:
+    def all_names_and_ids(self) -> list[AnkiDeckNameId]:
+        return [
+            AnkiDeckNameId(id=10, name="Languages"),
+            AnkiDeckNameId(id=20, name="Archive"),
+        ]
+
+
 class FakeCollection:
     decks = FakeDecks()
 
@@ -169,6 +185,31 @@ def test_card_search_and_read_use_versioned_control_envelopes() -> None:
     }
     assert read_status == 200
     assert read["payload"]["card"]["state"] == "new"
+
+
+def test_card_search_accepts_anki_deck_records_at_the_http_boundary() -> None:
+    collection = FakeCollection()
+    collection.decks = AnkiDecks()
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+    observation = RuntimeObservation(
+        anki_version="26.05",
+        v3_scheduler=True,
+        fsrs_enabled=True,
+        collection=CollectionObservation(state=CollectionState.OPEN),
+    )
+
+    with HealthServer(lambda: observation, card_picker=service) as server:
+        status, search = _post(server, "/v1/cards/search", {"query": ""})
+
+    assert status == 200
+    assert search["payload"]["decks"] == [
+        {"deckId": 20, "name": "Archive"},
+        {"deckId": 10, "name": "Languages"},
+    ]
+    assert search["payload"]["cards"][0]["deck"] == {
+        "id": 10,
+        "name": "Languages",
+    }
 
 
 def test_card_identity_survives_deck_move_and_can_be_reused() -> None:

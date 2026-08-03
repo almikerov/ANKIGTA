@@ -462,4 +462,12 @@ class CardPickerService:
                         continue
                     if isinstance(name, str):
                         names.setdefault(identifier, name)
+                else:
+                    name = getattr(raw, "name", None)
+                    try:
+                        identifier = int(getattr(raw, "id"))
+                    except (AttributeError, TypeError, ValueError):
+                        continue
+                    if isinstance(name, str):
+                        names.setdefault(identifier, name)
         return names
