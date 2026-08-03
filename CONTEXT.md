@@ -27,6 +27,10 @@ _Avoid_: Pick object
 Сохранённая связь между Map Entity и одной конкретной Anki Card. Одна Map Entity имеет не более одной Spatial Link, а одна Anki Card может быть связана с несколькими Map Entity.
 _Avoid_: Note Link, Language Item Link
 
+**Text Label**:
+Надпись в мире, которую Spatial Link показывает возле своей Map Entity в Review Mode `Show text`. Несёт поле заметки, цвет и размер; у каждого из трёх есть глобальное значение и переопределение на самой связи. Text Label — не предъявление Anki Card: в этом режиме карточку нельзя ни открыть, ни оценить (ADR 0029). Текст кэшируется в базе ANKIGTA и является копией для показа, а не источником истины.
+_Avoid_: 3D text, подпись, world text
+
 **Entity Tag**:
 Пользовательская метка Map Entity, принадлежащая ANKIGTA и используемая для организации игрового мира.
 _Avoid_: Anki Tag, Tag без уточнения
