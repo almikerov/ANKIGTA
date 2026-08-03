@@ -103,6 +103,12 @@ def control_request(
     request_id: str,
     payload: dict[str, object] | None = None,
 ) -> dict[str, Any]:
+    headers = {"Content-Type": "application/json"}
+    # The disposable harness addresses this exact in-process listener. The
+    # token is neither written to evidence nor exposed outside the test base.
+    token = addon.server._token
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(
         f"http://{addon.server.host}:{addon.server.port}{path}",
         data=json.dumps(
@@ -113,7 +119,7 @@ def control_request(
                 **(payload or {}),
             }
         ).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     try:
