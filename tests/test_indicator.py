@@ -242,7 +242,8 @@ def test_the_indicator_leaves_the_activation_zone_untouched() -> None:
         sandbox.load("client/activation.lua")
         sandbox.load("client/indicator.lua")
         sandbox.eval(
-            "function() return ANKIGTA.Activation.configure({defaultRadius = 7.5}) end"
+            "function() return ANKIGTA.Activation.configure({"
+            "defaultRadius = 7.5, delaySeconds = 1}) end"
         )()
         # Put a countdown in flight so a careless indicator could disturb it.
         sandbox.eval(

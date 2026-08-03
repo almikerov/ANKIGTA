@@ -21,6 +21,11 @@ def activation() -> Iterator[MtaSandbox]:
     sandbox = MtaSandbox()
     sandbox.load("shared/nearest.lua")
     sandbox.load("client/activation.lua")
+    # Most tests in this module exercise countdown behavior, not the product
+    # default. Keep their precondition explicit now that the default is zero.
+    sandbox.eval(
+        "function() return ANKIGTA.Activation.configure({delaySeconds = 1}) end"
+    )()
     try:
         yield sandbox
     finally:
@@ -317,13 +322,14 @@ def test_a_zero_speed_limit_requires_a_complete_stop(
     assert update(activation, 1.0, speed=0, candidates=candidates) is not False
 
 
-def test_the_default_speed_limit_does_not_get_in_the_way(
+def test_the_default_speed_limit_requires_a_complete_stop(
     activation: MtaSandbox,
 ) -> None:
+    configure(activation, max_speed=0, delay_seconds=0)
     candidates = [entity(x=0.5)]
 
-    update(activation, 0.0, speed=300, candidates=candidates)
-    assert update(activation, 1.0, speed=300, candidates=candidates) is not False
+    assert update(activation, 0.0, speed=300, candidates=candidates) is False
+    assert update(activation, 1.0, speed=0, candidates=candidates) is not False
 
 
 def test_an_open_review_is_never_interrupted(activation: MtaSandbox) -> None:

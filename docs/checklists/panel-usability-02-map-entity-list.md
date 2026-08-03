@@ -3,8 +3,8 @@
 Status: not run
 
 The executable Lua tests cover map scoping, duplicate suppression, durable
-renaming, availability state, camera movement without player movement, and
-refresh events. Stock MTA CEF rendering and the readability of its visual
+renaming, distant camera movement without player movement, and refresh events.
+Stock MTA CEF rendering and the readability of its visual
 states still require a human observation pass. Use a disposable test map, not
 an owner's map.
 
@@ -27,7 +27,7 @@ an owner's map.
   the second map's readable name in the danger colour. A current-map card must
   not carry that warning label.
 - Stream an entity out, then remove one from the running disposable map.
-  Confirm the link column says that it is not streamed / unavailable and no
+  Confirm neither state adds a Runtime Instance warning to the row and no
   separate runtime column appears.
 
 ## Rename, camera, and live refresh
@@ -44,8 +44,8 @@ an owner's map.
 
 - Screenshots at 1280×720 and 1920×1080 showing selection, the foreign-map
   danger label, and unavailable text in the link column.
-- Before/after player XYZ for the double-click check and a note that the camera
-  restored after closing F7.
+- Before/after player XYZ for both a nearby and a distant-row double-click, plus
+  a note that the camera restored after closing F7.
 - A short action log for rename/restart and link/unlink/adopt stating whether
   either list needed an F7 reopen.
 

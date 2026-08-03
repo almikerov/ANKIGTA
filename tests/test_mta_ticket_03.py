@@ -122,26 +122,8 @@ def test_mta_config_reader_validates_current_and_last_known_good() -> None:
     assert "legacyManualGatewayUsed" not in gateway
 
 
-def test_mta_connection_ui_masks_replacement_token_and_offers_connect() -> None:
-    """Ticket 32 moved this into the panel, so the panel is what is driven.
-
-    The gate is read off the page's own markup rather than a source search: a
-    field that stopped being rendered would still satisfy a grep.
-    """
-    page = (MTA_RESOURCE / "client" / "panel" / "index.html").read_text(
-        encoding="utf-8"
-    )
-    # The replacement token is typed into a masked field, never echoed back.
-    assert 'id="token"' in page
-    assert 'type="password"' in page
-    assert 'data-i18n="connection.connect"' in page
-    assert 'data-i18n="connection.manualPort"' in page
-
-    app = (MTA_RESOURCE / "client" / "panel" / "app.js").read_text(
-        encoding="utf-8"
-    )
-    assert "keepToken" in app
-
+def test_mta_connection_field_change_reaches_the_server() -> None:
+    """Drive the panel action boundary, not the page's source text."""
     sandbox = MtaSandbox()
     try:
         for script in (
@@ -178,6 +160,60 @@ def test_mta_connection_ui_masks_replacement_token_and_offers_connect() -> None:
         ]
         assert updates, sandbox.recorder.server_events
         assert sandbox.to_python(updates[-1].args[0])["port"] == 40007
+    finally:
+        sandbox.close()
+
+
+def test_mta_fractional_connection_port_is_returned_as_a_row_rejection() -> None:
+    sandbox = MtaSandbox()
+    try:
+        sandbox.execute(
+            """
+            ANKIGTA = ANKIGTA or {}
+            ANKIGTA.ConnectionConfig = {
+                setManual = function()
+                    return false, "settings.error.not_on_step", "connectionPort"
+                end,
+                getSanitizedStatus = function()
+                    return {
+                        valid = true,
+                        mode = "manual",
+                        port = 40007,
+                        tokenConfigured = true,
+                        tokenDisabled = false
+                    }
+                end
+            }
+            """
+        )
+        sandbox.load("shared/settings.lua")
+        sandbox.load("server/companion.lua")
+        player = sandbox.add_study_player()
+
+        sandbox.trigger(
+            "ankigta:updateConnectionSettings",
+            sandbox.eval("resourceRoot"),
+            sandbox.lua.table_from(
+                {
+                    "mode": "manual",
+                    "port": 40000.5,
+                    "token": "",
+                    "keepToken": True,
+                }
+            ),
+            client=player,
+        )
+
+        rejections = [
+            event
+            for event in sandbox.recorder.client_events
+            if event.name == "ankigta:settingRejected"
+        ]
+        assert len(rejections) == 1
+        assert rejections[0].args == (
+            "connectionPort",
+            "settings.error.not_on_step",
+        )
     finally:
         sandbox.close()
 

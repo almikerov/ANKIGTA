@@ -46,6 +46,7 @@ local SETTINGS_SNAPSHOT_EVENT = "ankigta:settingsSnapshot"
 local SETTINGS_UPDATE_EVENT = "ankigta:updateSetting"
 local SETTINGS_REJECTED_EVENT = "ankigta:settingRejected"
 local CONNECTION_SETTINGS_REQUEST_EVENT = "ankigta:requestConnectionSettings"
+local CONNECTION_SETTINGS_SNAPSHOT_EVENT = "ankigta:connectionSettingsSnapshot"
 local PAGE_URL = "http://mta/local/client/panel/index.html"
 
 local authorized = false
@@ -64,6 +65,11 @@ local focusedCamera = nil
 -- The last thing each source told us. The page is redrawn from these, so a
 -- language change or a new status repaints without asking anyone again.
 local lastStatus = nil
+-- Sanitized connection fields as last reported by the server. The token value
+-- never crosses this boundary; the page only needs to know whether its masked
+-- field represents an existing token.
+local connectionSettings = {}
+local connectionSettingsVersion = 0
 local lastSnapshot = nil
 local lastCards = nil
 -- What the player picked, kept here rather than on the page: the page is a
@@ -333,17 +339,6 @@ local function runtimeElement(mapId, entityId, streamedOnly)
     return unstreamed
 end
 
-local function runtimeStatusKey(runtime, mapEntity)
-    if type(runtime) ~= "table" or not runtime.available then
-        return "f7.runtime.destroyed"
-    end
-    local element = runtimeElement(mapEntity.mapId, mapEntity.entityId, false)
-    if not isElement(element) or not isElementStreamedIn(element) then
-        return "f7.runtime.notStreamed"
-    end
-    return "f7.runtime.streamed"
-end
-
 --- Does this entry answer to what was typed?
 --
 -- Over the *stored* record, never over what happens to be streamed in: an
@@ -478,7 +473,6 @@ local function entityRows(snapshot)
     local rows = {}
     for _, entry in ipairs(snapshot and snapshot.entities or {}) do
         local mapEntity = entry.mapEntity
-        local availabilityKey = runtimeStatusKey(entry.runtimeInstance, mapEntity)
         table.insert(rows, {
             mapId = mapEntity.mapId,
             entityId = mapEntity.entityId,
@@ -488,7 +482,6 @@ local function entityRows(snapshot)
             model = tonumber(entry.mapEntity.model) or 0,
             linkState = entry.link.state,
             guidanceKey = entry.link.guidanceKey or false,
-            availabilityKey = availabilityKey,
             radius = tonumber(entry.metadata and entry.metadata.radius) or 3,
             showRadius = entry.metadata
                 and entry.metadata.showRadius == true or false,
@@ -681,6 +674,12 @@ local function push()
             category = lastStatus and lastStatus.category or false,
             sessionCategory = lastStatus and lastStatus.sessionCategory or false,
             warningCategory = lastStatus and lastStatus.warningCategory or false,
+            port = connectionSettings.port or false,
+            tokenConfigured = connectionSettings.tokenConfigured == true,
+            tokenDisabled = connectionSettings.tokenDisabled == true,
+            settingsVersion = connectionSettingsVersion,
+            portError = settingsRejections.connectionPort or false,
+            tokenError = settingsRejections.connectionToken or false,
         },
         entities = entityRows(lastSnapshot),
         entityFilter = entityFilter,
@@ -842,6 +841,7 @@ function togglePanel()
     -- in. A panel opened at any other moment has been told nothing, and
     -- treating silence as disconnection showed the gate over a healthy link.
     triggerServerEvent(STATUS_REQUEST_EVENT, resourceRoot)
+    triggerServerEvent(CONNECTION_SETTINGS_REQUEST_EVENT, resourceRoot)
 end
 
 bindKey("F7", "down", togglePanel)
@@ -895,10 +895,6 @@ end
 
 function actions.close()
     closePanel()
-end
-
-function actions.connect()
-    triggerServerEvent(CONNECT_EVENT, resourceRoot)
 end
 
 --- The way into the settings panel, which is still CEGUI.
@@ -1020,7 +1016,12 @@ function actions.startStudy()
 end
 
 function actions.updateConnection(payload)
+    settingsRejections.connectionPort = nil
+    if payload.keepToken ~= true then
+        settingsRejections.connectionToken = nil
+    end
     triggerServerEvent(CONNECTION_UPDATE_EVENT, resourceRoot, payload)
+    push()
 end
 
 --- The selected Map Entity, by the identity the server knows it by.
@@ -1104,15 +1105,32 @@ function actions.focusEntity(payload)
     if not entry then
         return
     end
-    local element = runtimeElement(payload.mapId, payload.entityId, true)
-    if not isElement(element) then
+    local mapEntity = entry.mapEntity
+    local authored = type(mapEntity.authored) == "table" and mapEntity.authored or {}
+    local position = type(authored.position) == "table" and authored.position or {}
+    local world = type(authored.world) == "table" and authored.world or {}
+    local x = tonumber(position.x)
+    local y = tonumber(position.y)
+    local z = tonumber(position.z)
+    local interior = tonumber(world.interior) or 0
+    local kind = mapEntity.type
+
+    -- Prefer the current Runtime Instance even when it is not streamed. If
+    -- the client has no element at all, the authored Map Entity position is
+    -- still enough to point the camera at a distant row.
+    local element = runtimeElement(payload.mapId, payload.entityId, false)
+    if isElement(element) then
+        local runtimeX, runtimeY, runtimeZ = getElementPosition(element)
+        if type(runtimeX) == "number" then
+            x, y, z = runtimeX, runtimeY, runtimeZ
+        end
+        interior = getElementInterior(element) or interior
+        kind = getElementType(element) or kind
+    end
+    if type(x) ~= "number" or type(y) ~= "number" or type(z) ~= "number" then
         return
     end
-    local x, y, z = getElementPosition(element)
-    if type(x) ~= "number" then
-        return
-    end
-    local distance = getElementType(element) == "vehicle" and 9 or 6
+    local distance = kind == "vehicle" and 9 or 6
     if not focusedCamera then
         focusedCamera = {
             matrix = {getCameraMatrix()},
@@ -1120,7 +1138,7 @@ function actions.focusEntity(payload)
             interior = getCameraInterior(),
         }
     end
-    setCameraInterior(getElementInterior(element) or 0)
+    setCameraInterior(interior)
     setCameraMatrix(
         x + distance,
         y + distance,
@@ -1542,6 +1560,16 @@ addEventHandler(SETTINGS_SNAPSHOT_EVENT, resourceRoot, function(values)
     -- The owner has spoken, so nothing is in flight any more and what it says
     -- is what the row shows -- including when it says something else.
     settingsPending = {}
+    push()
+end)
+
+addEvent(CONNECTION_SETTINGS_SNAPSHOT_EVENT, true)
+addEventHandler(CONNECTION_SETTINGS_SNAPSHOT_EVENT, resourceRoot, function(values)
+    if source ~= resourceRoot or type(values) ~= "table" then
+        return
+    end
+    connectionSettings = values
+    connectionSettingsVersion = connectionSettingsVersion + 1
     push()
 end)
 

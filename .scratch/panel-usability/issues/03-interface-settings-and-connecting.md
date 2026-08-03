@@ -29,12 +29,25 @@ is already filled in. Everything else on that screen goes.
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Every renamed control reads as specified, in both languages
-- [ ] Changing a setting takes effect with no further action
-- [ ] A refused value is reported on its row and is not applied
-- [ ] Language is the first setting and the companion port the second
-- [ ] The activation delay defaults to 0
-- [ ] The speed setting is named for what it does and behaves as it did
-- [ ] The connection screen offers a port, a token and the connection state
+- [x] Every renamed control reads as specified, in both languages
+- [x] Changing a setting takes effect with no further action
+- [x] A refused value is reported on its row and is not applied
+- [x] Language is the first setting and the companion port the second
+- [x] The activation delay defaults to 0
+- [x] The speed setting is named for what it does and behaves as it did
+- [x] The connection screen offers a port, a token and the connection state
+
+## Comments
+
+Implemented the requested English and Russian wording, immediate application
+and row-local rejection for settings, language/port ordering, zero defaults for
+activation delay and movement threshold, and the reduced connection screen
+with prefilled port/token state.
+
+The implementation was verified on top of resolved panel-usability 02 rather
+than against their old common base. The combined affected suite passes: 465
+passed, 1 skipped. This also covers the follow-up decision to remove Runtime
+Instance availability warnings and allow camera focus on an unstreamed or
+absent Runtime Instance via the Map Entity's current/authored position.

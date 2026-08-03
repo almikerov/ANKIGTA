@@ -257,14 +257,82 @@ def test_a_connected_companion_opens_the_panel_on_the_workspace(
     assert last_state(client)["section"] == "entities"
 
 
-def test_connecting_from_the_gate_reaches_the_server(client: MtaSandbox) -> None:
+def test_opening_the_panel_requests_the_current_connection_fields(
+    client: MtaSandbox,
+) -> None:
     authorize(client)
+    announce(client, state="disconnected")
+
+    press_f7(client)
+
+    assert server_events(client, "ankigta:requestConnectionSettings")
+
+
+def test_the_connection_screen_receives_prefilled_port_and_token_state(
+    client: MtaSandbox,
+) -> None:
+    authorize(client)
+    announce(client, state="disconnected", category="timeout")
     press_f7(client)
     page_ready(client)
 
-    act(client, "connect")
+    client.trigger(
+        "ankigta:connectionSettingsSnapshot",
+        client.eval("resourceRoot"),
+        client.lua.table_from(
+            {
+                "valid": True,
+                "mode": "automatic",
+                "port": 40123,
+                "tokenConfigured": True,
+                "tokenDisabled": False,
+            }
+        ),
+    )
 
-    assert server_events(client, "ankigta:connectCompanion")
+    connection = last_state(client)["connection"]
+    assert connection["state"] == "disconnected"
+    assert connection["port"] == 40123
+    assert connection["tokenConfigured"] is True
+
+
+def test_changing_connection_fields_applies_without_confirmation(
+    client: MtaSandbox,
+) -> None:
+    authorize(client)
+    announce(client, state="disconnected")
+    press_f7(client)
+    page_ready(client)
+
+    act(
+        client,
+        "updateConnection",
+        {"mode": "manual", "port": 40123, "token": "new", "keepToken": False},
+    )
+
+    updates = server_events(client, "ankigta:updateConnectionSettings")
+    assert len(updates) == 1
+    assert updates[0].args[0]["port"] == 40123
+
+
+def test_a_refused_connection_port_reports_the_reason_on_its_own_row(
+    client: MtaSandbox,
+) -> None:
+    authorize(client)
+    announce(client, state="disconnected")
+    press_f7(client)
+    page_ready(client)
+
+    client.trigger(
+        "ankigta:settingRejected",
+        client.eval("resourceRoot"),
+        "connectionPort",
+        "settings.error.out_of_range",
+    )
+
+    connection = last_state(client)["connection"]
+    assert connection["portError"] == "settings.error.out_of_range"
+    assert connection["tokenError"] is False
 
 
 def test_the_gate_can_be_left_without_connecting(client: MtaSandbox) -> None:

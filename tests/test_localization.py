@@ -196,8 +196,8 @@ def test_the_panel_translates_a_link_state_without_changing_it(
         assert state["entities"][0]["linkState"] == "Unlinked"
         # And translated, through a key the page builds from it.
         assert state["locale"]["f7.linkState.Unlinked"]
-        assert state["locale"]["f7.runtime.destroyed"]
-        assert state["entities"][0]["availabilityKey"] == "f7.runtime.destroyed"
+        assert "f7.runtime.destroyed" not in state["locale"]
+        assert "availabilityKey" not in state["entities"][0]
     finally:
         sandbox.close()
 

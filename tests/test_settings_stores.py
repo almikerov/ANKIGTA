@@ -114,10 +114,11 @@ def test_the_manual_port_range_is_the_schema_s_range(connection: MtaSandbox) -> 
         "function() ANKIGTA.Settings.schema.connectionPort.rule.maximum = 40000 end"
     )()
 
-    rejected, reason = set_manual(connection, 50000, "manual-token")
+    rejected, reason, field = set_manual(connection, 50000, "manual-token")
 
     assert rejected is False
     assert reason == "settings.error.out_of_range"
+    assert field == "connectionPort"
     assert set_manual(connection, 39000, "manual-token") is True
 
 
@@ -137,10 +138,11 @@ def test_an_invalid_manual_port_is_rejected_with_a_localizable_reason(
 ) -> None:
     publish(connection)
 
-    rejected, why = set_manual(connection, port, "manual-token")
+    rejected, why, field = set_manual(connection, port, "manual-token")
 
     assert rejected is False
     assert why == reason
+    assert field == "connectionPort"
     assert "connection-manual.json" not in connection.files
 
 

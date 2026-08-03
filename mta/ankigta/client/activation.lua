@@ -12,13 +12,13 @@ local MIN_RADIUS = 0.5
 local MAX_RADIUS = 50
 local RADIUS_STEP = 0.5
 
-local DEFAULT_DELAY_SECONDS = 1
+local DEFAULT_DELAY_SECONDS = 0
 local MIN_DELAY_SECONDS = 0
 local MAX_DELAY_SECONDS = 60
 
--- Effectively "no gate" by default: a speed limit is always applied, but the
--- default is far above anything reachable on foot or in a car.
-local DEFAULT_MAX_SPEED_KMH = 10000
+-- The upper-bound gate is always applied. Zero therefore means that a card can
+-- open only while the player is not moving.
+local DEFAULT_MAX_SPEED_KMH = 0
 
 -- Defaults come from the shared schema where it is loaded, so the schema and
 -- this module cannot drift into disagreeing about what "default" means.

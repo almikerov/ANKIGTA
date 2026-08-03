@@ -198,6 +198,10 @@ def test_the_report_says_why_nothing_is_opening(
     kwargs: dict[str, Any],
     reason: str,
 ) -> None:
+    if reason == "counting_down":
+        client.eval(
+            "function() return ANKIGTA.Activation.configure({delaySeconds = 1}) end"
+        )()
     observe(client, 0.0, [candidate("e1", x=1.0)], **kwargs)
 
     assert report(client)["spatial"]["reason"] == reason

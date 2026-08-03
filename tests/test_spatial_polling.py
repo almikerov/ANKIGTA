@@ -268,6 +268,19 @@ def test_speed_is_read_from_the_world_and_gates_the_opening(
     assert client.to_python(tick(client))["entityId"] == "e1"
 
 
+def test_zero_default_means_open_only_when_not_moving(client: MtaSandbox) -> None:
+    """The default changed, while the existing upper-bound rule did not."""
+    client.add_world_element(x=1.0, ankigtaEntityId="e1")
+    send_links(client, [link()])
+    client.player_velocity = (0.01, 0.0, 0.0)
+
+    assert tick(client) is False
+
+    client.player_velocity = (0.0, 0.0, 0.0)
+
+    assert client.to_python(tick(client))["entityId"] == "e1"
+
+
 def test_the_speed_of_an_occupied_vehicle_is_the_speed_that_counts(
     client: MtaSandbox,
 ) -> None:

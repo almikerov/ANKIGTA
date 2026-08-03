@@ -61,12 +61,12 @@ Settings.schema = {
     },
     activationDelaySeconds = {
         authority = SERVER,
-        default = 1,
+        default = 0,
         rule = numeric(0, 60, nil, 2),
     },
     maxActivationSpeedKmh = {
         authority = SERVER,
-        default = 10000,
+        default = 0,
         rule = numeric(0, 100000, nil, 2),
     },
     allowEarlyReview = {authority = SERVER, default = false, rule = toggle()},
@@ -112,9 +112,12 @@ Settings.schema = {
 }
 
 -- The schema is a hash, so it has no order of its own. The settings panel needs
--- one to lay its rows out in, and this is it: world and study first, then the
--- machine's own presentation, then the connection the add-on owns.
+-- one to lay its rows out in. Language and the companion port are the two
+-- things a player needs first; the remaining world, study and presentation
+-- settings follow them.
 Settings.order = {
+    "language",
+    "connectionPort",
     "activationRadius",
     "activationDelaySeconds",
     "maxActivationSpeedKmh",
@@ -127,9 +130,7 @@ Settings.order = {
     "cardAudioEnabled",
     "muteGameWorld",
     "uiScale",
-    "language",
     "uiPlacement",
-    "connectionPort",
     "connectionToken",
 }
 

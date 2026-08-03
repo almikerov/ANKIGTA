@@ -255,8 +255,8 @@ def test_a_server_setting_can_still_be_excluded_from_history(
     ("key", "expected"),
     [
         ("activationRadius", 3),
-        ("activationDelaySeconds", 1),
-        ("maxActivationSpeedKmh", 10000),
+        ("activationDelaySeconds", 0),
+        ("maxActivationSpeedKmh", 0),
         ("allowEarlyReview", False),
         ("indicatorMode", "none"),
         ("reviewProtection", True),
@@ -276,6 +276,64 @@ def test_defaults_match_what_the_modules_already_ship(
     assert settings.eval(
         "function(k) return ANKIGTA.Settings.default(k) end"
     )(key) == expected
+
+
+def test_panel_order_starts_with_language_then_companion_port(
+    settings: MtaSandbox,
+) -> None:
+    ordered = settings.eval("function() return ANKIGTA.Settings.orderedKeys() end")()
+
+    assert [ordered[1], ordered[2]] == ["language", "connectionPort"]
+
+
+@pytest.mark.parametrize(
+    ("language", "key", "expected"),
+    [
+        ("en", "f7.filter", "Search Map Entity"),
+        ("en", "f7.filterApply", "Search"),
+        ("en", "common.close", "X"),
+        ("en", "settings.close", "X"),
+        ("en", "f7.teleport", "Teleport"),
+        ("en", "settings.muteGameWorld", "Mute world while reviewing"),
+        ("en", "settings.closeAfterRating", "Close cards after rating"),
+        (
+            "en",
+            "settings.maxActivationSpeedKmh",
+            "Open cards when speed lower than:",
+        ),
+        ("ru", "f7.filter", "Поиск Map Entity"),
+        ("ru", "f7.filterApply", "Поиск"),
+        ("ru", "common.close", "X"),
+        ("ru", "settings.close", "X"),
+        ("ru", "f7.teleport", "Телепорт"),
+        (
+            "ru",
+            "settings.muteGameWorld",
+            "Заглушать мир во время повторения",
+        ),
+        (
+            "ru",
+            "settings.closeAfterRating",
+            "Закрывать карточки после оценки",
+        ),
+        (
+            "ru",
+            "settings.maxActivationSpeedKmh",
+            "Открывать карточки при скорости ниже:",
+        ),
+    ],
+)
+def test_panel_words_say_what_the_controls_do(
+    locale: MtaSandbox,
+    language: str,
+    key: str,
+    expected: str,
+) -> None:
+    locale.eval("function(value) ANKIGTA.Locale.setLanguage(value) end")(language)
+
+    assert locale.eval("function(value) return ANKIGTA.Locale.text(value) end")(
+        key
+    ) == expected
 
 
 def test_the_activation_module_takes_its_defaults_from_the_schema() -> None:

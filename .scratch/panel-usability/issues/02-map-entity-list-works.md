@@ -23,9 +23,9 @@ own — cosmetic only, it changes no identity and no stored key. The line beneat
 carries the XYZ position and, where it fits, the name of the game location. The
 map/entity pair is not on the row: it is an identifier, not a description.
 
-**The Runtime Instance column goes**, and its meaning moves into the link
-column: an entity whose element is gone or not streamed says so there, so a
-missing object still reads as missing rather than as an ordinary row.
+**The Runtime Instance column and warning go.** A row remains usable from its
+stored Map Entity identity and authored position even when no Runtime Instance
+is currently streamed near the player.
 
 **The selection is visible**, and double-clicking a row points the camera at
 that entity the way the prior resource did — distinct from Teleport, which
@@ -44,7 +44,7 @@ waiting for the panel to be closed and reopened.
 - [x] A card linked to another map names that map on the card, in the danger colour
 - [x] An entity can be renamed, and the name survives a restart
 - [x] The sub-line reads as coordinates and a location, not as identifiers
-- [x] A gone or unstreamed entity says so in the link column
+- [x] A gone or unstreamed Runtime Instance adds no warning to the row
 - [x] The selected row is visibly the selected row
 - [x] Double-click points the camera at the entity without moving the player
 - [x] Linking, unlinking or adopting updates both lists without reopening F7
@@ -53,14 +53,19 @@ waiting for the panel to be closed and reopened.
 
 Implemented the current-map entity list, representation/deleted-dimension
 suppression, durable cosmetic names, readable position/location rows, foreign
-map card warnings, runtime availability in the link column, camera focus with
-restoration, and event-driven list refreshes.
+map card warnings, camera focus with restoration, and event-driven list
+refreshes.
 
 The live development client exposed an incremental-reload failure in which the
 new `panel.lua` arrived before the new shared entity-type module. That stopped
 the script at load time and left F7 unbound. The panel now installs the same
 canonical entity-type values as a reload-safe fallback, covered by a regression
 test that loads the panel before the new shared script.
+
+After live review, the Runtime Instance availability warning was removed rather
+than moved into the link column. Camera focus now uses an unstreamed Runtime
+Instance when present and falls back to the stored authored position when the
+client has no element at all.
 
 Verification: 190 passed, 1 skipped across the ticket's affected Lua/UI test
 modules. The full repository suite was started but exceeded the 120-second

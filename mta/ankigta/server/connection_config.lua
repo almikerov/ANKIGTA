@@ -290,7 +290,7 @@ function ConnectionConfig.setManual(port, token, keepExistingToken)
         port
     )
     if not portOverride then
-        return false, portReason
+        return false, portReason, "connectionPort"
     end
     local tokenOverride, tokenReason = ANKIGTA.Settings.overrideBy(
         OVERRIDE_SIDE,
@@ -298,7 +298,7 @@ function ConnectionConfig.setManual(port, token, keepExistingToken)
         token
     )
     if not tokenOverride then
-        return false, tokenReason
+        return false, tokenReason, "connectionToken"
     end
     return writeManual({
         format = "ankigta-mta-connection-settings",

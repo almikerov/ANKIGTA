@@ -205,10 +205,12 @@ label {
   padding: var(--space-5);
   background: rgba(14, 18, 35, 0.92);
 }
-.gate-card h2 { margin: 0; font-size: 17px; }
-.gate-card p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
-.gate-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
 .gate-fields { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
+.gate-fields .field-error {
+  color: #fecaca;
+  font-size: 11px;
+}
+.gate-fields .field-error[hidden] { display: none; }
 
 /* --- workspace -------------------------------------------------------- */
 
@@ -296,8 +298,7 @@ label {
 .row .sub { display: block; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row .type { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row.card { grid-template-columns: minmax(0, 1fr) 90px; }
-.row .foreign-map, .row .availability { color: var(--danger); }
-.row .availability { display: block; font-size: 11px; margin-top: 2px; }
+.row .foreign-map { color: var(--danger); }
 
 /* State is carried by a word as well as a colour: colour alone is not a
    message a colour-blind player receives. */

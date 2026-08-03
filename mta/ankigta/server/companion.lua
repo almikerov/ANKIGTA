@@ -32,6 +32,7 @@ local CONNECT_EVENT = "ankigta:connectCompanion"
 local SETTINGS_REQUEST_EVENT = "ankigta:requestConnectionSettings"
 local SETTINGS_SNAPSHOT_EVENT = "ankigta:connectionSettingsSnapshot"
 local SETTINGS_UPDATE_EVENT = "ankigta:updateConnectionSettings"
+local SETTINGS_REJECTED_EVENT = "ankigta:settingRejected"
 local validPort
 
 local Gateway = {
@@ -1936,6 +1937,17 @@ local function sendSettingsSnapshot(player)
     )
 end
 
+local function rejectConnectionSetting(player, key, reason)
+    triggerClientEvent(
+        player,
+        SETTINGS_REJECTED_EVENT,
+        resourceRoot,
+        key,
+        reason or "settings.error.not_saved"
+    )
+    sendSettingsSnapshot(player)
+end
+
 -- Server-only, both of them: a client that could raise either would be a
 -- client deciding what Anki said.
 addEvent(CARD_STATES_REFRESHED_EVENT, false)
@@ -1964,17 +1976,22 @@ addEventHandler(SETTINGS_UPDATE_EVENT, resourceRoot, function(update)
     then
         return
     end
-    local changed, changeError = false, "invalid_manual_connection"
+    local changed, changeError, rejectedField =
+        false, "invalid_manual_connection", false
     if update.mode == "automatic" then
         changed, changeError = ANKIGTA.ConnectionConfig.useAutomatic()
     elseif update.mode == "manual" then
-        changed, changeError = ANKIGTA.ConnectionConfig.setManual(
+        changed, changeError, rejectedField = ANKIGTA.ConnectionConfig.setManual(
             update.port,
             update.token,
             update.keepToken == true
         )
     end
     if not changed then
+        if rejectedField then
+            rejectConnectionSetting(client, rejectedField, changeError)
+            return
+        end
         syntheticConfigFailure(client, changeError, false)
         sendSettingsSnapshot(client)
         return

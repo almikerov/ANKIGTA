@@ -36,21 +36,17 @@
        leaveable: the window this replaces could not be dismissed at all. -->
   <section class="section gate" id="section-connection" hidden>
     <div class="gate-card">
-      <h2 data-i18n="connection.title"></h2>
-      <p data-i18n="panel.connection.explain"></p>
       <div class="gate-fields">
         <label>
-          <span data-i18n="connection.manualPort"></span>
+          <span data-i18n="settings.connectionPort"></span>
           <input type="number" id="port" min="1" max="65535" />
+          <span class="field-error" id="port-error" role="alert" hidden></span>
         </label>
         <label>
-          <span data-i18n="connection.replacementToken"></span>
+          <span data-i18n="settings.connectionToken"></span>
           <input type="password" id="token" autocomplete="off" />
+          <span class="field-error" id="token-error" role="alert" hidden></span>
         </label>
-      </div>
-      <div class="gate-actions">
-        <button type="button" id="save-connection" data-i18n="settings.apply"></button>
-        <button type="button" id="connect" class="primary" data-i18n="connection.connect"></button>
       </div>
     </div>
   </section>

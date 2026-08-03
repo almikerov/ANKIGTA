@@ -37,6 +37,8 @@
   }
 
   var selected = {mapId: false, entityId: false, cardId: false};
+  var lastConnectionFields = null;
+  var HIDDEN_TOKEN = "••••••••";
   /* The last rows rendered, and a readable label for the chosen card. Kept so
    * the replace confirmation can name what it is about to throw away without
    * asking Lua for a state it has already sent. */
@@ -93,11 +95,6 @@
       state.appendChild(
         element("span", "label", t("f7.linkState." + entry.linkState))
       );
-      if (entry.availabilityKey !== "f7.runtime.streamed") {
-        state.appendChild(
-          element("span", "availability", t(entry.availabilityKey))
-        );
-      }
       row.appendChild(state);
 
       if (entry.mapId === selected.mapId && entry.entityId === selected.entityId) {
@@ -206,6 +203,24 @@
         ? "connecting"
         : (connection.category || "disconnected"));
     document.getElementById("status-detail").textContent = t(key);
+
+    var fields = JSON.stringify([
+      connection.port || false,
+      connection.tokenConfigured === true,
+      connection.tokenDisabled === true,
+      connection.settingsVersion || 0
+    ]);
+    if (fields !== lastConnectionFields) {
+      lastConnectionFields = fields;
+      document.getElementById("port").value = connection.port || "";
+      var token = document.getElementById("token");
+      token.value = connection.tokenConfigured === true &&
+        connection.tokenDisabled !== true ? HIDDEN_TOKEN : "";
+      token.setAttribute("data-replacement", "false");
+    }
+
+    renderConnectionError("port", connection.portError);
+    renderConnectionError("token", connection.tokenError);
 
     var notice = document.getElementById("notice");
     var warning = connection.warningCategory || connection.sessionCategory;
@@ -479,9 +494,6 @@
   document.getElementById("settings").addEventListener("click", function () {
     send("openSettings");
   });
-  document.getElementById("connect").addEventListener("click", function () {
-    send("connect");
-  });
   document.getElementById("edit-hud").addEventListener("click", function () {
     var button = document.getElementById("edit-hud");
     var next = button.getAttribute("aria-pressed") !== "true";
@@ -583,20 +595,42 @@
     event.preventDefault();
     send("searchCards", {query: "", deck: document.getElementById("deck").value});
   });
-  document.getElementById("save-connection").addEventListener("click", function () {
-    var port = parseInt(document.getElementById("port").value, 10);
-    var token = document.getElementById("token").value;
+  function applyConnection() {
+    var portText = document.getElementById("port").value;
+    var port = portText === "" ? null : Number(portText);
+    var tokenField = document.getElementById("token");
+    var replacingToken = tokenField.getAttribute("data-replacement") === "true";
     send("updateConnection", {
       mode: "manual",
-      port: isNaN(port) ? null : port,
-      token: token,
-      keepToken: token === ""
+      port: port === null || isNaN(port) ? null : port,
+      token: replacingToken ? tokenField.value : "",
+      keepToken: !replacingToken
     });
+    tokenField.setAttribute("data-replacement", "false");
+    if (replacingToken) {
+      tokenField.value = tokenField.value === "" ? "" : HIDDEN_TOKEN;
+    }
+  }
+
+  function renderConnectionError(fieldId, reason) {
+    var field = document.getElementById(fieldId);
+    var error = document.getElementById(fieldId + "-error");
+    field.setAttribute("aria-invalid", reason ? "true" : "false");
+    error.textContent = reason ? t(reason) : "";
+    error.hidden = !reason;
+  }
+  document.getElementById("port").addEventListener("change", applyConnection);
+  document.getElementById("token").addEventListener("focus", function () {
+    if (this.value === HIDDEN_TOKEN) this.select();
   });
+  document.getElementById("token").addEventListener("input", function () {
+    this.setAttribute("data-replacement", "true");
+  });
+  document.getElementById("token").addEventListener("change", applyConnection);
 
   /* The page cannot move its own window, so it only reports that a drag began
    * and Lua follows the cursor. Buttons and fields in the bar keep their own
-   * clicks: a drag that starts on Close is a drag nobody meant. */
+   * clicks: a drag that starts on X is a drag nobody meant. */
   var dragHandle = document.querySelector("[data-window-drag]");
   if (dragHandle) {
     dragHandle.addEventListener("mousedown", function (event) {

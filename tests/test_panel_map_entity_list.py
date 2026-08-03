@@ -628,7 +628,7 @@ def test_a_panel_row_describes_position_and_location_not_identity(
     assert row["description"] == "10.25, -20.50, 3.00 · Ganton"
     assert "current-map-id" not in row["description"]
     assert "gate-17" not in row["description"]
-    assert row["availabilityKey"] == "f7.runtime.destroyed"
+    assert "availabilityKey" not in row
 
 
 def test_an_unnamed_row_uses_words_instead_of_its_identifier(
@@ -739,10 +739,7 @@ def test_focusing_a_row_points_the_camera_without_moving_the_player(
         panel_client,
         entities=[panel_entry(available=True)],
     )
-    assert (
-        panel_client.pushed_panel_state()["entities"][0]["availabilityKey"]
-        == "f7.runtime.streamed"
-    )
+    assert "availabilityKey" not in panel_client.pushed_panel_state()["entities"][0]
     before_moves = list(panel_client.moved)
     before_camera = panel_client.camera_matrix
     panel_client.camera_interior = 7
@@ -761,6 +758,26 @@ def test_focusing_a_row_points_the_camera_without_moving_the_player(
 
     assert panel_client.camera_matrix == before_camera
     assert panel_client.camera_interior == 7
+
+
+def test_focusing_a_distant_row_uses_its_authored_position_without_streaming(
+    panel_client: MtaSandbox,
+) -> None:
+    push_client_snapshot(panel_client, entities=[panel_entry(available=False)])
+    before_moves = list(panel_client.moved)
+    before_camera = panel_client.camera_matrix
+    panel_client.camera_interior = 7
+
+    panel_action(
+        panel_client,
+        "focusEntity",
+        {"mapId": "current-map-id", "entityId": "gate-17"},
+    )
+
+    assert panel_client.camera_matrix != before_camera
+    assert panel_client.camera_matrix[3:6] == (10.25, -20.5, 3.0)
+    assert panel_client.camera_interior == 0
+    assert panel_client.moved == before_moves
 
 
 def test_a_fresh_f7_snapshot_updates_entity_and_card_rows_without_reopening(
