@@ -54,15 +54,23 @@ def test_companion_control_gateway_is_server_side_only() -> None:
         "fetchRemote(",
         "::1",
         '["Authorization"]',
-        "connectionToken",
         "reviewTransactionId",
         "/v1/",
     )
+    # The token's *name* is the client's business: it draws that settings row
+    # and shows the rejection the server keyed by the setting. Its *value* is
+    # not, and the server reports only `tokenConfigured`. So the credential
+    # this guard forbids is the value field itself, matched so that
+    # `tokenConfigured` and `tokenDisabled` are not caught by their prefix.
+    forbidden_token_value = re.compile(r"connectionSettings\.token(?![A-Za-z0-9_])")
     for script in scripts:
         if script.get("type") != "client":
             continue
         source = (MTA_RESOURCE / str(script.get("src"))).read_text(encoding="utf-8")
         assert all(fragment not in source for fragment in forbidden_client_fragments)
+        assert not forbidden_token_value.search(source), (
+            f"client script {script.get('src')} reads the companion token value"
+        )
 
         # Loopback may appear only where CEF requires the client to whitelist
         # the content endpoint's host. The URL itself always arrives from the
