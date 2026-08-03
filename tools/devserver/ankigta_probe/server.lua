@@ -337,8 +337,7 @@ function commands.acl_check(resourceName)
             hasObjectPermissionTo(target, right, false) and "yes" or "NO"
         )
     end
-    return table.concat(rows, "
-")
+    return table.concat(rows, "\n")
 end
 
 function commands.call(resourceName, exportName, ...)
