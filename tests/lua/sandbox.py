@@ -433,6 +433,7 @@ class MtaSandbox:
         self.browser_volume = 1.0
         self.world_sound_enabled = True
         self.damage_proof: dict[str, bool] = {}
+        self.frozen: dict[str, bool] = {}
         self.occupied_vehicle: Any = False
         #: seat index -> occupant, exactly as MTA reports it (0 is the driver).
         self.vehicle_occupants: dict[int, Any] = {}
@@ -715,6 +716,12 @@ class MtaSandbox:
                 return not value.destroyed
             if lua_type(value) == "table":
                 return value["__element"] is True and value["__destroyed"] is not True
+            # `localPlayer` is a CClientPlayer and so always an element. It
+            # crosses this boundary as a string sentinel rather than a table,
+            # and lupa hands out a fresh Python string each time, so it is
+            # recognized by value rather than by identity.
+            if value == LOCAL_PLAYER:
+                return True
             return id(value) in self._elements
 
         def destroy_element(value: Any) -> bool:
@@ -1596,8 +1603,19 @@ class MtaSandbox:
             key = "vehicle" if lua_type(element) == "table" else "player"
             return self.damage_proof.get(key, False)
 
+        def set_element_frozen(element: Any, frozen: Any) -> bool:
+            key = "vehicle" if lua_type(element) == "table" else "player"
+            self.frozen[key] = frozen is True
+            return True
+
+        def is_element_frozen(element: Any) -> bool:
+            key = "vehicle" if lua_type(element) == "table" else "player"
+            return self.frozen.get(key, False)
+
         g.setElementDamageProof = set_damage_proof
         g.isElementDamageProof = is_damage_proof
+        g.setElementFrozen = set_element_frozen
+        g.isElementFrozen = is_element_frozen
         g.localPlayer = LOCAL_PLAYER
         g.getPedOccupiedVehicle = lambda _ped=None: self.occupied_vehicle
         # --- world manipulation ---------------------------------------------

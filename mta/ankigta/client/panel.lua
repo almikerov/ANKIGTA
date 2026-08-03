@@ -61,6 +61,10 @@ local dragFrom = nil
 local pageReady = false
 local cursorOwned = false
 local focusedCamera = nil
+-- What camera focus took hold of while the camera was away, and how that thing
+-- stood before it did. Letting go has to put the state back rather than assume
+-- what it was.
+local focusedHold = nil
 
 -- The last thing each source told us. The page is redrawn from these, so a
 -- language change or a new status repaints without asking anyone again.
@@ -174,8 +178,68 @@ local function restoreFocusedCamera()
     focusedCamera = nil
 end
 
+--- What carries the player's weight right now.
+--
+-- A ped sitting in a vehicle is moved by the vehicle, so freezing the ped
+-- alone would leave the car -- and the player riding in it -- still falling.
+local function physicalSubject()
+    local vehicle = getPedOccupiedVehicle(localPlayer)
+    if isElement(vehicle) then
+        return vehicle
+    end
+    return localPlayer
+end
+
+--- Keep the player where they are while the camera is somewhere else.
+--
+-- GTA streams the world around the *camera*, not around the player. Send the
+-- camera to a Map Entity far enough away and the collision under the player's
+-- own feet unloads while they are still under physics: they drop through the
+-- map at the very spot they were standing on.
+--
+-- The prior resource never met this, and not because it showed the model some
+-- other way -- it moved the camera with the same `setCameraMatrix`. It never
+-- owned the camera alone. It opened over a running stock Map Editor, whose
+-- `attachplayer.lua` puts the player at the camera every frame with collisions
+-- off and alpha 0, so there was nothing left to fall. F7 stands on its own
+-- now, and its contract is that focusing a row does not move the Study Player,
+-- so it pins them instead of carrying them: `CClientPed::SetFrozen` caches the
+-- ped matrix and holds it, which is "stay exactly here" without a teleport.
+--
+-- Idempotent: focusing a second row must not overwrite the state the first
+-- focus found and still has to give back.
+local function holdPlayerStill()
+    if focusedHold then
+        return
+    end
+    local subject = physicalSubject()
+    focusedHold = {
+        element = subject,
+        frozen = isElementFrozen(subject) == true,
+    }
+    setElementFrozen(subject, true)
+end
+
+--- Give the player back to physics, exactly as they were.
+--
+-- `setElementFrozen(subject, false)` would be wrong. Unlike the cursor above,
+-- frozen is per-element state with one owner, so reading it on the way in
+-- reads our own answer rather than somebody else's -- and a player who was
+-- already frozen when F7 opened is still owed that on the way out.
+local function releasePlayerHold()
+    if not focusedHold then
+        return
+    end
+    local held = focusedHold
+    focusedHold = nil
+    if isElement(held.element) then
+        setElementFrozen(held.element, held.frozen)
+    end
+end
+
 local function closePanel()
     dragFrom = nil
+    releasePlayerHold()
     restoreFocusedCamera()
     if isElement(guiBrowser) then
         destroyElement(guiBrowser)
@@ -1134,6 +1198,9 @@ function actions.focusEntity(payload)
         return
     end
     local distance = kind == "vehicle" and 9 or 6
+    -- Hold first, then move the camera. The other order leaves a window in
+    -- which the camera has already gone and the player is still falling.
+    holdPlayerStill()
     if not focusedCamera then
         focusedCamera = {
             matrix = {getCameraMatrix()},

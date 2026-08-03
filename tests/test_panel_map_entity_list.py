@@ -780,6 +780,61 @@ def test_focusing_a_distant_row_uses_its_authored_position_without_streaming(
     assert panel_client.moved == before_moves
 
 
+def test_distant_camera_focus_holds_the_player_until_the_panel_closes(
+    panel_client: MtaSandbox,
+) -> None:
+    push_client_snapshot(panel_client, entities=[panel_entry(available=False)])
+    assert panel_client.eval("function() return isElementFrozen(localPlayer) end")() is False
+
+    panel_action(
+        panel_client,
+        "focusEntity",
+        {"mapId": "current-map-id", "entityId": "gate-17"},
+    )
+
+    assert panel_client.eval("function() return isElementFrozen(localPlayer) end")() is True
+
+    panel_action(panel_client, "close")
+
+    assert panel_client.eval("function() return isElementFrozen(localPlayer) end")() is False
+
+
+def test_camera_focus_restores_an_already_frozen_player(
+    panel_client: MtaSandbox,
+) -> None:
+    push_client_snapshot(panel_client, entities=[panel_entry(available=False)])
+    panel_client.eval("function() setElementFrozen(localPlayer, true) end")()
+
+    panel_action(
+        panel_client,
+        "focusEntity",
+        {"mapId": "current-map-id", "entityId": "gate-17"},
+    )
+    panel_action(panel_client, "close")
+
+    assert panel_client.eval("function() return isElementFrozen(localPlayer) end")() is True
+
+
+def test_distant_camera_focus_holds_an_occupied_vehicle_too(
+    panel_client: MtaSandbox,
+) -> None:
+    push_client_snapshot(panel_client, entities=[panel_entry(available=False)])
+    vehicle = panel_client.add_world_element("vehicle")
+    panel_client.occupied_vehicle = vehicle
+
+    panel_action(
+        panel_client,
+        "focusEntity",
+        {"mapId": "current-map-id", "entityId": "gate-17"},
+    )
+
+    assert panel_client.eval("function(v) return isElementFrozen(v) end")(vehicle) is True
+
+    panel_action(panel_client, "close")
+
+    assert panel_client.eval("function(v) return isElementFrozen(v) end")(vehicle) is False
+
+
 def test_closing_after_camera_focus_never_requests_a_teleport(
     panel_client: MtaSandbox,
 ) -> None:
