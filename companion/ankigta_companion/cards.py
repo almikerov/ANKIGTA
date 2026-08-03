@@ -437,37 +437,31 @@ class CardPickerService:
         except Exception:
             return {}
         names: dict[int, str] = {}
+
+        def remember(raw_id: object, raw_name: object) -> None:
+            if not isinstance(raw_name, str):
+                return
+            try:
+                identifier = int(raw_id)  # type: ignore[call-overload]
+            except (TypeError, ValueError):
+                return
+            names.setdefault(identifier, raw_name)
+
         if isinstance(raw_decks, dict):
             for first, second in raw_decks.items():
-                for raw_id, raw_name in ((first, second), (second, first)):
-                    if isinstance(raw_name, str):
-                        try:
-                            names.setdefault(int(raw_id), raw_name)
-                        except (TypeError, ValueError):
-                            continue
+                remember(first, second)
+                remember(second, first)
             return names
         if isinstance(raw_decks, Sequence) and not isinstance(raw_decks, (str, bytes)):
             for raw in raw_decks:
                 if isinstance(raw, tuple) and len(raw) == 2:
                     name, raw_id = raw
-                    try:
-                        names.setdefault(int(raw_id), str(name))
-                    except (TypeError, ValueError):
-                        continue
+                    remember(raw_id, name)
                 elif isinstance(raw, dict):
-                    name = raw.get("name")
-                    try:
-                        identifier = int(raw.get("id", -1))
-                    except (TypeError, ValueError):
-                        continue
-                    if isinstance(name, str):
-                        names.setdefault(identifier, name)
+                    remember(raw.get("id"), raw.get("name"))
                 else:
-                    name = getattr(raw, "name", None)
-                    try:
-                        identifier = int(getattr(raw, "id"))
-                    except (AttributeError, TypeError, ValueError):
-                        continue
-                    if isinstance(name, str):
-                        names.setdefault(identifier, name)
+                    remember(
+                        getattr(raw, "id", None),
+                        getattr(raw, "name", None),
+                    )
         return names
