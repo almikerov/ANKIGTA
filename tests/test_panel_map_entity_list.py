@@ -662,6 +662,52 @@ def test_naming_something_the_list_only_offered_takes_it_in(
     assert links[0] == 0
 
 
+def test_a_zone_that_asks_to_be_shown_is_drawn_at_its_own_radius(
+    panel_client: MtaSandbox,
+) -> None:
+    """`showRadius` had no drawing behind it at all.
+
+    It only told the Next Card Indicator to pulse its own column where a zone
+    happened to coincide -- so a zone appeared for the one card the scheduler
+    had chosen next, in one indicator mode, and never otherwise. Turning the
+    setting on therefore did nothing visible, which is what was reported.
+    """
+    quiet = panel_entry()
+    shown = panel_entry(entity_id="gate-18")
+    shown["metadata"]["showRadius"] = True
+    shown["metadata"]["radius"] = 7.5
+    push_client_snapshot(panel_client, entities=[quiet, shown])
+
+    panel_client.trigger("onClientRender")
+    ring = panel_client.drawn_lines_3d
+
+    assert ring, "the zone was not drawn"
+    # A ring around the entity, at the radius the entity carries.
+    x, y = 10.25, -20.5
+    distances = {
+        round(((p["startX"] - x) ** 2 + (p["startY"] - y) ** 2) ** 0.5, 3)
+        for p in ring
+    }
+    assert distances == {7.5}
+    # And nothing for the row that did not ask.
+    assert len({(p["startZ"]) for p in ring}) == 1
+
+
+def test_no_zone_is_drawn_while_the_panel_is_shut(
+    panel_client: MtaSandbox,
+) -> None:
+    """It is the panel's snapshot, and costs nothing when F7 is closed."""
+    shown = panel_entry()
+    shown["metadata"]["showRadius"] = True
+    push_client_snapshot(panel_client, entities=[shown])
+    panel_client.eval("function() togglePanel() end")()
+    panel_client.drawn_lines_3d.clear()
+
+    panel_client.trigger("onClientRender")
+
+    assert panel_client.drawn_lines_3d == []
+
+
 def test_a_panel_row_describes_position_and_location_not_identity(
     panel_client: MtaSandbox,
 ) -> None:

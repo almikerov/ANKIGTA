@@ -607,6 +607,69 @@ local function readableName(entry)
     return ANKIGTA.Locale.text("f7.entity.unnamed")
 end
 
+--- Draw the Activation Zone of every row that asks for it, while F7 is open.
+--
+-- `showRadius` had no drawing behind it at all. It only told the Next Card
+-- Indicator to pulse its own column where a zone happened to coincide, so a
+-- zone was visible for the one card the scheduler had chosen next, in one
+-- indicator mode, and never otherwise -- which is why turning the setting on
+-- appeared to do nothing.
+--
+-- A ring on the ground, at the radius the entity carries, because that is what
+-- the zone *is*: how close you must stand. Drawn from the panel's own snapshot
+-- and only while the panel is open, so it costs nothing when F7 is shut.
+local ZONE_SEGMENTS = 24
+local ZONE_COLOR = {90, 200, 255, 170}
+
+local function zonePosition(entry)
+    local element = runtimeElement(
+        entry.mapEntity.mapId, entry.mapEntity.entityId, false
+    )
+    if isElement(element) then
+        return getElementPosition(element)
+    end
+    local authored = type(entry.mapEntity.authored) == "table"
+        and entry.mapEntity.authored or {}
+    local position = type(authored.position) == "table" and authored.position or {}
+    return tonumber(position.x), tonumber(position.y), tonumber(position.z)
+end
+
+local function drawActivationZone(x, y, z, radius)
+    local previousX, previousY = x + radius, y
+    for step = 1, ZONE_SEGMENTS do
+        local angle = step * 2 * math.pi / ZONE_SEGMENTS
+        local nextX = x + radius * math.cos(angle)
+        local nextY = y + radius * math.sin(angle)
+        dxDrawLine3D(
+            previousX, previousY, z,
+            nextX, nextY, z,
+            tocolor(ZONE_COLOR[1], ZONE_COLOR[2], ZONE_COLOR[3], ZONE_COLOR[4]),
+            2
+        )
+        previousX, previousY = nextX, nextY
+    end
+end
+
+function renderActivationZones()
+    if not isPanelOpen() or type(lastSnapshot) ~= "table" then
+        return
+    end
+    for _, entry in ipairs(lastSnapshot.entities or {}) do
+        local metadata = type(entry.metadata) == "table" and entry.metadata or {}
+        if metadata.showRadius == true then
+            local x, y, z = zonePosition(entry)
+            local radius = tonumber(metadata.radius) or 3
+            if x and y and z then
+                drawActivationZone(x, y, z, radius)
+            end
+        end
+    end
+end
+
+addEventHandler("onClientRender", root, function()
+    renderActivationZones()
+end)
+
 --- Where the Map Entity stands, in the language people use for the world.
 -- The persistent identity remains on the row for actions, but is not its
 -- description.  Coordinates stay useful everywhere; the GTA zone follows

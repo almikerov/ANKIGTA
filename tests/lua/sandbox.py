@@ -473,6 +473,10 @@ class MtaSandbox:
         self.drawn_text_boxes: list[dict[str, Any]] = []
         self.drawn_rectangles: list[dict[str, float]] = []
         self.drawn_images: list[dict[str, float]] = []
+        #: Segments handed to `dxDrawLine3D`. A world ring is drawn as many of
+        #: these, so a test can ask whether one was drawn and how wide it is
+        #: rather than whether a function was reached.
+        self.drawn_lines_3d: list[dict[str, float]] = []
         #: What `guiGetScreenSize()` reports. Tests move it to run the same
         #: layout at 1280x720, 1920x1080 and 3840x2160.
         self.screen_width = 1920.0
@@ -1772,6 +1776,21 @@ class MtaSandbox:
 
         g.createBlip = create_blip
         g.dxDrawMaterialLine3D = lambda *_a, **_k: True
+
+        def dx_draw_line_3d(
+            start_x: Any = 0, start_y: Any = 0, start_z: Any = 0,
+            end_x: Any = 0, end_y: Any = 0, end_z: Any = 0, *_rest: Any,
+        ) -> bool:
+            self.drawn_lines_3d.append(
+                {
+                    "startX": float(start_x), "startY": float(start_y),
+                    "startZ": float(start_z), "endX": float(end_x),
+                    "endY": float(end_y), "endZ": float(end_z),
+                }
+            )
+            return True
+
+        g.dxDrawLine3D = dx_draw_line_3d
         g.setBrowserVolume = set_browser_volume
         g.setWorldSoundEnabled = set_world_sound_enabled
         g.focusBrowser = lambda _browser=None: True
