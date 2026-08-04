@@ -132,6 +132,9 @@ local searchRequestedAt = false
 --- changes, and searching on each of them would restart the list under the
 --- player every few seconds.
 local searchIssued = false
+--- Whether the card editor is slid out. Held here as well as on the page,
+--- because the panel's own width follows it.
+local editorOpen = false
 
 -- Filled in further down, declared here: the commands and the Review Mode
 -- entry wire themselves to it before those definitions are reached.
@@ -281,6 +284,7 @@ local function closePanel()
     browser = nil
     pageReady = false
     searchIssued = false
+    editorOpen = false
     releaseCursor()
 end
 
@@ -587,12 +591,13 @@ local function readableName(entry)
             return name
         end
     end
-    -- `engineGetModelNameFromID` reads `CModelNames`, which holds object
-    -- models and nothing else. Asked about a ped skin it answers `false` and
-    -- logs `Expected valid model ID` -- which is what filled the client log
-    -- with a warning per ped per snapshot, drowning anything worth reading in
-    -- it, and left every ped reading as "Unnamed Map Entity".
-    if mapEntity.type == "object" and engineGetModelNameFromID then
+    -- `engineGetModelNameFromID` reads `CModelNames`, which holds the object
+    -- table and the vehicle names for 400-610 -- and no peds at all. Asked
+    -- about a ped skin it answers `false` and logs `Expected valid model ID`,
+    -- which is what filled the client log with a warning per ped per snapshot
+    -- and left every ped reading as "Unnamed Map Entity". Asked about a
+    -- vehicle it answers, so vehicles keep this as their second chance.
+    if mapEntity.type ~= "ped" and engineGetModelNameFromID then
         local name = engineGetModelNameFromID(model)
         if type(name) == "string" and name ~= "" then
             return name
@@ -621,9 +626,29 @@ end
 local ZONE_SEGMENTS = 24
 local ZONE_COLOR = {90, 200, 255, 170}
 
+--- Elements already found for the zones being drawn, kept between frames.
+--
+-- `runtimeElement` walks every object, vehicle, ped and marker on the client
+-- and asks the editor about each one. That is a per-click cost where the rest
+-- of this file uses it; doing it per zone per frame is a world scan sixty
+-- times a second. An element does not change identity between snapshots, and
+-- one that was destroyed fails `isElement` and is looked up again.
+local zoneElements = {}
+
+local function zoneElement(mapId, entityId)
+    local key = mapId .. " " .. entityId
+    local remembered = zoneElements[key]
+    if remembered ~= nil and isElement(remembered) then
+        return remembered
+    end
+    local element = runtimeElement(mapId, entityId, false)
+    zoneElements[key] = isElement(element) and element or false
+    return zoneElements[key]
+end
+
 local function zonePosition(entry)
-    local element = runtimeElement(
-        entry.mapEntity.mapId, entry.mapEntity.entityId, false
+    local element = zoneElement(
+        entry.mapEntity.mapId, entry.mapEntity.entityId
     )
     if isElement(element) then
         return getElementPosition(element)
@@ -650,7 +675,7 @@ local function drawActivationZone(x, y, z, radius)
     end
 end
 
-function renderActivationZones()
+local function renderActivationZones()
     if not isPanelOpen() or type(lastSnapshot) ~= "table" then
         return
     end
@@ -666,9 +691,7 @@ function renderActivationZones()
     end
 end
 
-addEventHandler("onClientRender", root, function()
-    renderActivationZones()
-end)
+addEventHandler("onClientRender", root, renderActivationZones)
 
 --- Where the Map Entity stands, in the language people use for the world.
 -- The persistent identity remains on the row for actions, but is not its
@@ -971,14 +994,53 @@ if ANKIGTA.Layout then
     })
 end
 
+--- How much wider the panel is while the card editor is out, as a share of
+--- its own width.
+--
+-- The editor slides out beside the two lists rather than taking a third of the
+-- room from them. Fitting a third column inside a window sized for two is what
+-- left every column cramped: the lists did not ask to be narrower because
+-- somebody opened an editor.
+local EDITOR_WIDTH_SHARE = 0.34
+
 local function panelRect()
+    local x, y, width, height
     if ANKIGTA.Layout then
-        return ANKIGTA.Layout.rect("panel")
+        x, y, width, height = ANKIGTA.Layout.rect("panel")
+    else
+        local screenWidth, screenHeight = guiGetScreenSize()
+        width = math.min(screenWidth - 40, 1180)
+        height = math.min(screenHeight - 40, 700)
+        x = (screenWidth - width) / 2
+        y = (screenHeight - height) / 2
     end
-    local screenWidth, screenHeight = guiGetScreenSize()
-    local width = math.min(screenWidth - 40, 1180)
-    local height = math.min(screenHeight - 40, 700)
-    return (screenWidth - width) / 2, (screenHeight - height) / 2, width, height
+    if not editorOpen then
+        return x, y, width, height
+    end
+    -- Grown from the width already in force, so UI Scale and any clamp the
+    -- layout applied are carried rather than recomputed.
+    local screenWidth = guiGetScreenSize()
+    width = math.min(width * (1 + EDITOR_WIDTH_SHARE), screenWidth)
+    -- Widening at a fixed left edge would push the right edge off screen for a
+    -- panel already sitting near it.
+    if x + width > screenWidth then
+        x = math.max(0, screenWidth - width)
+    end
+    return x, y, width, height
+end
+
+--- Give the panel the size its current shape asks for.
+--
+-- `CGUIWebBrowser_Impl::SetSize` resizes the underlying web view as well as the
+-- CEGUI element, so the page is re-laid out at the new width rather than
+-- stretched.
+local function resizePanel()
+    if not isPanelOpen() then
+        return
+    end
+    local x, y, width, height = panelRect()
+    guiSetPosition(guiBrowser, x, y, false)
+    guiSetSize(guiBrowser, width, height, false)
 end
 
 local function openPanel()
@@ -1425,6 +1487,20 @@ function actions.copyDecision(payload)
     end
 end
 
+--- The page has slid the card editor out, or put it away.
+--
+-- The page cannot resize its own window, so it says which shape it is in and
+-- this gives it the room. Held on this side too, so that reopening F7 starts
+-- from the panel's own width rather than from whatever the page last did.
+function actions.editorVisible(payload)
+    local open = payload.open == true
+    if open == editorOpen then
+        return
+    end
+    editorOpen = open
+    resizePanel()
+end
+
 function actions.searchCards(payload)
     searchRequestedAt = getTickCount()
     triggerServerEvent(
@@ -1661,6 +1737,7 @@ addEventHandler(F7_SNAPSHOT_EVENT, resourceRoot, function(snapshot)
         return
     end
     lastSnapshot = snapshot
+    zoneElements = {}
     -- Cards without being asked for. Opening the picker *is* the question, and
     -- an empty list behind a button reads as "your collection has nothing" --
     -- which is also why the deck list was missing: the companion sends it with

@@ -705,6 +705,10 @@
     renderInspectorToggle();
     document.getElementById("inspector").hidden =
       !selected.cardId || !inspectorOpen;
+    /* The page cannot resize its own window, so it says which shape it is in
+     * and Lua gives it the room. The editor slides out beside the lists rather
+     * than taking a third of the room from them. */
+    send("editorVisible", {open: inspectorOpen});
   });
   document.getElementById("inspector-tags").addEventListener(
     "input",

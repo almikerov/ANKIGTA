@@ -689,8 +689,9 @@ def test_a_zone_that_asks_to_be_shown_is_drawn_at_its_own_radius(
         for p in ring
     }
     assert distances == {7.5}
-    # And nothing for the row that did not ask.
-    assert len({(p["startZ"]) for p in ring}) == 1
+    # One ring, not two: the row that did not ask for one contributed nothing.
+    assert len(ring) == 24
+    assert {segment["width"] for segment in ring} == {2.0}
 
 
 def test_no_zone_is_drawn_while_the_panel_is_shut(

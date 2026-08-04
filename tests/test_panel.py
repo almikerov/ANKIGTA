@@ -658,6 +658,29 @@ def test_the_page_is_told_what_the_rows_it_has_are_an_answer_to(
     assert picker["scope"] == "notes"
 
 
+def test_the_panel_widens_for_the_editor_and_narrows_again(
+    client: MtaSandbox,
+) -> None:
+    """The editor slides out beside the lists rather than out of their width.
+
+    `CGUIWebBrowser_Impl::SetSize` resizes the underlying web view as well as
+    the CEGUI element, so the page is re-laid out at the new width rather than
+    stretched -- which is what makes growing the window the honest answer here
+    instead of squeezing a third column in.
+    """
+    open_workspace(client)
+    shut = client.browsers[0]["width"]
+
+    act(client, "editorVisible", {"open": True})
+    widened = client.browsers[0]["width"]
+
+    assert widened > shut
+
+    act(client, "editorVisible", {"open": False})
+
+    assert client.browsers[0]["width"] == shut
+
+
 def test_an_action_with_nothing_selected_sends_nothing(client: MtaSandbox) -> None:
     """A button that acts on "whatever was last in the list" is how a
     confirmation ends up applied to the wrong row."""

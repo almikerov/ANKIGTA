@@ -419,9 +419,10 @@ class MtaSandbox:
         self._cursor_wanted_here = False
         self._cursor_requests = 0
         self.camera_target: Any = None
-        #: What `CModelNames` holds: object models, and nothing else. Peds and
-        #: vehicles are absent from it in MTA, which is the whole point.
-        self.model_names: dict[int, str] = {1337: "gate_model"}
+        #: What `CModelNames` holds. `InitializeMaps` loads the object table
+        #: *and* the vehicle names for 400-610; peds are absent from it
+        #: entirely, which is the difference that matters here.
+        self.model_names: dict[int, str] = {1337: "gate_model", 411: "Infernus"}
         #: Warnings MTA's script debugging would have logged. A stub that
         #: answered silently would hide the call that produced them.
         self.script_warnings: list[str] = []
@@ -1779,13 +1780,19 @@ class MtaSandbox:
 
         def dx_draw_line_3d(
             start_x: Any = 0, start_y: Any = 0, start_z: Any = 0,
-            end_x: Any = 0, end_y: Any = 0, end_z: Any = 0, *_rest: Any,
+            end_x: Any = 0, end_y: Any = 0, end_z: Any = 0,
+            color: Any = None, width: Any = 1, *_rest: Any,
         ) -> bool:
+            # `dxDrawLine3D(startX, startY, startZ, endX, endY, endZ, colour,
+            # width, postGUI)` -- the colour and the width are the two things a
+            # test would ask about a line it cannot see, so a double that threw
+            # them away could answer only "something was drawn".
             self.drawn_lines_3d.append(
                 {
                     "startX": float(start_x), "startY": float(start_y),
                     "startZ": float(start_z), "endX": float(end_x),
                     "endY": float(end_y), "endZ": float(end_z),
+                    "color": color, "width": float(width),
                 }
             )
             return True
@@ -1948,6 +1955,14 @@ class MtaSandbox:
             if widget is None:
                 return False
             widget.width, widget.height = float(width), float(height)
+            # `CGUIWebBrowser_Impl::SetSize` resizes the underlying web view as
+            # well as the CEGUI element, so a page is re-laid out at the new
+            # width rather than stretched. A double that moved only the widget
+            # would let a test agree that the panel grew while the page inside
+            # it had not been told anything.
+            if lua_type(handle) == "table" and handle["__browser"]:
+                handle["__browser"]["width"] = float(width)
+                handle["__browser"]["height"] = float(height)
             self._dispatch_gui_event("onClientGUISize", handle)
             return True
 

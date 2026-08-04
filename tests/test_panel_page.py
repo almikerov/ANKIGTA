@@ -329,6 +329,25 @@ def test_saving_lives_with_the_fields_it_saves() -> None:
         assert control in before_editor
 
 
+def test_opening_the_editor_asks_lua_for_the_room() -> None:
+    """The page cannot resize its own window.
+
+    Fitting a third column inside a window sized for two left every column
+    cramped; the lists did not ask to be narrower because somebody opened an
+    editor. So the page says which shape it is in and Lua widens the panel.
+    """
+    answer = run_page(
+        [
+            {"receive": with_note()},
+            {"fire": {"id": "toggle-inspector", "type": "click"}},
+            {"fire": {"id": "toggle-inspector", "type": "click"}},
+        ]
+    )
+
+    asked = [payload for action, payload in answer["sent"] if action == "editorVisible"]
+    assert [step["open"] for step in asked] == [True, False]
+
+
 def test_the_editor_stays_shut_until_it_is_asked_for() -> None:
     """Selecting a card is not by itself a request to edit it."""
     selected = run_page([{"receive": with_note()}])

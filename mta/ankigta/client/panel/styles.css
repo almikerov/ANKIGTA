@@ -256,6 +256,11 @@ label {
    that is left; the deck and the note/card switch take what they need. */
 .search { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .search input { flex: 1 1 12em; min-width: 8em; }
+/* The Anki expression takes a line of its own, and the deck, the switch and
+   the button share the next one. Four controls abreast needed more width than
+   a column of a three-column panel has, so they wrapped wherever they ran out
+   -- which is the row looking broken rather than laid out. */
+#search input { flex: 1 1 100%; }
 
 /* The deck list, drawn in the page. It is positioned against this wrapper and
    scrolls once it is taller than the space it has, so a collection with fifty
@@ -265,7 +270,8 @@ label {
    otherwise size the button and push the rest of the row off the panel. The
    name is cut with an ellipsis, and the list below shows it in full. */
 .picklist > button {
-  width: 11em;
+  flex: 0 0 auto;
+  width: 10em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -301,7 +307,8 @@ label {
    are not the same width, so a fitted button would resize the row every time
    it was flipped. */
 .search .toggle {
-  width: 7em;
+  flex: 0 0 auto;
+  width: 6.5em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -310,8 +317,10 @@ label {
 
 /* One column each below a narrow panel, rather than two unusable ones. */
 @media (max-width: 900px) {
-  .workspace,
-  .workspace.editing { grid-template-columns: 1fr; }
+  .workspace { grid-template-columns: 1fr; }
+  /* The editing shape keeps its three columns even here: stacking the editor
+     under the list is the opposite of sliding it out beside it, and the panel
+     grows when the editor opens rather than dividing what it already had. */
 }
 
 /* --- entity table ----------------------------------------------------- */
@@ -512,37 +521,34 @@ label {
 
 /* --- the card itself -------------------------------------------------- */
 
+/* A column of the workspace, not a strip inside the card list. It carried
+   `max-height: 46%` from when it was one, which as a column meant it stopped
+   at not quite half its own height and left the rest of it empty while the
+   fields scrolled in a short box. */
 .inspector {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  border-top: 1px solid var(--line-soft);
-  padding-top: var(--space-2);
-  /* Its own scroll: a note type with eight fields must not push the card list
-     out of the column it shares. */
-  max-height: 46%;
-  overflow: auto;
 }
 .inspector[hidden] { display: none; }
-/* It is a column now, so it scrolls on its own rather than growing the panel
-   past its own edge when a note has many fields. */
-.inspector { overflow-y: auto; }
 .inspector-head { display: flex; align-items: baseline; justify-content: space-between; }
 .inspector-head h3 { margin: 0; font-size: 12px; color: var(--muted); }
 .inspector-head .hint { color: var(--muted); font-size: 11px; }
-.inspector-fields { display: flex; flex-direction: column; gap: var(--space-2); }
-.inspector-field { gap: var(--space-1); }
-/* The fields grow into the column rather than sitting at the two rows they
-   had when this was a strip inside the card list. */
-.inspector-fields { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
-.inspector-field { flex: 0 0 auto; }
-.inspector-field textarea {
-  min-height: 5.5em;
-  resize: vertical;
+/* The fields take the height that is left and scroll if a note type has more
+   of them than fits. One scroller, not one inside another. */
+.inspector-fields {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
+.inspector-field { flex: 0 0 auto; gap: var(--space-1); }
 .inspector-field textarea {
   font: inherit;
   width: 100%;
+  min-height: 5.5em;
   resize: vertical;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
@@ -551,4 +557,3 @@ label {
   color: var(--text);
 }
 .inspector-field textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.inspector-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
