@@ -1159,6 +1159,12 @@ local function validCardView(card)
         or type(card.due) ~= "number"
         or card.due ~= math.floor(card.due)
         or type(card.tags) ~= "table"
+        -- Optional: a companion older than the sort field answers without it,
+        -- and a row headed by its card id is worse than a refused page, not
+        -- better.
+        or (card.sortField ~= nil
+            and card.sortField ~= false
+            and type(card.sortField) ~= "string")
     then
         return false
     end

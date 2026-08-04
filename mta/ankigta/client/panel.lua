@@ -696,7 +696,9 @@ local function cardRows(snapshot, f7Snapshot)
             collectionUuid = tostring(identity.collectionUuid or ""),
             deck = tostring(deck.name or ""),
             state = tostring(card.state or ""),
-            question = tostring(card.question or ""),
+            -- What Anki lists the note by. A row headed by a card id names
+            -- nothing the player chose it for.
+            label = tostring(card.sortField or ""),
             linkedTo = card.linkedTo or false,
             linked = linkedMapName ~= false,
             linkedMapName = linkedMapName,

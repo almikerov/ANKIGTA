@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from http.client import HTTPConnection
 
@@ -32,9 +32,16 @@ OTHER_UUID = "22222222-2222-4222-8222-222222222222"
 class FakeNote:
     tags: list[str]
     id: int = 0
+    #: Stored as Anki stores them: markup and media tags included.
+    fields: list[str] = field(default_factory=lambda: ["<div>你好</div>", "hello"])
+    #: Which field the note type nominates as the one Anki lists by.
+    sortf: int = 0
+
+    def note_type(self) -> dict[str, object]:
+        return {"sortf": self.sortf}
 
     def items(self) -> list[tuple[str, str]]:
-        return [("Front", "你好"), ("Back", "hello")]
+        return list(zip(["Front", "Back"], self.fields))
 
     def keys(self) -> list[str]:
         return ["Front", "Back"]
@@ -51,9 +58,21 @@ class FakeCard:
     #: card written without one is still a note of its own, the way a
     #: single-template note type behaves.
     note_id: int = 0
+    #: The note's stored fields and the index its note type lists by, so a test
+    #: about either can say so on the card it is about.
+    note_fields: list[str] | None = None
+    note_sortf: int = 0
 
     def note(self) -> FakeNote:
-        return FakeNote(self.note_tags, self.note_id or self.id)
+        return FakeNote(
+            self.note_tags,
+            self.note_id or self.id,
+            list(self.note_fields) if self.note_fields is not None
+            else ["<div>你好</div>", "hello"],
+            self.note_sortf,
+        )
+
+
 
 
 class FakeDecks:
@@ -88,7 +107,12 @@ class FakeCollection:
         }
         self.queries: list[str] = []
 
+    #: Steers the tests that are about the deck list rather than the cards.
+    deck_of_default = False
+
     def find_cards(self, query: str) -> list[int]:
+        if query == 'deck:"Default"':
+            return [1] if self.deck_of_default else []
         self.queries.append(query)
         return sorted(self.cards)
 
@@ -138,6 +162,64 @@ def test_search_pagination_and_stale_state_are_explicit() -> None:
 
     with pytest.raises(CardPickerError, match="card is missing"):
         service.read(4)
+
+
+def test_a_row_is_headed_by_what_anki_lists_the_note_by() -> None:
+    """The sort field, not the card id.
+
+    A card id names nothing the player chose the card for. Which field Anki
+    lists by belongs to the note type, as `sortf`, so a collection sorted by
+    Reading rather than Expression reads the same here as in Anki's browser --
+    and it arrives stripped of the markup Anki stores it in.
+    """
+    collection = FakeCollection()
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+
+    by_id = {
+        card.identity.card_id: card.sort_field for card in service.search().cards
+    }
+
+    assert by_id[2] == "你好"
+
+    # A note type that lists by its second field lists by its second field.
+    collection.cards[2].note_sortf = 1
+    assert service.search().cards[0].sort_field == "hello"
+
+
+def test_a_sort_field_is_a_line_of_text_not_the_markup_it_is_stored_as() -> None:
+    collection = FakeCollection()
+    collection.cards[2].note_fields = [
+        "<div>hello</div>[sound:hi.mp3]&nbsp;<b>there</b>",
+        "back",
+    ]
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+
+    assert service.search().cards[0].sort_field == "hello there"
+
+
+def test_ankis_own_empty_default_deck_is_not_offered_as_a_filter() -> None:
+    """Anki makes it in every collection and hides it once it is empty.
+
+    Offering it is offering a filter that returns nothing, for a deck nobody
+    made.
+    """
+    collection = FakeCollection()
+    collection.decks = NamedDecks([(10, "Languages"), (1, "Default")])
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+
+    assert [deck.name for deck in service.search().decks] == ["Languages"]
+
+    # One that holds cards is a real deck and stays.
+    collection.deck_of_default = True
+    assert [deck.name for deck in service.search().decks] == ["Default", "Languages"]
+
+
+class NamedDecks:
+    def __init__(self, pairs: list[tuple[int, str]]) -> None:
+        self.pairs = pairs
+
+    def all_names_and_ids(self) -> list[AnkiDeckNameId]:
+        return [AnkiDeckNameId(id=i, name=n) for i, n in self.pairs]
 
 
 def test_a_written_anki_expression_reaches_anki_unchanged() -> None:

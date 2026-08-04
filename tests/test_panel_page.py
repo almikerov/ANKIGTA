@@ -90,14 +90,21 @@ for (const step of script) {
     }
   }
   if (step.set) byId[step.set.id].value = step.set.value;
+  if (step.choose) {
+    const option = byId["deck-menu"].children.find(
+      (o) => o.getAttribute("data-deck") === step.choose.deck
+    );
+    for (const f of option.listeners["click"] || []) f({ preventDefault() {} });
+  }
 }
 
 console.log(JSON.stringify({
   sent,
   missing,
-  options: Object.fromEntries(
-    ["deck", "scope"].map((id) => [id, byId[id].children.map((o) => o.value)])
-  ),
+  decks: byId["deck-menu"].children.map((o) => o.getAttribute("data-deck")),
+  deckMenuHidden: byId["deck-menu"].hidden,
+  deckLabel: byId["deck"].textContent,
+  scopeLabel: byId["scope"].textContent,
   searchQuery: byId["search-query"].value,
 }));
 """
@@ -160,7 +167,7 @@ def test_the_deck_list_becomes_options_once_a_search_has_answered() -> None:
         ]
     )
 
-    assert answer["options"]["deck"] == ["", "2", "Default"]
+    assert answer["decks"] == ["", "2", "Default"]
 
 
 def test_a_redraw_does_not_wipe_the_deck_list() -> None:
@@ -173,11 +180,35 @@ def test_a_redraw_does_not_wipe_the_deck_list() -> None:
         ]
     )
 
-    assert answer["options"]["deck"] == ["", "2", "Default"]
+    assert answer["decks"] == ["", "2", "Default"]
 
 
-def test_choosing_a_deck_or_a_row_kind_searches_without_a_second_press() -> None:
-    """Both dropdowns say what the rows below them are.
+def test_the_deck_list_is_drawn_in_the_page_and_opens_closed() -> None:
+    """Not a native `<select>`.
+
+    MTA blits CEF's popup surface only while it fits inside the browser
+    rectangle and drops it whole otherwise, so a native dropdown vanishes
+    exactly when it grows -- as soon as a collection has enough decks to need
+    one.
+    """
+    answer = run_page(
+        [
+            {"receive": state(decks=["2", "Default"])},
+        ]
+    )
+
+    assert answer["deckMenuHidden"] is True
+    opened = run_page(
+        [
+            {"receive": state(decks=["2", "Default"])},
+            {"fire": {"id": "deck", "type": "click"}},
+        ]
+    )
+    assert opened["deckMenuHidden"] is False
+
+
+def test_choosing_a_deck_or_flipping_the_switch_searches_at_once() -> None:
+    """Both say what the rows below them are.
 
     A value that changes nothing until a separate button is pressed reads as a
     filter that does not work.
@@ -185,10 +216,9 @@ def test_choosing_a_deck_or_a_row_kind_searches_without_a_second_press() -> None
     chosen = run_page(
         [
             {"receive": state(decks=["2", "Default"])},
-            {"set": {"id": "deck", "value": "Default"}},
-            {"fire": {"id": "deck", "type": "change"}},
-            {"set": {"id": "scope", "value": "notes"}},
-            {"fire": {"id": "scope", "type": "change"}},
+            {"fire": {"id": "deck", "type": "click"}},
+            {"choose": {"deck": "Default"}},
+            {"fire": {"id": "scope", "type": "click"}},
         ]
     )
 
@@ -196,6 +226,21 @@ def test_choosing_a_deck_or_a_row_kind_searches_without_a_second_press() -> None
     assert len(searches) == 2
     assert searches[0]["deck"] == "Default"
     assert searches[1]["scope"] == "notes"
+    # And picking one closes the list behind it.
+    assert chosen["deckMenuHidden"] is True
+
+
+def test_the_switch_says_which_of_the_two_it_currently_is() -> None:
+    """A toggle whose label is the action rather than the state leaves the
+    player guessing which way it is set."""
+    answer = run_page(
+        [
+            {"receive": state()},
+            {"fire": {"id": "scope", "type": "click"}},
+        ]
+    )
+
+    assert answer["scopeLabel"] == "cardPicker.scope.notes"
 
 
 def test_the_expression_keeps_its_button() -> None:

@@ -106,14 +106,20 @@
         <!-- The expression goes to Anki as written, so the field says so
              rather than inviting a phrase. The switch beside the deck is the
              one Anki's own browser has: it changes what a row below is. -->
+        <!-- The deck list is drawn in the page, not as a native <select>.
+             MTA blits CEF's popup surface only while it fits inside the
+             browser rectangle and drops it whole otherwise (CWebView.cpp), so
+             a native dropdown disappears exactly when it grows — which is to
+             say, as soon as a collection has enough decks to need one. -->
         <form class="search" id="search">
           <input type="text" id="search-query"
                  data-i18n-placeholder="cardPicker.queryHint" />
-          <select id="deck"></select>
-          <select id="scope">
-            <option value="cards" data-i18n="cardPicker.scope.cards"></option>
-            <option value="notes" data-i18n="cardPicker.scope.notes"></option>
-          </select>
+          <div class="picklist">
+            <button type="button" id="deck" aria-haspopup="listbox"
+                    aria-expanded="false"></button>
+            <div class="picklist-menu" id="deck-menu" role="listbox" hidden></div>
+          </div>
+          <button type="button" id="scope" class="toggle"></button>
           <button type="submit" class="primary" data-i18n="cardPicker.search"></button>
         </form>
         <div class="rows" id="cards" role="list"></div>

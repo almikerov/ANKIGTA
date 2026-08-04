@@ -117,32 +117,62 @@
     });
   }
 
-  /* A deck is chosen, not typed. Rebuilt only when the list actually changed,
-   * so an open dropdown is not yanked shut by an unrelated redraw. */
+  /* A deck is chosen, not typed. The chosen value lives here rather than on a
+   * control, because the control is a button and a list of buttons now. */
+  var chosenDeck = "";
   var lastDeckList = null;
+
+  function deckMenuOpen(open) {
+    document.getElementById("deck-menu").hidden = !open;
+    document.getElementById("deck").setAttribute("aria-expanded", String(!!open));
+  }
+
+  function chooseDeck(name) {
+    chosenDeck = name;
+    document.getElementById("deck").textContent = name || t("cardPicker.anyDeck");
+    deckMenuOpen(false);
+  }
 
   function renderDecks(picker) {
     var decks = (picker && picker.decks) || [];
     var signature = JSON.stringify(decks);
+    /* Rebuilt only when the list actually changed, so an open menu is not
+     * yanked shut by an unrelated redraw. */
     if (signature === lastDeckList) return;
     lastDeckList = signature;
 
-    var select = document.getElementById("deck");
-    var chosen = select.value;
-    select.textContent = "";
-    var any = document.createElement("option");
-    any.value = "";
-    any.textContent = t("cardPicker.anyDeck");
-    select.appendChild(any);
-    for (var i = 0; i < decks.length; i += 1) {
-      var option = document.createElement("option");
-      option.value = decks[i];
-      option.textContent = decks[i];
-      select.appendChild(option);
+    var menu = document.getElementById("deck-menu");
+    menu.textContent = "";
+    var names = [""].concat(decks);
+    for (var i = 0; i < names.length; i += 1) {
+      menu.appendChild(deckOption(names[i]));
     }
     /* What the server says the filter is beats what was left in the control:
      * they disagree only when somebody else changed it. */
-    select.value = (picker && picker.deckFilter) || chosen || "";
+    chooseDeck((picker && picker.deckFilter) || chosenDeck || "");
+  }
+
+  function deckOption(name) {
+    var option = element("button", "picklist-option", name || t("cardPicker.anyDeck"));
+    option.type = "button";
+    option.setAttribute("role", "option");
+    option.setAttribute("data-deck", name);
+    option.addEventListener("click", function () {
+      chooseDeck(name);
+      submitSearch();
+    });
+    return option;
+  }
+
+  /* Cards or notes is one of two, so it is a switch rather than a list to open.
+   * The button says which it currently is, as every other toggle here does. */
+  var chosenScope = "cards";
+
+  function chooseScope(scope) {
+    chosenScope = scope === "notes" ? "notes" : "cards";
+    var button = document.getElementById("scope");
+    button.textContent = t("cardPicker.scope." + chosenScope);
+    button.setAttribute("aria-pressed", String(chosenScope === "notes"));
   }
 
   /* The expression the rows are an answer to, and whether a row is a card or
@@ -162,7 +192,7 @@
     var scope = (picker && picker.scope) || "cards";
     if (scope !== lastScope) {
       lastScope = scope;
-      document.getElementById("scope").value = scope;
+      chooseScope(scope);
     }
   }
 
@@ -184,7 +214,7 @@
       row.setAttribute("role", "listitem");
 
       var primary = element("div", "primary-cell");
-      primary.appendChild(element("strong", null, card.question || card.cardId));
+      primary.appendChild(element("strong", null, card.label || card.cardId));
       primary.appendChild(element("span", "sub", card.deck));
       if (card.foreignMapName) {
         primary.appendChild(
@@ -200,7 +230,7 @@
 
       if (card.cardId === selected.cardId) {
         row.className = "row card selected";
-        selectedCardLabel = (card.question || card.cardId) + " — " + card.deck;
+        selectedCardLabel = (card.label || card.cardId) + " — " + card.deck;
       }
       bindSelectCard(row, card);
       host.appendChild(row);
@@ -642,8 +672,8 @@
   function submitSearch() {
     send("searchCards", {
       query: document.getElementById("search-query").value,
-      deck: document.getElementById("deck").value,
-      scope: document.getElementById("scope").value
+      deck: chosenDeck,
+      scope: chosenScope
     });
   }
 
@@ -656,8 +686,13 @@
    * changes nothing until a second button is pressed reads as a broken filter.
    * The expression keeps the button: it is typed, and searching per keystroke
    * would ask Anki a question after every letter. */
-  document.getElementById("deck").addEventListener("change", submitSearch);
-  document.getElementById("scope").addEventListener("change", submitSearch);
+  document.getElementById("deck").addEventListener("click", function () {
+    deckMenuOpen(document.getElementById("deck-menu").hidden);
+  });
+  document.getElementById("scope").addEventListener("click", function () {
+    chooseScope(chosenScope === "notes" ? "cards" : "notes");
+    submitSearch();
+  });
   function applyConnection() {
     var portText = document.getElementById("port").value;
     var port = portText === "" ? null : Number(portText);
@@ -709,7 +744,15 @@
   /* Escape closes, because a panel that traps the cursor and cannot be left is
    * the defect this replaces. */
   document.addEventListener("keydown", function (event) {
-    if (event.key === "Escape") send("close");
+    /* An open menu is what Escape closes first: closing the whole panel out
+     * from under someone who only wanted to back out of a list is not what
+     * they pressed it for. */
+    if (event.key !== "Escape") return;
+    if (!document.getElementById("deck-menu").hidden) {
+      deckMenuOpen(false);
+      return;
+    }
+    send("close");
   });
 
   window.ANKIGTA = {receive: receive};

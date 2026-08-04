@@ -675,7 +675,7 @@ def test_a_card_linked_to_another_map_names_that_map(
                 enabled = true,
                 cards = {
                     {identity = {collectionUuid = uuid, cardId = 7},
-                     deck = {name = "Deck"}, state = "review", question = "Here"},
+                     deck = {name = "Deck"}, state = "review", sortField = "Here"},
                 },
             })
         end
@@ -690,7 +690,7 @@ def test_a_card_linked_to_another_map_names_that_map(
     assert cards["7"]["foreignMap"] is False
     assert cards["42"]["foreignMap"] is True
     assert cards["42"]["foreignMapName"] == "Other Map"
-    assert cards["42"]["question"] == ""
+    assert cards["42"]["label"] == ""
 
 
 def test_renaming_uses_the_selected_identity_and_only_changes_the_name(
@@ -904,7 +904,7 @@ def test_a_fresh_f7_snapshot_updates_entity_and_card_rows_without_reopening(
                 enabled = true,
                 cards = {
                     {identity = {collectionUuid = uuid, cardId = 42},
-                     deck = {name = "Deck"}, state = "review", question = "Gate"},
+                     deck = {name = "Deck"}, state = "review", sortField = "Gate"},
                 },
             })
         end
