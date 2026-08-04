@@ -665,6 +665,10 @@ local function entityRows(snapshot)
     dropFilterHiding(snapshot)
     selectionArrivedFromOutside = false
     local rows = {}
+    -- What an entity that says nothing of its own gets, read once rather than
+    -- per row: it is the same answer for every one of them, and this runs over
+    -- the whole list on every state push.
+    local settingsCoronaColour = currentValue("coronaColour") or false
     for _, entry in ipairs(snapshot and snapshot.entities or {}) do
         local mapEntity = entry.mapEntity
         table.insert(rows, {
@@ -687,7 +691,7 @@ local function entityRows(snapshot)
                 and entry.metadata.coronaOpacity or false,
             -- What the empty field means, so the swatch can show the colour
             -- the corona will really be rather than nothing at all.
-            settingsCoronaColour = currentValue("coronaColour") or false,
+            settingsCoronaColour = settingsCoronaColour,
             -- What is on the row now, so the replace confirmation can name
             -- what it is about to throw away rather than saying "unknown".
             linkedCard = type(entry.link.cardIdentity) == "table"
