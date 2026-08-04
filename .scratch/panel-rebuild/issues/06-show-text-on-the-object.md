@@ -1,4 +1,4 @@
-# 09 — Show text: a Text Label on the Map Entity
+# 06 — Show text: a Text Label on the Map Entity
 
 **What to build:** a third Review Mode in which a linked Map Entity carries a
 **Text Label** — a line from its card's note, drawn in the world — instead of
@@ -7,12 +7,16 @@ opening the review surface.
 Reported item 16. Decided in a grilling session; the reasoning that does not
 belong in a ticket is in ADR 0029, and `Text Label` is in the glossary.
 
+**It stays its own ticket** while everything else in this wave was merged into
+something bigger. It is a whole Review Mode with an ADR behind it — three
+settings, a fallback rule, caching, wrapping, a draw cap — and folding it into
+ticket 04's rebuild would make one ticket nobody finishes in a sitting.
+
 **Nothing is presented and nothing is rated.** The card cannot be opened or
 answered in this mode. ADR 0027 lets a *badly* presented card still be rated —
-the player saw it. Here there is no presentation at all, and rating what was
-never shown would write a repetition that did not happen. The panel says so where
-the mode is chosen, rather than leaving the player to assume their reading
-counted.
+the player saw it. Here there is no presentation at all, and rating what was never
+shown would write a repetition that did not happen. The panel says so where the
+mode is chosen, rather than leaving the player to assume their reading counted.
 
 **No ANKIGTA Session.** No filtered deck, no Exact Card Admission, no Review
 Transaction, no progress counters. The label comes from the Spatial Link directly
@@ -26,13 +30,13 @@ shape the Activation Zone radius already has:
   picked in daylight is still legible at night;
 - **the size**.
 
-Ticket 04 adds the colour rule kind and the picker that goes with it; this uses
-them rather than inventing a second way to choose a colour.
+The colour picker is ticket 03's and the colour rule kind is ticket 04's. Use
+both; do not add a third way to choose a colour.
 
 **When a field is missing or wordless.** The chosen field may not exist on this
 note type, and a field holding only `<img>` or `[sound:]` has no words once the
-markup is stripped. Both fall through to the first field that does have words.
-The panel's row shows when a label is falling back, so an object showing something
+markup is stripped. Both fall through to the first field that does have words. The
+panel's row shows when a label is falling back, so an object showing something
 other than what was asked reads as such rather than as correct.
 
 **What is drawn.** Wrapped by words to a line limit, ellipsis past it — a silent
@@ -55,8 +59,8 @@ never a source of truth.
 **Review Protection and Mute world do not apply** in this mode. There is no review
 surface to protect and no review to be quiet for.
 
-**It shares an entity with ticket 07's key prompt.** Both are text drawn on a Map
-Entity, and one entity never shows both at once. 07 lands first and has no Text
+**It shares an entity with ticket 05's key prompt.** Both are text drawn on a Map
+Entity, and one entity never shows both at once. 05 lands first and has no Text
 Label to collide with, so this ticket owns the rule and the test for it.
 
 **Reference, not a merge.** This was built once, on
@@ -66,10 +70,10 @@ first wave with it; it is not being merged. Read it — `git show f60905b` — a
 take what survives. It was never run by anyone, so nothing in it is evidence.
 
 **Carried finding:** the card row's `label` key collides with **Text Label**,
-which is a different thing entirely. Rename it here, where the collision starts
-to matter.
+which is a different thing entirely. Rename it here, where the collision starts to
+matter.
 
-**Blocked by:** 01, 04, 07.
+**Blocked by:** 01, 03, 04, 05.
 
 **Status:** ready-for-agent
 
@@ -88,5 +92,5 @@ to matter.
 - [ ] Labels are drawn with Anki closed, from the cache
 - [ ] Editing the note in the inspector updates the label
 - [ ] No filtered deck, admission or Review Transaction happens in this mode
-- [ ] An entity never shows a Text Label and ticket 07's key prompt at once
+- [ ] An entity never shows a Text Label and ticket 05's key prompt at once
 - [ ] The card row's `label` key no longer collides with **Text Label**

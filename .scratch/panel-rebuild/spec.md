@@ -1,8 +1,12 @@
 # Panel rebuild
 
 Fourteen things the owner asked for after running the panel, plus what four
-parallel branches left unfinished, folded into nine tickets that run **one at a
+parallel branches left unfinished, folded into six tickets that run **one at a
 time**.
+
+They are grouped by the file set they open, not by how they were reported. Two
+tickets that read the same 2000 lines of `app.js` are one ticket; a ticket small
+enough to feel tidy still costs a merge, a deploy and a trip into the game.
 
 ## Why this exists as a second wave
 
@@ -36,20 +40,25 @@ first wave got its shape.
 
 | # | What the owner asked for | Ticket |
 |---|---|---|
-| 24 | Activation key, global and per link | 07 |
-| 25 | Activation type: by key or by zone | 07 |
-| 26 | `<KEY> to view` on an entity in key mode | 07 |
-| 27 | "Apply to all" beside every overridable global | 08 |
+| 24 | Activation key, global and per link | 05 |
+| 25 | Activation type: by key or by zone | 05 |
+| 26 | `<KEY> to view` on an entity in key mode | 05 |
+| 27 | "Apply to all" beside every overridable global | 05 |
 | 28 | Teleport works in the Map Editor | 02 |
 | 29 | Drop language support, English only | 01 |
 | 30 | Dropdowns only open on the arrow | 03 |
 | 31 | A drawn zone has no distance at which it stops | 04 |
-| 32 | `editor_dump`/`editor_test`, and no map switch | 05 |
+| 32 | `editor_dump`/`editor_test`, and no map switch | 02 |
 | 33 | `entity_runtime_not_unique` — nothing links | 02 |
 | 34 | Zones do not follow their objects until F7 | 04 |
 | 35 | The entity edit pane should always be visible | 03 |
 | 36 | A field inheriting a global should show its value | 03 |
 | 37 | `Draw always` becomes `Show corona` | 04 |
+
+Two more, carried from the previous wave and not in the owner's numbered list:
+the Map Entity list's ergonomics (single-click camera, arrow keys, a renamed
+entity still showing its model name, and a ped reading as something better than
+`Ped skin N`) are in **03**; `Review mode: Show text` is **06**.
 
 ## Carried findings
 
@@ -60,7 +69,7 @@ named where it is obvious.
 - `companion/ankigta_companion/cards.py` carries a raw U+00A0 inside a
   `.replace()` that `str.split()` already handles.
 - The card row's `label` key collides with the glossary's **Text Label**, which
-  is a different thing entirely. Ticket 09.
+  is a different thing entirely. Ticket 06.
 - `.inspector-actions` in `styles.css` is dead. Ticket 03.
 - `tests/test_panel_page.py::test_saving_lives_with_the_fields_it_saves` reads
   `index.html` as text and splits on `'id="inspector"'`, which

@@ -26,9 +26,8 @@ things. Pull them apart:
 
 A corona has a colour and an opacity, each with a global default and an override
 on the link — the shape the Activation Zone radius already has. **Opacity
-defaults to 0.6.** Colour is chosen with a picker; the panel cannot open a
-native one for the reason ticket 03 gives, so either it is drawn in the page or
-it is MTA's own, and the ticket says which it chose and why.
+defaults to 0.6.** The colour picker is ticket 03's; use it rather than building
+a second way to choose a colour.
 
 **One distance, for everything drawn.** A drawn mark has no distance at which it
 stops, so it is still hanging in the air long after its object has dropped its
