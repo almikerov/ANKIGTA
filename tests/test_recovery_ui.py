@@ -383,29 +383,6 @@ def test_the_screen_closes_itself_when_the_server_says_recovery_is_over() -> Non
         sandbox.close()
 
 
-def test_the_recovery_screen_follows_a_language_switch() -> None:
-    sandbox = start_client()
-    try:
-        call(
-            sandbox,
-            'function() ANKIGTA.ClientSettings.set("language", "ru") end',
-        )
-        show_recovery(sandbox)
-        russian = label(sandbox, "recovery.restore")
-        assert russian in sandbox.widget_texts()
-
-        call(
-            sandbox,
-            'function() ANKIGTA.ClientSettings.set("language", "en") end',
-        )
-
-        english = sandbox.widget_texts()
-        assert "Restore selected backup" in english
-        assert russian not in english
-    finally:
-        sandbox.close()
-
-
 # --- the choice reaches the restore -------------------------------------------
 
 

@@ -44,11 +44,12 @@ and the feel of the cursor — so that is here.
   back with that entity selected — even if your filter would have hidden it.
 - Undo and Redo, and confirm the buttons grey out when there is nothing to do.
 
-## Scale, language and study
+## Scale and study
 
-- Change UI scale in the settings panel and reopen the panel. It is bigger.
-- Switch language with the panel open. Every label changes without a restart,
-  and the filter text you typed is still there.
+- Type a filter, then change UI scale in the settings panel. Everything is
+  bigger, and the filter text you typed is still there — the scale change
+  redraws the panel, and a redraw must not take the filter with it.
+- Reopen the panel and confirm it comes back at the new scale.
 - With cards linked and Anki connected, confirm studying starts on its own —
   there is no Start button to press.
 - Open Anki's own Reviewer. Confirm ANKIGTA pauses and the panel offers one
@@ -56,5 +57,5 @@ and the feel of the cursor — so that is here.
 
 ## Expected evidence
 
-Screenshots of the panel at 1280x720, 1920x1080 and 4K, in both languages, and
-a note of any label that clips.
+Screenshots of the panel at 1280x720, 1920x1080 and 4K, and a note of any
+label that clips.

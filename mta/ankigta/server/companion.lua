@@ -1076,9 +1076,9 @@ end
 
 --- The Card Picker could not answer, and the reason is about the link.
 --
--- The key is a locale key rather than a sentence: this side does not know
--- which language the player reads, and the string it used to build here
--- reached the panel as its own name in every language.
+-- The key is a string-table key rather than a sentence: the table lives on the
+-- client, and the sentence this side used to build reached the panel as a line
+-- nothing else on screen was worded like.
 local function cardPickerFailure(player, category)
     if isElement(player) then
         triggerClientEvent(

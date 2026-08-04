@@ -45,8 +45,8 @@
   var lastEntities = [];
   var selectedCardLabel = "";
 
-  /* A link state is a stable technical value; only its display follows the
-   * language, and its tone is set here rather than in the string table. */
+  /* A link state is a stable technical value; only its display comes from the
+   * string table, and its tone is set here rather than in that table. */
   var TONES = {
     "Active Spatial Link": "good",
     "Unlinked": "",
@@ -478,7 +478,6 @@
   /** The one entry point Lua calls. A whole state in, a whole render out. */
   function receive(state) {
     locale = state.locale || {};
-    document.documentElement.lang = state.language || "en";
     applyLocale();
     renderConnection(state.connection || {state: "disconnected"});
     selected = state.selected || {mapId: false, entityId: false, cardId: false};

@@ -34,17 +34,19 @@ and destroying a window takes its children with it the way CEGUI does.
 sandbox.load("shared/locale.lua")
 sandbox.load("client/study.lua")
 sandbox.trigger("ankigta:companionStatus", ...)
-assert "Начать обучение" in sandbox.widget_texts()
+assert "Start studying" in sandbox.widget_texts()
 ```
 
 `sandbox.widget_texts()` is every live control's text, `sandbox.grid_texts()`
 every grid heading and cell, and `sandbox.drawn_text` every string handed to
-`dxDrawText`. `getLocalization()` reports `sandbox.localization`. Indexing
-follows MTA: grid rows from 0, columns from 1, and `-1` for no selection.
+`dxDrawText`. `getLocalization()` reports `sandbox.localization` and counts the
+call in `sandbox.localization_reads`, which is how ticket 07 checks that
+nothing asks Windows what language it is in. Indexing follows MTA: grid rows
+from 0, columns from 1, and `-1` for no selection.
 
-This is what makes "the interface is translated" checkable. A string present in
-`locale.lua` but never written into a control fails the render test, which a
-key-parity check cannot see.
+This is what makes "every surface renders in English" checkable. A string
+present in `locale.lua` but never written into a control fails the render test,
+which reading the table alone cannot see.
 
 ## Reading the constants a chunk holds
 
@@ -54,8 +56,8 @@ know what the code will look up — `"f7.recheck" in string_constants(F7)` — a
 never grep the file for the same thing: a grep sees comments, misses strings
 built by concatenation, and breaks on reformatting.
 
-`tests/test_localization.py` uses it for the guard that no script outside
-`shared/locale.lua` compiles a Cyrillic string constant.
+`tests/test_localization.py` uses it for the guard that no script in the
+resource — the string table included — compiles a Cyrillic string constant.
 
 ## Do not add source-text assertions
 

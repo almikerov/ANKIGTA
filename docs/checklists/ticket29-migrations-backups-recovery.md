@@ -37,9 +37,9 @@ real clock, a real disk and what the screen actually looks like.
   appears on its own, that the damaged file is still byte-for-byte as you left
   it, and that no new database was created.
 - On that screen, confirm the copy list is legible: the day, the kind, the
-  schema version and — for a copy that failed verification — the reason, in the
-  language the client is set to. Confirm the wording reads as an offer to
-  choose rather than a report of something already done.
+  schema version and — for a copy that failed verification — the reason.
+  Confirm the wording reads as an offer to choose rather than a report of
+  something already done.
 - Choose the verified copy. Confirm the data comes back, the damaged original
   appears under `backups/` with a `quarantine-` name, and the screen closes.
 - Corrupt every copy as well as the database. Confirm the screen says no copy
@@ -49,12 +49,10 @@ real clock, a real disk and what the screen actually looks like.
   original rather than an empty or rewritten file.
 - Confirm the backup directory holds only `.sqlite` copies and the manifest —
   no connection config, no client settings file, no UI placement.
-- Switch language while the recovery screen is open. Confirm every label
-  follows and the selected row survives.
 
 ## Expected evidence
 
 Directory listings of `backups/` at each step, SHA-256 of the damaged database
 before and after the recovery screen was open, the server log lines for
 `database_recovery` and `daily_backup_failed`, and screenshots of the recovery
-screen in both languages — including the "no copy passed verification" state.
+screen — including the "no copy passed verification" state.
