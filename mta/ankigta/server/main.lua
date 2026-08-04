@@ -1729,6 +1729,44 @@ end
 -- brings into being. Naming an object, or saying how close you have to stand
 -- to it, is not a statement about any card -- and until now neither could be
 -- made until a card had been chosen.
+--- The row an element's own stamp names, wherever it is standing today.
+--
+-- ANKIGTA writes `ankigtaEntityId` on an element when it adopts it, so an
+-- element carrying one is already a Map Entity and the stamp is its durable
+-- half. The map is not: the same object can be saved into another `.map`, or
+-- met while a different map resource owns it, and then the identity the panel
+-- names -- which is built from the map it is standing in -- misses a row that
+-- plainly exists.
+--
+-- That is what refused `Draw always` on an object stored under `editor_dump`
+-- while the world had it under `editor_test`: `findMapEntityByRuntimeElement`
+-- checks the owning resource as well as the id, and answered "not loaded"
+-- about a thing standing in front of the player.
+--
+-- One row or none. Two maps holding the same entity id is a question about
+-- which entity is meant, and answering it by picking the first would write to
+-- whichever the walk happened to reach.
+local function rowByOwnStamp(entityElement)
+    local stamp = getElementData(entityElement, "ankigtaEntityId")
+    if type(stamp) ~= "string" or stamp == "" then
+        return nil
+    end
+    local rows = ANKIGTA.Store.listMapEntities()
+    if type(rows) ~= "table" then
+        return nil
+    end
+    local found = nil
+    for _, row in ipairs(rows) do
+        if row.entity_id == stamp then
+            if found then
+                return nil
+            end
+            found = row
+        end
+    end
+    return found
+end
+
 local function adoptOffer(player, entityElement)
     local target, reason = validatePickEntity(player, entityElement, "pick")
     if not target then
@@ -1833,6 +1871,7 @@ addEventHandler(ENTITY_METADATA_REQUEST_EVENT, resourceRoot, function(
         end
         if element then
             local adopted = ANKIGTA.Store.findMapEntityByRuntimeElement(element)
+                or rowByOwnStamp(element)
             if adopted then
                 mapId, entityId = adopted.map_id, adopted.entity_id
             else

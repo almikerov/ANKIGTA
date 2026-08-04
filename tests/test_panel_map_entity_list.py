@@ -742,6 +742,58 @@ def test_a_look_is_never_written_to_the_entity(
     ] == []
 
 
+def test_an_entity_stored_under_one_map_is_written_to_from_another(
+    server: MtaSandbox,
+) -> None:
+    """The owner's `vgsSstairs04_lvs`, exactly.
+
+    Its row was stored under `editor_dump` while the world had it under
+    `editor_test`, so the identity the panel names -- built from the map it is
+    standing in -- missed a row that plainly existed, and
+    `findMapEntityByRuntimeElement` refused on the owning resource. `Draw
+    always` came back "the entity was not changed" for a thing standing in
+    front of the player.
+
+    The element carries ANKIGTA's own stamp, and that is the durable half of
+    its identity; the map it happens to be in today is not.
+    """
+    known = install_resource_world(
+        server, current_resource="current-map", duplicate_entity_id="already-here"
+    )
+    seed_entity(
+        server,
+        map_id="a-map-that-is-not-running",
+        resource_name="a-map-that-is-not-running",
+        entity_id="stairs-9",
+    )
+    standing = server.add_world_element(
+        entity_id="stairs-9", map_id="stairs-9", ankigtaEntityId="stairs-9"
+    )
+    standing["__parent"] = known["__parent"]
+    player = server.add_study_player()
+    player["x"], player["y"], player["z"] = 0, 0, 0
+
+    server.trigger(
+        "ankigta:updateEntityMetadata",
+        server.lua.globals().resourceRoot,
+        "current-map",
+        "stairs-9",
+        server.lua.table_from({"showRadius": True}),
+        client=player,
+    )
+
+    refused = [
+        event
+        for event in server.recorder.client_events
+        if event.name == "ankigta:pendingMapSaveNotice"
+    ]
+    assert refused == [], f"refused: {[event.args for event in refused]}"
+    assert server.connection.raw.execute(
+        "SELECT show_radius FROM map_entity_metadata WHERE entity_id = ?",
+        ("stairs-9",),
+    ).fetchone() == (1,)
+
+
 def test_a_panel_row_describes_position_and_location_not_identity(
     panel_client: MtaSandbox,
 ) -> None:
