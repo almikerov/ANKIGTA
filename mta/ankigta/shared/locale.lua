@@ -207,7 +207,7 @@ Locale.strings = {
         -- MTA has no name for a ped skin, so the skin itself is the name.
         ["f7.entity.pedSkin"] = "Ped skin %d",
         ["f7.radius"] = "Radius (m)",
-        ["f7.showRadius"] = "Draw it",
+        ["f7.showRadius"] = "Draw radius",
         -- The standing answer, kept on the entity: the world shows it
         -- whether or not F7 is open.
         ["f7.drawAlways"] = "Draw always",
@@ -510,7 +510,7 @@ Locale.strings = {
         ["f7.entity.unnamed"] = "Безымянная Map Entity",
         ["f7.entity.pedSkin"] = "Скин педа %d",
         ["f7.radius"] = "Радиус (м)",
-        ["f7.showRadius"] = "Показывать",
+        ["f7.showRadius"] = "Показывать радиус",
         ["f7.drawAlways"] = "Показывать всегда",
         ["f7.replaceTitle"] = "Заменить привязанную карточку?",
         ["f7.replaceWarning"] = "Текущая связь будет отброшена. Саму карточку"

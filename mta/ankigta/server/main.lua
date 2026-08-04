@@ -1818,24 +1818,40 @@ addEventHandler(ENTITY_METADATA_REQUEST_EVENT, resourceRoot, function(
     end
     local row, readError = ANKIGTA.Store.getMapEntity(mapId, entityId)
     if not row then
-        -- Nothing stored under that identity means this is still an offer, and
-        -- editing one is exactly what takes it in. Adoption renames it to its
-        -- persistent identity, so everything after this uses that one.
+        -- Nothing stored under that identity. The panel is either naming an
+        -- offer -- and editing one is exactly what takes it in -- or naming an
+        -- entity by the identity it had *before* it was adopted, because
+        -- adoption renames it and the row on screen is one snapshot behind.
+        -- Both are answered by asking the store about the element itself.
         local element = elementByAdoptionName(entityId, client)
         if element then
-            local record, adoptError = adoptOffer(client, element)
-            if not record then
-                triggerClientEvent(
-                    client, PENDING_NOTICE_EVENT, resourceRoot,
-                    "notice.entityUpdateFailed", adoptError
-                )
-                return
+            local adopted = ANKIGTA.Store.findMapEntityByRuntimeElement(element)
+            if adopted then
+                mapId, entityId = adopted.map_id, adopted.entity_id
+            else
+                local record, adoptError = adoptOffer(client, element)
+                if not record then
+                    triggerClientEvent(
+                        client, PENDING_NOTICE_EVENT, resourceRoot,
+                        "notice.entityUpdateFailed", adoptError
+                    )
+                    return
+                end
+                mapId, entityId = record.mapId, record.entityId
             end
-            mapId, entityId = record.mapId, record.entityId
             row = ANKIGTA.Store.getMapEntity(mapId, entityId)
         end
     end
     if not row then
+        -- Named, because "not loaded" about an entity plainly standing in the
+        -- world is a claim the player cannot check and this side can. The
+        -- identity the panel asked by is the whole of what is in doubt.
+        outputDebugString(
+            "[ANKIGTA] entity_metadata_unresolved map=" .. tostring(mapId)
+                .. " entity=" .. tostring(entityId)
+                .. " reason=" .. tostring(readError or "entity_missing"),
+            2
+        )
         triggerClientEvent(
             client, PENDING_NOTICE_EVENT, resourceRoot,
             "notice.entityUpdateFailed", readError or "entity_missing"
