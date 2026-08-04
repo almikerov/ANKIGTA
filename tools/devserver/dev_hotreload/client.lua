@@ -48,7 +48,9 @@ local TEXT = {
         startup = "Startup",
         toggleStartup = "Toggle startup",
         startupOn = "yes",
+        startupViaHotReload = "yes (HR)",
         startupOff = "—",
+        startupIsServers = "mtaserver.conf already starts %s; the Hot Reload flag adds nothing",
         close = "Close",
         start = "Start",
         stop = "Stop",
@@ -96,7 +98,9 @@ local TEXT = {
         startup = "Автозапуск",
         toggleStartup = "Переключить автозапуск",
         startupOn = "да",
+        startupViaHotReload = "да (HR)",
         startupOff = "—",
+        startupIsServers = "%s и так стартует из mtaserver.conf; флаг Hot Reload ничего не добавит",
         close = "Закрыть",
         start = "Запустить",
         stop = "Остановить",
@@ -131,6 +135,10 @@ local view = {
 }
 
 local selectedResource = nil
+--- Which resources `mtaserver.conf` starts by itself, by name, as of the last
+--- catalog. Read back when the startup flag is toggled, so the panel can say
+--- when that flag would change nothing.
+local serverStartupByName = {}
 
 local function text(key)
     return TEXT[currentLanguage][key] or TEXT.en[key] or key
@@ -198,6 +206,14 @@ end
 local function toggleSelectedStartup()
     local resourceName, _, startup = selectedResourceDetails(true)
     if not resourceName then
+        return
+    end
+    -- The flag only ever means "Hot Reload will start this". MTA offers Lua no
+    -- way to write `mtaserver.conf`, so a resource the server already starts
+    -- cannot be changed from here, and pretending otherwise is what made this
+    -- column fiction in the first place. Say so instead.
+    if serverStartupByName[resourceName] then
+        setStatus(text("startupIsServers"):format(resourceName), true)
         return
     end
     setStatus(text("saving"), false)
@@ -364,6 +380,7 @@ local function populateCatalog(payload)
     end
     payload = type(payload) == "table" and payload or {}
     guiGridListClear(UI.grid)
+    serverStartupByName = {}
     local resources = type(payload.resources) == "table" and payload.resources or {}
     local visibleCount = 0
     for _, item in ipairs(resources) do
@@ -373,16 +390,28 @@ local function populateCatalog(payload)
             guiGridListSetItemText(UI.grid, row, 1, tostring(item.name), false, false)
             guiGridListSetItemText(UI.grid, row, 2, tostring(item.state), false, false)
             guiGridListSetItemText(UI.grid, row, 3, localizedMode(item.hotReload), false, false)
-            guiGridListSetItemText(
-                UI.grid, row, 4,
-                item.startup and text("startupOn") or text("startupOff"),
-                false, false
-            )
+            -- The server's own list first, because that is the real answer and
+            -- the one a resource has with or without Hot Reload. `(HR)` marks
+            -- the other case: mtaserver.conf does not start it, Hot Reload
+            -- does, and the two must not read the same.
+            local startupText = text("startupOff")
+            if item.serverStartup then
+                startupText = text("startupOn")
+            elseif item.startup then
+                startupText = text("startupViaHotReload")
+            end
+            guiGridListSetItemText(UI.grid, row, 4, startupText, false, false)
             guiGridListSetItemData(UI.grid, row, 1, item.name)
             guiGridListSetItemData(UI.grid, row, 3, item.hotReload)
             guiGridListSetItemData(UI.grid, row, 4, item.startup == true)
-            if item.startup then
+            -- Kept beside the grid rather than in a fifth column's item data:
+            -- there are four columns, and a hidden one would exist only to
+            -- carry this.
+            serverStartupByName[item.name] = item.serverStartup == true
+            if item.serverStartup then
                 guiGridListSetItemColor(UI.grid, row, 4, 120, 190, 255)
+            elseif item.startup then
+                guiGridListSetItemColor(UI.grid, row, 4, 190, 170, 120)
             end
             if item.state == "running" then
                 guiGridListSetItemColor(UI.grid, row, 2, 120, 210, 140)

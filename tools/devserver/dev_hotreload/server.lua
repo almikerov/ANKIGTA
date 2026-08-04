@@ -186,9 +186,39 @@ local function failure(resourceName, code, message)
     }
 end
 
+--- What the server itself will start, read from the server's own config.
+--
+-- This is the real answer, and every resource has one whether Hot Reload is
+-- installed or not. `getServerConfigSetting("resource")` returns one table per
+-- `<resource>` node in `mtaserver.conf`, carrying that node's attributes --
+-- which is where `startup="1"` lives.
+--
+-- Read fresh whenever the catalog is built rather than cached at boot. It is
+-- one config lookup, and a cached copy is a copy that disagrees with the file
+-- the moment anybody edits it.
+--
+-- Readable, not writable: MTA exposes no `setServerConfigSetting`, and the
+-- server's own `SetSetting` takes only a short list of scalar settings that
+-- `<resource>` is not on. That is exactly why `startupOverrides` exists beside
+-- this rather than instead of it.
+local function configuredStartups()
+    local configured = {}
+    local entries = getServerConfigSetting("resource")
+    if type(entries) ~= "table" then
+        return configured
+    end
+    for _, entry in ipairs(entries) do
+        if type(entry) == "table" and type(entry.src) == "string" then
+            configured[entry.src] = entry.startup == "1" or entry.startup == "true"
+        end
+    end
+    return configured
+end
+
 local function buildResourceCatalog()
     local catalog = {}
     local allowedResources = {}
+    local serverStartups = configuredStartups()
     for _, resourceValue in ipairs(getResources()) do
         local name = getResourceName(resourceValue)
         local blocked = BLOCKED_RESOURCES[name:lower()] == true
@@ -202,6 +232,11 @@ local function buildResourceCatalog()
             hotReload = blocked and "blocked" or (allowed and "allowed" or "ignored"),
             organizationalPath = getResourceOrganizationalPath(resourceValue) or "",
             custom = isCustomResource(resourceValue),
+            -- Two different claims, kept apart on purpose. `serverStartup` is
+            -- what mtaserver.conf says; `startup` is only Hot Reload's own
+            -- promise to start it shortly after itself. Reporting one as the
+            -- other is what made this column fiction.
+            serverStartup = serverStartups[name] == true,
             startup = startupOverrides[name] == true,
         })
     end

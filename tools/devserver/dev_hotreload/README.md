@@ -105,11 +105,32 @@ everything at once.
 **Reload allowed** reloads every allowed resource now, without waiting.
 
 **Startup** is per resource and independent of Hot Reload: a resource can be
-started at boot without being watched, and watched without being started. The
-server's own list is in `mtaserver.conf` and is read once at boot, so it cannot
-be changed from a running server; this starts the flagged resources shortly
-after Hot Reload itself starts, which has the same effect and can be switched
-from the panel.
+started at boot without being watched, and watched without being started.
+
+The column reports the **real** state, which every resource has whether or not
+Hot Reload is installed:
+
+| Shown | Means |
+| --- | --- |
+| `yes` | `mtaserver.conf` starts it — the server's own answer |
+| `yes (HR)` | the config does *not* start it; Hot Reload does |
+| `—` | nothing starts it |
+
+The server's own list is read with `getServerConfigSetting("resource")`, fresh
+each time the catalog is built, so it cannot drift from the file.
+
+The two are kept apart because only one of them is ours. MTA exposes no
+`setServerConfigSetting`, and the server's `SetSetting` accepts only a short
+list of scalar settings that `<resource>` is not among — so `mtaserver.conf`
+cannot be written from a running server at all. Hot Reload's own flag starts
+the resource shortly after Hot Reload itself starts, which reaches the same
+end, and that is the flag the **Toggle startup** button switches. Pressed on a
+resource the config already starts, it explains that rather than pretending to
+change anything.
+
+This column used to show only Hot Reload's flag under the plain heading
+"Startup", which read as the server's answer and was not: two dozen resources
+MTA genuinely autostarts were displayed as `—`.
 
 Both also work from the console:
 
