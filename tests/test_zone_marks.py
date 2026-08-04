@@ -611,6 +611,127 @@ def test_the_marks_have_something_to_draw_before_f7_is_ever_opened(
     assert world.eval("function() return ANKIGTA.Panel.isOpen() end")() is False
 
 
+# --- what the entity remembers ----------------------------------------------
+
+
+@pytest.fixture
+def store(tmp_path: Any) -> Iterator[MtaSandbox]:
+    sandbox = MtaSandbox(database_path=str(tmp_path / "ankigta.sqlite"))
+    sandbox.load("shared/settings.lua")
+    sandbox.load("server/backup.lua")
+    sandbox.load("server/store.lua")
+    sandbox.eval("function() ANKIGTA.Store.seedTracerFixtures = true end")()
+    sandbox.eval("function() return ANKIGTA.Store.open() end")()
+    try:
+        yield sandbox
+    finally:
+        sandbox.close()
+
+
+def a_map_entity(sandbox: MtaSandbox) -> tuple[str, str]:
+    """The first Map Entity the tracer fixture seeded."""
+    row = sandbox.connection.raw.execute(
+        "SELECT map_id, entity_id FROM map_entities ORDER BY entity_id LIMIT 1"
+    ).fetchone()
+    return str(row[0]), str(row[1])
+
+
+def write_metadata(sandbox: MtaSandbox, map_id: str, entity_id: str, **fields: Any):
+    return sandbox.eval(
+        "function(m, e, f) return ANKIGTA.Store.updateEntityMetadata(m, e, f) end"
+    )(map_id, entity_id, to_lua(sandbox, fields))
+
+
+def read_metadata(sandbox: MtaSandbox, map_id: str, entity_id: str) -> dict[str, Any]:
+    row = sandbox.eval(
+        "function(m, e) return ANKIGTA.Store.getMapEntity(m, e) end"
+    )(map_id, entity_id)
+    colour, opacity = sandbox.eval(
+        "function(r) return ANKIGTA.Store.coronaOf(r) end"
+    )(row)
+    return {
+        "showCorona": row["show_radius"] == 1,
+        "coronaColour": colour,
+        "coronaOpacity": opacity,
+    }
+
+
+def test_an_entity_with_nothing_of_its_own_says_so(store: MtaSandbox) -> None:
+    """Not "no colour" but "the one Settings says", which is why it cannot be
+    stored as a copy of the setting: the copy would go stale the moment the
+    setting changed."""
+    map_id, entity_id = a_map_entity(store)
+
+    assert read_metadata(store, map_id, entity_id) == {
+        "showCorona": False,
+        "coronaColour": False,
+        "coronaOpacity": False,
+    }
+
+
+def test_an_entity_remembers_the_look_it_was_given(store: MtaSandbox) -> None:
+    map_id, entity_id = a_map_entity(store)
+
+    write_metadata(
+        store,
+        map_id,
+        entity_id,
+        showCorona=True,
+        coronaColour="#ff8800",
+        coronaOpacity=0.25,
+    )
+
+    assert read_metadata(store, map_id, entity_id) == {
+        "showCorona": True,
+        "coronaColour": "#ff8800",
+        "coronaOpacity": 0.25,
+    }
+
+
+def test_clearing_a_look_puts_the_entity_back_on_settings(
+    store: MtaSandbox,
+) -> None:
+    """`false` is the player emptying the field, which is a decision and not an
+    absence -- storing it as "unchanged" is how "follow Settings again" would
+    silently do nothing."""
+    map_id, entity_id = a_map_entity(store)
+    write_metadata(store, map_id, entity_id, coronaColour="#ff8800", coronaOpacity=1)
+
+    write_metadata(store, map_id, entity_id, coronaColour=False, coronaOpacity=False)
+
+    stored = read_metadata(store, map_id, entity_id)
+    assert stored["coronaColour"] is False
+    assert stored["coronaOpacity"] is False
+
+
+def test_a_fully_transparent_corona_is_not_read_as_unset(
+    store: MtaSandbox,
+) -> None:
+    """Zero is a value. Reading it as "says nothing" would make the one setting
+    a player cannot express the one they chose."""
+    map_id, entity_id = a_map_entity(store)
+
+    write_metadata(store, map_id, entity_id, coronaOpacity=0)
+
+    assert read_metadata(store, map_id, entity_id)["coronaOpacity"] == 0
+
+
+def test_undo_puts_back_the_look_the_entity_had(store: MtaSandbox) -> None:
+    """The corona is a property of the thing, so it is the server's to hold and
+    the server's to put back (ADR 0028)."""
+    map_id, entity_id = a_map_entity(store)
+    write_metadata(store, map_id, entity_id, coronaColour="#ff8800", coronaOpacity=0.25)
+
+    write_metadata(store, map_id, entity_id, coronaColour="#00ff00", coronaOpacity=1)
+    store.eval("function() return ANKIGTA.Store.undo() end")()
+
+    assert read_metadata(store, map_id, entity_id) == {
+        "showCorona": False,
+        "coronaColour": "#ff8800",
+        "coronaOpacity": 0.25,
+    }
+
+
 def test_stopping_takes_every_corona_out_of_the_world(world: MtaSandbox) -> None:
     snapshot(world, [entry(showCorona=True)])
     refresh(world)
