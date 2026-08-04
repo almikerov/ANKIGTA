@@ -101,6 +101,12 @@ That grants the four rights in `meta.xml`: `refreshResources`, `restartResource`
 
 Run `aclrequest allow` again after updating this resource: rights added to `meta.xml` after your last grant are not covered by it, and the first symptom is Stop reporting that MTA refused.
 
+Unless, that is, you put `resource.dev_hotreload` in the `Admin` ACL group instead, which covers every right including ones added later. Worth knowing before chasing a permission problem that is not there: ask the server rather than reading `acl.xml`, because the two disagree whenever the file was edited under a running server.
+
+```text
+hotreload status dev_hotreload
+```
+
 ## Driving it from outside
 
 Anything that can write a file in this folder can ask for a reload. Write one request line into `command.txt`; it runs within a quarter of a second and one JSON object per request is appended to `result.txt`.
