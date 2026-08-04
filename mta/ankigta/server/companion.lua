@@ -1139,7 +1139,14 @@ local function validCardView(card)
         or type(card.deck) ~= "table"
         or type(card.deck.id) ~= "number"
         or card.deck.id ~= math.floor(card.deck.id)
-        or (card.deck.name ~= false and type(card.deck.name) ~= "string")
+        -- A deck this companion could not name arrives as JSON `null`, which
+        -- MTA decodes to nil rather than to `false` -- the same decoding the
+        -- deck filter is read through, and the same mistake if only `false` is
+        -- admitted here. A nameless deck is a card that still has an identity,
+        -- a state and a deck id; failing it fails the page it is on.
+        or (card.deck.name ~= nil
+            and card.deck.name ~= false
+            and type(card.deck.name) ~= "string")
         or type(card.state) ~= "string"
         or (
             card.state ~= "new"

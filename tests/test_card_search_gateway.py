@@ -21,6 +21,9 @@ import pytest
 from tests.lua import MtaSandbox
 
 
+UUID = "11111111-1111-4111-8111-111111111111"
+
+
 @pytest.fixture
 def server() -> Iterator[MtaSandbox]:
     sandbox = MtaSandbox()
@@ -193,6 +196,62 @@ def test_a_search_of_every_deck_reaches_the_panel_with_its_scope(
     ]
     assert snapshots, notices(server)
     assert server.to_python(snapshots[-1].args[0])["scope"] == "notes"
+
+
+def test_a_card_whose_deck_has_no_name_still_reaches_the_panel(
+    server: MtaSandbox,
+) -> None:
+    """`"name": null` is a deck this build could not name, not a broken card.
+
+    MTA decodes JSON `null` to nil, not to `false`. Checked against `false`
+    alone, one unnamed deck failed its card, the card failed the page, and 934
+    cards were reported to the player as `protocol_error` -- the same mistake
+    as the deck filter's, one field over in the same validator.
+
+    A companion that predates the deck-record fix names no deck at all, so this
+    is the shape a real answer has whenever the two sides are not updated
+    together.
+    """
+    search(server, "")
+    request_id = sent(server)["requestId"]
+
+    answer(
+        server,
+        status=200,
+        body={
+            "protocol": "ankigta-control",
+            "protocolVersion": 1,
+            "requestId": request_id,
+            "ok": True,
+            "error": None,
+            "payload": {
+                "cards": [
+                    {
+                        "identity": {"collectionUuid": UUID, "cardId": 1784032937016},
+                        "deck": {"id": 1, "name": None},
+                        "state": "review",
+                        "due": 5,
+                        "tags": ["hsk1"],
+                    }
+                ],
+                "page": 0,
+                "pageSize": 50,
+                "total": 934,
+                "query": "",
+                "deckFilter": None,
+            },
+        },
+    )
+
+    snapshots = [
+        event
+        for event in server.recorder.client_events
+        if event.name == "ankigta:cardPickerSnapshot"
+    ]
+    assert snapshots, notices(server)
+    payload = server.to_python(snapshots[-1].args[0])
+    assert payload["total"] == 934
+    assert len(payload["cards"]) == 1
 
 
 def test_a_search_that_answers_retires_the_complaint_about_searching(
