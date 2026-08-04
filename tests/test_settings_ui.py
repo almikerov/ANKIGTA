@@ -262,6 +262,7 @@ def test_every_setting_in_the_schema_is_reachable_in_the_panel(
             "number",
             "boolean",
             "choice",
+            "colour",
             "delegated",
             "placement",
             "maps",

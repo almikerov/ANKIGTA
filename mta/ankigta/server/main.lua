@@ -209,6 +209,10 @@ local function entityContract(row)
         row.map_id,
         row.entity_id
     )
+    -- `false` where the entity says nothing of its own and the corona follows
+    -- Settings. What that looks like is the client's to resolve: the setting
+    -- it falls back to is one the client already holds.
+    local coronaColour, coronaOpacity = ANKIGTA.Store.coronaOf(row)
     return {
         mapEntity = {
             mapId = row.map_id,
@@ -223,7 +227,9 @@ local function entityContract(row)
                 name = row.entity_name or "",
                 entityTag = row.entity_tag or "",
                 radius = tonumber(row.radius) or 3,
-                showRadius = tonumber(row.show_radius) == 1,
+                showCorona = tonumber(row.show_radius) == 1,
+                coronaColour = coronaColour,
+                coronaOpacity = coronaOpacity,
             },
             authored = {
                 position = {
@@ -247,7 +253,9 @@ local function entityContract(row)
             name = row.entity_name or "",
             entityTag = row.entity_tag or "",
             radius = tonumber(row.radius) or 3,
-            showRadius = tonumber(row.show_radius) == 1,
+            showCorona = tonumber(row.show_radius) == 1,
+            coronaColour = coronaColour,
+            coronaOpacity = coronaOpacity,
         },
         link = link,
         copyCollision = link.copyCollision == true,
@@ -295,7 +303,10 @@ local function candidateContract(element, name, resourceName)
             type = getElementType(element),
             model = getElementModel(element),
             map = {resourceName = resourceName, mapName = resourceName},
-            display = {name = "", entityTag = "", radius = 3, showRadius = false},
+            display = {
+                name = "", entityTag = "", radius = 3, showCorona = false,
+                coronaColour = false, coronaOpacity = false,
+            },
             authored = {
                 position = {x = x or 0, y = y or 0, z = z or 0},
                 rotation = {
@@ -312,7 +323,8 @@ local function candidateContract(element, name, resourceName)
             referenceId = getElementID(element) or "",
         },
         metadata = {
-            name = "", entityTag = "", radius = 3, showRadius = false,
+            name = "", entityTag = "", radius = 3, showCorona = false,
+            coronaColour = false, coronaOpacity = false,
         },
         link = {state = "Not adopted", guidanceKey = "f7.guidance.notAdopted"},
         copyCollision = false,
@@ -1807,36 +1819,64 @@ addEventHandler(ENTITY_METADATA_REQUEST_EVENT, resourceRoot, function(
         )
         return
     end
-    local radius = tonumber(metadata.radius)
-    if radius ~= nil then
-        -- The schema's own rule for the global radius, applied to the
-        -- per-entity one: a number cannot be legal in Settings and illegal
-        -- here, and the schema is the side both can reach.
-        local valid, reason = ANKIGTA.Settings.validate(
-            "activationRadius", ANKIGTA.Settings.normalize("activationRadius", radius)
-        )
-        if not valid then
-            triggerClientEvent(
-                client, PENDING_NOTICE_EVENT, resourceRoot,
-                "notice.entityUpdateFailed", reason
-            )
-            return
+    --- One per-entity value as it will be stored, or the reason it will not be.
+    --
+    -- Three answers, and they are not the same: `nil` for a field this update
+    -- did not mention, `false` for one the player cleared so that the entity
+    -- follows Settings again, and a value for one they set. Checked against
+    -- the schema's own rule for the setting it overrides, because a value
+    -- cannot be legal in Settings and illegal here, and the schema is the side
+    -- both can reach.
+    local function proposed(sent, key)
+        if sent == nil or sent == false then
+            return sent
         end
+        local normalized = ANKIGTA.Settings.normalize(key, sent)
+        local valid, reason = ANKIGTA.Settings.validate(key, normalized)
+        if not valid then
+            return nil, reason
+        end
+        return normalized
     end
+
+    local sentRadius, radiusRefused = proposed(metadata.radius, "activationRadius")
+    local sentColour, colourRefused = proposed(metadata.coronaColour, "coronaColour")
+    local sentOpacity, opacityRefused =
+        proposed(metadata.coronaOpacity, "coronaOpacity")
+    local refused = radiusRefused or colourRefused or opacityRefused
+    if refused then
+        triggerClientEvent(
+            client, PENDING_NOTICE_EVENT, resourceRoot,
+            "notice.entityUpdateFailed", refused
+        )
+        return
+    end
+
+    -- What the row already says, for a field this update did not mention: the
+    -- page sends only what the player touched, and setting one field must not
+    -- quietly erase the others.
+    local storedColour, storedOpacity = ANKIGTA.Store.coronaOf(row)
+    local function orStored(sent, stored)
+        if sent == nil then
+            return stored
+        end
+        return sent
+    end
+
     local updated, updateError = ANKIGTA.Store.updateEntityMetadata(
         mapId,
         entityId,
         {
-            -- Everything the row already says, so setting one field does not
-            -- quietly erase the others.
-            name = metadata.name ~= nil and metadata.name
-                or (row.entity_name or ""),
+            name = orStored(metadata.name, row.entity_name or ""),
             entityTag = row.entity_tag or "",
-            radius = radius or tonumber(row.radius) or 3,
-            showRadius = metadata.showRadius ~= nil
-                and metadata.showRadius == true
-                or (metadata.showRadius == nil
-                    and tonumber(row.show_radius) == 1),
+            -- Clearing a radius is not a thing the panel offers: an entity
+            -- always has one, and `false` here would be a zone of no size.
+            radius = sentRadius or tonumber(row.radius) or 3,
+            showCorona = orStored(
+                metadata.showCorona, tonumber(row.show_radius) == 1
+            ) == true,
+            coronaColour = orStored(sentColour, storedColour),
+            coronaOpacity = orStored(sentOpacity, storedOpacity),
         }
     )
     if not updated then
@@ -2328,7 +2368,7 @@ addEventHandler(CARD_STATES_REFRESHED_EVENT, resourceRoot, function(
                     entityId = row.entity_id,
                     cardIdentity = cardIdentity,
                     radius = tonumber(row.radius) or 3,
-                    showRadius = tonumber(row.show_radius) == 1,
+                    showCorona = tonumber(row.show_radius) == 1,
                     eligible = true,
                 }
                 table.insert(candidates, candidate)

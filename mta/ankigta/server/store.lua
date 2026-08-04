@@ -155,6 +155,92 @@ local function transaction(connection, steps)
     return true
 end
 
+-- --- Map Entity metadata rows ------------------------------------------------
+--
+-- Written from five places: a metadata edit, either side of an undo, a relink
+-- and an entity copy. Each of them wrote the column list out again, so adding
+-- a column meant finding all five -- and the one that was missed would quietly
+-- write a default over whatever the entity said.
+
+--- The value that means "this entity has nothing of its own to say".
+--
+-- Out of the setting's range on purpose: opacity is 0..1, so nothing a player
+-- can choose collides with it. See the `CREATE TABLE` for why this is a value
+-- rather than NULL.
+local CORONA_FOLLOWS_SETTING = -1
+
+local METADATA_INSERT = [[
+    INSERT OR REPLACE INTO map_entity_metadata (
+        map_id, entity_id, name, entity_tag, radius, show_radius,
+        corona_colour, corona_opacity, presence_state
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+]]
+
+--- A stored colour, or `false` where the entity follows the setting.
+--
+-- `false` rather than `nil`, which is the same word the store already uses for
+-- a column that holds nothing: a SQL NULL reaches Lua as `false`, so a reader
+-- that has to tell "unset" from "set" already tests for it.
+local function coronaColourOf(row)
+    local stored = row and row.corona_colour
+    if type(stored) ~= "string" or stored == "" then
+        return false
+    end
+    return stored
+end
+
+local function coronaOpacityOf(row)
+    local stored = tonumber(row and row.corona_opacity)
+    if stored == nil or stored < 0 then
+        return false
+    end
+    return stored
+end
+
+--- What a row says its corona should look like, where it says anything.
+--
+-- Exposed because the F7 snapshot and the spatial link set are built out of
+-- rows this module hands over, and "an empty colour means follow the setting"
+-- is this module's rule about its own storage rather than theirs.
+function Store.coronaOf(row)
+    return coronaColourOf(row), coronaOpacityOf(row)
+end
+
+--- The values `METADATA_INSERT` binds, for one metadata table.
+local function metadataValues(mapId, entityId, metadata)
+    metadata = metadata or {}
+    local colour = metadata.coronaColour
+    local opacity = tonumber(metadata.coronaOpacity)
+    return {
+        mapId,
+        entityId,
+        tostring(metadata.name or ""),
+        tostring(metadata.entityTag or ""),
+        tonumber(metadata.radius) or 3,
+        metadata.showCorona == true and 1 or 0,
+        type(colour) == "string" and colour or "",
+        opacity or CORONA_FOLLOWS_SETTING,
+        metadata.presenceState or "identified",
+    }
+end
+
+--- The same, read straight off a row rather than out of a metadata table.
+--
+-- The two differ in one thing: a row names its columns and a metadata table
+-- names the fields the rest of the resource uses. Everything else about "what
+-- one metadata row holds" stays in `metadataValues`.
+local function metadataValuesFromRow(mapId, entityId, row, presenceState)
+    return metadataValues(mapId, entityId, {
+        name = row.entity_name or "",
+        entityTag = row.entity_tag or "",
+        radius = tonumber(row.radius),
+        showCorona = tonumber(row.show_radius) == 1,
+        coronaColour = coronaColourOf(row) or nil,
+        coronaOpacity = coronaOpacityOf(row) or nil,
+        presenceState = presenceState,
+    })
+end
+
 local function jsonEncode(value)
     if value == nil then
         return "null"
@@ -231,6 +317,23 @@ local function historyTransaction(operation, target, before, after, steps)
     return true
 end
 
+--- Columns `map_entity_metadata` has grown since it was first created.
+--
+-- Listed rather than written out at each call site so the repair below and the
+-- `CREATE TABLE` above cannot disagree about what a metadata row holds. An
+-- entry here is added to a database that lacks it; the `CREATE` is what a fresh
+-- one gets, and the two have to say the same thing.
+local METADATA_COLUMN_ADDITIONS = {
+    {
+        name = "presence_state",
+        declaration = "TEXT NOT NULL DEFAULT 'identified'",
+    },
+    -- The defaults are the "follows Settings" values, so an existing row gains
+    -- them already saying what it said before: nothing of its own.
+    {name = "corona_colour", declaration = "TEXT NOT NULL DEFAULT ''"},
+    {name = "corona_opacity", declaration = "REAL NOT NULL DEFAULT -1"},
+}
+
 local function ensureChangeHistorySchema()
     local created, errorMessage = transaction(Store.connection, {
         {
@@ -274,6 +377,16 @@ local function ensureChangeHistorySchema()
                     entity_tag TEXT NOT NULL DEFAULT '',
                     radius REAL NOT NULL DEFAULT 3,
                     show_radius INTEGER NOT NULL DEFAULT 0,
+                    -- Not a colour and not an opacity where the entity has
+                    -- nothing of its own to say -- the settings value is then
+                    -- the answer, and a copy of it written here would go stale
+                    -- the moment the setting changed. Said with a value out of
+                    -- range rather than with NULL, because a bound parameter
+                    -- list is a Lua array and a nil in the middle of one ends
+                    -- it: `unpack` would drop this column and every column
+                    -- after it.
+                    corona_colour TEXT NOT NULL DEFAULT '',
+                    corona_opacity REAL NOT NULL DEFAULT -1,
                     presence_state TEXT NOT NULL DEFAULT 'identified'
                         CHECK (presence_state IN ('identified', 'entity_missing')),
                     PRIMARY KEY (map_id, entity_id),
@@ -299,23 +412,27 @@ local function ensureChangeHistorySchema()
         if not ok then
             return false, "metadata_schema_read_failed"
         end
-        local hasPresenceState = false
+        local present = {}
         for _, column in ipairs(columns) do
-            if column.name == "presence_state" then
-                hasPresenceState = true
-                break
-            end
+            present[column.name] = true
         end
-        if not hasPresenceState then
-            local altered, alterError = execute(
-                Store.connection,
-                [[
-                    ALTER TABLE map_entity_metadata
-                    ADD COLUMN presence_state TEXT NOT NULL DEFAULT 'identified'
-                ]]
-            )
-            if not altered then
-                return false, alterError
+        -- Repaired in place rather than through a numbered migration, the way
+        -- `presence_state` already was. This table is created on every open
+        -- regardless of schema version (it arrived with Change History), so a
+        -- database can be carrying it while sitting at any version -- and a
+        -- version step would only run for some of them. Each addition here is
+        -- a column an older shape simply lacks, never one whose meaning
+        -- changed, so adding it is the whole repair.
+        for _, addition in ipairs(METADATA_COLUMN_ADDITIONS) do
+            if not present[addition.name] then
+                local altered, alterError = execute(
+                    Store.connection,
+                    "ALTER TABLE map_entity_metadata ADD COLUMN "
+                        .. addition.name .. " " .. addition.declaration
+                )
+                if not altered then
+                    return false, alterError
+                end
             end
         end
     end
@@ -1398,40 +1515,24 @@ local function applyHistoryStateSteps(operation, target, state)
         if state.phase == "before" then
             if sourceRow.entity_id or sourceRow.entityId then
                 table.insert(steps, {
-                    [[
-                        INSERT OR REPLACE INTO map_entity_metadata (
-                            map_id, entity_id, name, entity_tag, radius,
-                            show_radius, presence_state
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ]],
-                    {
+                    METADATA_INSERT,
+                    metadataValuesFromRow(
                         sourceMapId,
                         sourceEntityId,
-                        sourceRow.entity_name or "",
-                        sourceRow.entity_tag or "",
-                        tonumber(sourceRow.radius) or 3,
-                        tonumber(sourceRow.show_radius) == 1 and 1 or 0,
-                        sourceRow.entity_state or "entity_missing",
-                    },
+                        sourceRow,
+                        sourceRow.entity_state or "entity_missing"
+                    ),
                 })
             end
             if targetRow.entity_id or targetRow.entityId then
                 table.insert(steps, {
-                    [[
-                        INSERT OR REPLACE INTO map_entity_metadata (
-                            map_id, entity_id, name, entity_tag, radius,
-                            show_radius, presence_state
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ]],
-                    {
+                    METADATA_INSERT,
+                    metadataValuesFromRow(
                         targetMapId,
                         targetEntityId,
-                        targetRow.entity_name or "",
-                        targetRow.entity_tag or "",
-                        tonumber(targetRow.radius) or 3,
-                        tonumber(targetRow.show_radius) == 1 and 1 or 0,
-                        targetRow.entity_state or "identified",
-                    },
+                        targetRow,
+                        targetRow.entity_state or "identified"
+                    ),
                 })
             end
             local sourceIdentity = sourceRow.collection_uuid and {
@@ -1481,20 +1582,16 @@ local function applyHistoryStateSteps(operation, target, state)
         else
             local identity = targetRow.collectionUuid and targetRow or nil
             table.insert(steps, {
-                [[
-                    INSERT OR REPLACE INTO map_entity_metadata (
-                        map_id, entity_id, name, entity_tag, radius,
-                        show_radius, presence_state
-                    ) VALUES (?, ?, ?, ?, ?, ?, 'identified')
-                ]],
-                {
-                    targetMapId,
-                    targetEntityId,
-                    targetRow.entityName or "",
-                    targetRow.entityTag or "",
-                    tonumber(targetRow.radius) or 3,
-                    targetRow.showRadius and 1 or 0,
-                },
+                METADATA_INSERT,
+                metadataValues(targetMapId, targetEntityId, {
+                    name = targetRow.entityName,
+                    entityTag = targetRow.entityTag,
+                    radius = tonumber(targetRow.radius),
+                    showCorona = targetRow.showCorona == true,
+                    coronaColour = targetRow.coronaColour,
+                    coronaOpacity = targetRow.coronaOpacity,
+                    presenceState = "identified",
+                }),
             })
             table.insert(steps, {
                 "UPDATE map_entity_metadata SET presence_state = 'entity_missing' "
@@ -1544,21 +1641,8 @@ local function applyHistoryStateSteps(operation, target, state)
             })
         else
             table.insert(steps, {
-                [[
-                    INSERT OR REPLACE INTO map_entity_metadata (
-                        map_id, entity_id, name, entity_tag, radius, show_radius,
-                        presence_state
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                ]],
-                {
-                    target.mapId,
-                    target.entityId,
-                    state.name or "",
-                    state.entityTag or "",
-                    tonumber(state.radius) or 3,
-                    state.showRadius and 1 or 0,
-                    state.presenceState or "identified",
-                },
+                METADATA_INSERT,
+                metadataValues(target.mapId, target.entityId, state),
             })
         end
     elseif operation == "map_preference" then
@@ -1949,6 +2033,9 @@ function Store.listMapEntities()
                 COALESCE(map_entity_metadata.entity_tag, '') AS entity_tag,
                 COALESCE(map_entity_metadata.radius, 3) AS radius,
                 COALESCE(map_entity_metadata.show_radius, 0) AS show_radius,
+                COALESCE(map_entity_metadata.corona_colour, '') AS corona_colour,
+                COALESCE(map_entity_metadata.corona_opacity, -1)
+                    AS corona_opacity,
                 COALESCE(map_preferences.include_in_study, 1)
                     AS include_in_study,
                 spatial_links.collection_uuid,
@@ -2069,6 +2156,8 @@ function Store.getMapEntity(mapId, entityId)
                 map_entity_metadata.entity_tag AS entity_tag,
                 map_entity_metadata.radius AS radius,
                 map_entity_metadata.show_radius AS show_radius,
+                map_entity_metadata.corona_colour AS corona_colour,
+                map_entity_metadata.corona_opacity AS corona_opacity,
                 map_preferences.include_in_study AS include_in_study,
                 spatial_links.collection_uuid,
                 spatial_links.card_id,
@@ -2174,43 +2263,28 @@ function Store.relinkEntity(value)
             entityName = source.entity_name or "",
             entityTag = source.entity_tag or "",
             radius = tonumber(source.radius) or 3,
-            showRadius = tonumber(source.show_radius) == 1,
+            showCorona = tonumber(source.show_radius) == 1,
+            coronaColour = coronaColourOf(source),
+            coronaOpacity = coronaOpacityOf(source),
             collectionUuid = source.collection_uuid,
             cardId = tonumber(source.card_id),
             verifiedMapSha256 = source.verified_map_sha256,
         },
     }
     local steps = {
+        -- The target takes on everything the source said about itself. One
+        -- statement rather than an insert-if-absent followed by an update:
+        -- those two had to be kept saying the same thing, and a column added
+        -- to one of them and not the other is a column that survives a relink
+        -- only when the target row happened not to exist yet.
         {
-            [[
-                INSERT OR IGNORE INTO map_entity_metadata
-                    (map_id, entity_id, name, entity_tag, radius, show_radius, presence_state)
-                VALUES (?, ?, ?, ?, ?, ?, 'identified')
-            ]],
-            {
+            METADATA_INSERT,
+            metadataValuesFromRow(
                 value.targetMapId,
                 value.targetEntityId,
-                source.entity_name or "",
-                source.entity_tag or "",
-                tonumber(source.radius) or 3,
-                tonumber(source.show_radius) == 1 and 1 or 0,
-            },
-        },
-        {
-            [[
-                UPDATE map_entity_metadata
-                SET name = ?, entity_tag = ?, radius = ?, show_radius = ?,
-                    presence_state = 'identified'
-                WHERE map_id = ? AND entity_id = ?
-            ]],
-            {
-                source.entity_name or "",
-                source.entity_tag or "",
-                tonumber(source.radius) or 3,
-                tonumber(source.show_radius) == 1 and 1 or 0,
-                value.targetMapId,
-                value.targetEntityId,
-            },
+                source,
+                "identified"
+            ),
         },
         {
             [[
@@ -2262,7 +2336,9 @@ function Store.relinkEntity(value)
             name = source.entity_name or "",
             entityTag = source.entity_tag or "",
             radius = tonumber(source.radius) or 3,
-            showRadius = tonumber(source.show_radius) == 1,
+            showCorona = tonumber(source.show_radius) == 1,
+            coronaColour = coronaColourOf(source),
+            coronaOpacity = coronaOpacityOf(source),
         },
         link = {
             collectionUuid = source.collection_uuid,
@@ -2716,7 +2792,9 @@ function Store.updateEntityMetadata(mapId, entityId, metadata)
         name = existing.entity_name or "",
         entityTag = existing.entity_tag or "",
         radius = tonumber(existing.radius) or 3,
-        showRadius = tonumber(existing.show_radius) == 1,
+        showCorona = tonumber(existing.show_radius) == 1,
+        coronaColour = coronaColourOf(existing),
+        coronaOpacity = coronaOpacityOf(existing),
         presenceState = existing.entity_state or "identified",
     }
     local after = {
@@ -2724,7 +2802,13 @@ function Store.updateEntityMetadata(mapId, entityId, metadata)
         name = tostring(metadata.name or ""),
         entityTag = tostring(metadata.entityTag or ""),
         radius = tonumber(metadata.radius) or 3,
-        showRadius = metadata.showRadius == true,
+        showCorona = metadata.showCorona == true,
+        -- `false` is a colour the entity does not have, which is how "follow
+        -- the setting" is said. Anything else is stored as given; the caller
+        -- has already checked it against the schema's own colour rule.
+        coronaColour = type(metadata.coronaColour) == "string"
+            and metadata.coronaColour or false,
+        coronaOpacity = tonumber(metadata.coronaOpacity) or false,
         presenceState = metadata.presenceState or existing.entity_state or "identified",
     }
     local committed, errorMessage = historyTransaction(
@@ -2733,23 +2817,7 @@ function Store.updateEntityMetadata(mapId, entityId, metadata)
         before,
         after,
         {
-            {
-                [[
-                    INSERT OR REPLACE INTO map_entity_metadata (
-                        map_id, entity_id, name, entity_tag, radius, show_radius,
-                        presence_state
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                ]],
-                {
-                    mapId,
-                    entityId,
-                    after.name,
-                    after.entityTag,
-                    after.radius,
-                    after.showRadius and 1 or 0,
-                    after.presenceState,
-                },
-            },
+            {METADATA_INSERT, metadataValues(mapId, entityId, after)},
         }
     )
     if not committed then

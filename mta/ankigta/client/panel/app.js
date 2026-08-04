@@ -449,6 +449,27 @@
       });
       return select;
     }
+    /* Text and a swatch rather than `<input type="color">`. The picker is a
+     * native dialog, and this page is rendered offscreen into a game window
+     * that has no desktop to put one on -- the control would open nothing. */
+    if (row.kind === "colour") {
+      var wrap = element("span", "colour-field");
+      var field = document.createElement("input");
+      field.id = settingId(row);
+      field.type = "text";
+      field.value = row.value || "";
+      var swatch = element("span", "swatch");
+      swatch.style.background = row.value || "transparent";
+      field.addEventListener("input", function () {
+        swatch.style.background = field.value;
+      });
+      field.addEventListener("change", function () {
+        send("setSetting", {key: row.key, value: field.value});
+      });
+      wrap.appendChild(field);
+      wrap.appendChild(swatch);
+      return wrap;
+    }
     var input = document.createElement("input");
     input.id = settingId(row);
     input.type = row.kind === "number" ? "number" : "text";
@@ -528,8 +549,19 @@
     if (!settings.hidden) {
       document.getElementById("entity-name").value = entity.name || "";
       document.getElementById("entity-radius").value = entity.radius;
-      document.getElementById("entity-show-radius").checked =
-        entity.showRadius === true;
+      document.getElementById("entity-show-corona").checked =
+        entity.showCorona === true;
+      /* False is the entity saying nothing of its own, and an empty field is
+       * how that reads. The swatch still shows a colour, because the corona
+       * has one either way -- the one Settings gives it. */
+      var colour = document.getElementById("entity-corona-colour");
+      colour.value = entity.coronaColour || "";
+      document.getElementById("entity-corona-swatch").style.background =
+        entity.coronaColour || entity.settingsCoronaColour || "transparent";
+      document.getElementById("entity-corona-opacity").value =
+        entity.coronaOpacity === false || entity.coronaOpacity === undefined
+          ? ""
+          : entity.coronaOpacity;
     }
 
     renderInspector(state);
@@ -612,11 +644,28 @@
       name: document.getElementById("entity-name").value
     });
   });
-  document.getElementById("entity-show-radius").addEventListener("change", function () {
+  document.getElementById("entity-show-corona").addEventListener("change", function () {
     send("setEntityRadius", {
-      showRadius: document.getElementById("entity-show-radius").checked
+      showCorona: document.getElementById("entity-show-corona").checked
     });
   });
+
+  /* An emptied field is a decision, not an absence: it says this entity has
+   * nothing of its own to say and follows Settings again. `false` carries that
+   * across, because leaving the field out would mean "unchanged". */
+  function coronaOverride(id, asNumber) {
+    return function () {
+      var typed = document.getElementById(id).value.trim();
+      var payload = {};
+      payload[id === "entity-corona-colour" ? "coronaColour" : "coronaOpacity"] =
+        typed === "" ? false : (asNumber ? parseFloat(typed) : typed);
+      send("setEntityRadius", payload);
+    };
+  }
+  document.getElementById("entity-corona-colour")
+    .addEventListener("change", coronaOverride("entity-corona-colour", false));
+  document.getElementById("entity-corona-opacity")
+    .addEventListener("change", coronaOverride("entity-corona-opacity", true));
 
   document.getElementById("save-note").addEventListener("click", function () {
     var fields = [];

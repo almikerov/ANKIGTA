@@ -42,6 +42,17 @@ local function toggle()
     return {kind = "boolean"}
 end
 
+--- A colour the user picks, as `#RRGGBB`.
+--
+-- Text rather than three numbers because that is what a colour picker hands
+-- back and what a person reads back out of a settings file. The alpha is not
+-- in it: opacity is a separate setting with a separate range, and packing it
+-- into the same string would make "half-transparent blue" one value that no
+-- control can edit half of.
+local function colour()
+    return {kind = "colour"}
+end
+
 --- Where the movable surfaces sit, as a fraction of the screen.
 --
 -- Normalized rather than absolute so the same file describes the same corner
@@ -79,8 +90,24 @@ Settings.schema = {
         rule = choice({"allow_due", "allow_all"}),
     },
     includeInStudy = {authority = SERVER, default = true, rule = toggle()},
+    -- What a corona looks like where the entity does not say otherwise. Owned
+    -- by the server for the same reason `activationRadius` is: these are the
+    -- defaults behind a value stored on the Map Entity itself, and a default
+    -- kept on one player's machine would describe a marker every other player
+    -- sees differently.
+    coronaColour = {authority = SERVER, default = "#3cc8ff", rule = colour()},
+    coronaOpacity = {
+        authority = SERVER,
+        default = 0.5,
+        rule = numeric(0, 1, nil, 2),
+    },
 
     -- Presentation, input and audio: this player's machine only.
+    -- A way of looking rather than a property of the thing looked at: while it
+    -- is on, the selected row's Activation Zone is drawn. `Show corona` is the
+    -- other half of the pair and lives on the entity, because that one is a
+    -- property of the thing.
+    drawRadius = {authority = CLIENT, default = false, rule = toggle()},
     indicatorMode = {
         authority = CLIENT,
         default = "none",
@@ -131,6 +158,9 @@ Settings.order = {
     "maxActivationSpeedKmh",
     "reviewMode",
     "includeInStudy",
+    "drawRadius",
+    "coronaColour",
+    "coronaOpacity",
     "indicatorMode",
     "reviewProtection",
     "disablePlayerControls",
@@ -336,6 +366,19 @@ function Settings.validate(key, value)
         return true
     end
 
+    if rule.kind == "colour" then
+        if type(value) ~= "string" then
+            return false, "settings.error.not_a_colour"
+        end
+        -- Exactly `#RRGGBB`. Three-digit shorthand and a named colour are
+        -- things a browser understands and `tocolor` does not, so accepting
+        -- them here would store a value the world cannot be drawn in.
+        if not string.match(value, "^#%x%x%x%x%x%x$") then
+            return false, "settings.error.not_a_colour"
+        end
+        return true
+    end
+
     if rule.kind == "secret" then
         if type(value) ~= "string" then
             return false, "settings.error.not_a_string"
@@ -375,6 +418,11 @@ function Settings.normalize(key, value)
     if definition and definition.rule.kind == "number" then
         return tonumber(value)
     end
+    if definition and definition.rule.kind == "colour" then
+        -- One case, so the same colour chosen in a colour picker and typed by
+        -- hand is one stored value rather than two that compare unequal.
+        return string.lower(value)
+    end
     if definition and definition.rule.kind == "placement" then
         -- Rebuilt rather than passed through: a placement read back out of
         -- JSON may carry its coordinates as text, and anything else the file
@@ -386,6 +434,23 @@ function Settings.normalize(key, value)
         return result
     end
     return value
+end
+
+--- A stored `#RRGGBB` as the three channels a colour is drawn from.
+--
+-- Here rather than beside the drawing, because this is where the format is
+-- decided: the rule above says what a colour may be, and one reader of it
+-- keeps "what a colour looks like" from being answered twice.
+--
+-- Returns `nil` for anything the rule would have rejected, so a corrupted
+-- value falls back to a default rather than being drawn as black.
+function Settings.colourChannels(value)
+    if type(value) ~= "string" or not string.match(value, "^#%x%x%x%x%x%x$") then
+        return nil
+    end
+    return tonumber(string.sub(value, 2, 3), 16),
+        tonumber(string.sub(value, 4, 5), 16),
+        tonumber(string.sub(value, 6, 7), 16)
 end
 
 ANKIGTA.Settings = Settings

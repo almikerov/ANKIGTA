@@ -816,11 +816,14 @@ function MapIdentity.recoverPersistedCollisions()
 end
 
 function MapIdentity.linkSnapshot(row)
+    local coronaColour, coronaOpacity = ANKIGTA.Store.coronaOf(row)
     local metadata = {
         name = row.entity_name or "",
         entityTag = row.entity_tag or "",
         radius = tonumber(row.radius) or 3,
-        showRadius = tonumber(row.show_radius) == 1,
+        showCorona = tonumber(row.show_radius) == 1,
+        coronaColour = coronaColour,
+        coronaOpacity = coronaOpacity,
     }
     local pending = pendingByEntity[entityKey(row.map_id, row.entity_id)]
     if ANKIGTA.Store.rowIsIdentityCollision(row) then

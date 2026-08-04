@@ -134,19 +134,27 @@ def test_the_panel_names_keys_the_locale_table_defines() -> None:
     )
 
 
-def test_every_panel_key_is_translated_too() -> None:
-    """A gap in Russian is a bug to fix, not something to hide (locale.lua)."""
+def test_no_language_holds_a_panel_key_english_lacks() -> None:
+    """English is the fallback, so it has to be the complete table.
+
+    This asked the opposite as well -- that Russian keep up with English --
+    until Russian stopped being maintained and started being removed (ticket
+    08). Requiring it would now mean a string could not be added in English
+    without translating it in the same commit, for a table on its way out.
+
+    The direction that still matters is this one. A key only Russian defines is
+    a key the fallback cannot answer: it renders as its own name for every
+    English player, and as words for nobody who would report it.
+    """
     tables = locale_tables()
     english = tables["en"]
     for language, defined in tables.items():
         if language == "en":
             continue
-        missing = sorted(
-            key for key in all_panel_keys() if key in english and key not in defined
-        )
-        assert not missing, (
-            f"`{language}` falls back to English for panel strings:\n  "
-            + "\n  ".join(missing)
+        orphaned = sorted(key for key in defined if key not in english)
+        assert not orphaned, (
+            f"`{language}` defines strings English has no fallback for:\n  "
+            + "\n  ".join(orphaned)
         )
 
 
