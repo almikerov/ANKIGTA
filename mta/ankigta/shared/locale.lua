@@ -2,10 +2,21 @@ ANKIGTA = ANKIGTA or {}
 
 -- Localization.
 --
--- Russian and English ship as UTF-8 tables. English is the fallback, and a
--- missing Russian string logs a diagnostic rather than showing a blank: a gap
--- in the translation is a bug to fix, not something to hide from whoever could
--- fix it.
+-- Russian and English ship as UTF-8 tables. English is the fallback and is the
+-- complete one: a new string is added to `en` alone, and Russian is no longer
+-- kept up with it.
+--
+-- That was the other way round until ticket 08 began removing Russian. While a
+-- table is on its way out, requiring it to keep pace means every new string is
+-- a two-language change for a translation nobody will read. A missing Russian
+-- string still logs a diagnostic and still falls back to English, so nothing
+-- renders blank.
+--
+-- What has not relaxed is the direction that matters: a key only Russian
+-- defines is a key the fallback cannot answer. It renders as its own name for
+-- every English player, and as words for nobody who would report it. Two tests
+-- hold that line -- `test_english_is_the_complete_table` and
+-- `test_no_language_holds_a_panel_key_english_lacks`.
 --
 -- What is never translated: card text, Map Entity names the user typed, Entity
 -- Tags and Anki Tags. Those are the user's own words, and "translating" them
