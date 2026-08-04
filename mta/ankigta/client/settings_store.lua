@@ -1,9 +1,9 @@
 ANKIGTA = ANKIGTA or {}
 
--- The client's half of the settings (ADR 0014): presentation, input, audio and
--- language, which are properties of this one machine rather than of the shared
--- world. They are kept in a private client-side file, so a resource restart
--- brings back what the player chose here rather than what the server thinks.
+-- The client's half of the settings (ADR 0014): presentation, input and audio,
+-- which are properties of this one machine rather than of the shared world.
+-- They are kept in a private client-side file, so a resource restart brings
+-- back what the player chose here rather than what the server thinks.
 --
 -- Nothing here reaches Change History. History is server-owned and undoing a
 -- value that lives on another machine is not a thing the server can do; the
@@ -142,12 +142,6 @@ function ClientSettings.apply()
     end
     if ANKIGTA.ZoneMarks then
         ANKIGTA.ZoneMarks.applySettings({drawRadius = values.drawRadius})
-    end
-    if ANKIGTA.Locale then
-        ANKIGTA.Locale.setLanguage(
-            values.language,
-            getLocalization and getLocalization() or nil
-        )
     end
     if setReviewProtection then
         setReviewProtection(values.reviewProtection, values.disablePlayerControls)

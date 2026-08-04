@@ -1,8 +1,10 @@
-"""Ticket 27 — settings authority and localization.
+"""Ticket 27 — settings authority, and the string table behind their labels.
 
 Two rules do most of the work. A side may only write what it owns (ADR 0014),
 and bad input is rejected with a reason rather than quietly clamped — a
 mistyped 200 turned into 50 leaves the user with a setting they never chose.
+The reason has to be readable, which is where the string table comes in;
+ticket 07 left one table and no language to pick it with.
 """
 
 from __future__ import annotations
@@ -230,7 +232,7 @@ def test_settings_the_server_owns_are_undoable(
 
 @pytest.mark.parametrize(
     "key",
-    ["connectionPort", "connectionToken", "uiPlacement", "indicatorMode", "language"],
+    ["connectionPort", "connectionToken", "uiPlacement", "indicatorMode", "uiScale"],
 )
 def test_settings_the_server_does_not_own_stay_out_of_change_history(
     settings: MtaSandbox,
@@ -275,7 +277,6 @@ def test_a_server_setting_can_still_be_excluded_from_history(
         ("cardAudioEnabled", True),
         ("muteGameWorld", False),
         ("uiScale", 1),
-        ("language", "auto"),
     ],
 )
 def test_defaults_match_what_the_modules_already_ship(
@@ -288,59 +289,33 @@ def test_defaults_match_what_the_modules_already_ship(
     )(key) == expected
 
 
-def test_panel_order_starts_with_language_then_companion_port(
+def test_panel_order_starts_with_the_companion_port(
     settings: MtaSandbox,
 ) -> None:
+    """Nothing else in the panel does anything until Anki is reachable."""
     ordered = settings.eval("function() return ANKIGTA.Settings.orderedKeys() end")()
 
-    assert [ordered[1], ordered[2]] == ["language", "connectionPort"]
+    assert ordered[1] == "connectionPort"
 
 
 @pytest.mark.parametrize(
-    ("language", "key", "expected"),
+    ("key", "expected"),
     [
-        ("en", "f7.filter", "Search Map Entity"),
-        ("en", "f7.filterApply", "Search"),
-        ("en", "common.close", "X"),
-        ("en", "settings.close", "X"),
-        ("en", "f7.teleport", "Teleport"),
-        ("en", "settings.muteGameWorld", "Mute world while reviewing"),
-        ("en", "settings.closeAfterRating", "Close cards after rating"),
-        (
-            "en",
-            "settings.maxActivationSpeedKmh",
-            "Open cards when speed lower than:",
-        ),
-        ("ru", "f7.filter", "Поиск Map Entity"),
-        ("ru", "f7.filterApply", "Поиск"),
-        ("ru", "common.close", "X"),
-        ("ru", "settings.close", "X"),
-        ("ru", "f7.teleport", "Телепорт"),
-        (
-            "ru",
-            "settings.muteGameWorld",
-            "Заглушать мир во время повторения",
-        ),
-        (
-            "ru",
-            "settings.closeAfterRating",
-            "Закрывать карточки после оценки",
-        ),
-        (
-            "ru",
-            "settings.maxActivationSpeedKmh",
-            "Открывать карточки при скорости ниже:",
-        ),
+        ("f7.filter", "Search Map Entity"),
+        ("f7.filterApply", "Search"),
+        ("common.close", "X"),
+        ("settings.close", "X"),
+        ("f7.teleport", "Teleport"),
+        ("settings.muteGameWorld", "Mute world while reviewing"),
+        ("settings.closeAfterRating", "Close cards after rating"),
+        ("settings.maxActivationSpeedKmh", "Open cards when speed lower than:"),
     ],
 )
 def test_panel_words_say_what_the_controls_do(
     locale: MtaSandbox,
-    language: str,
     key: str,
     expected: str,
 ) -> None:
-    locale.eval("function(value) ANKIGTA.Locale.setLanguage(value) end")(language)
-
     assert locale.eval("function(value) return ANKIGTA.Locale.text(value) end")(
         key
     ) == expected
@@ -492,7 +467,7 @@ def test_a_colour_is_read_as_the_channels_it_is_drawn_from(
     assert len(channels("#3cf")) == 0
 
 
-def test_every_rejection_reason_has_a_translation(settings: MtaSandbox) -> None:
+def test_every_rejection_reason_has_words_behind_it(settings: MtaSandbox) -> None:
     """A reason the user cannot read is not a reason."""
     sandbox = MtaSandbox()
     try:
@@ -510,145 +485,25 @@ def test_every_rejection_reason_has_a_translation(settings: MtaSandbox) -> None:
             _ok, reason = sandbox.eval(
                 "function(k, v) return ANKIGTA.Settings.validate(k, v) end"
             )(key, value)
-            for language in ("en", "ru"):
-                sandbox.eval("function(l) ANKIGTA.Locale.setLanguage(l) end")(language)
-                text = sandbox.eval("function(k) return ANKIGTA.Locale.text(k) end")(
-                    reason
-                )
-                assert text != reason, f"{reason} untranslated in {language}"
+            text = sandbox.eval("function(k) return ANKIGTA.Locale.text(k) end")(
+                reason
+            )
+            assert text != reason, f"{reason} has no words behind it"
     finally:
         sandbox.close()
 
 
-# --- localization ------------------------------------------------------------
+# --- the string table ---------------------------------------------------------
 
 
-def test_english_is_the_default(locale: MtaSandbox) -> None:
-    assert locale.eval("ANKIGTA.Locale.language") == "en"
-
-
-@pytest.mark.parametrize("code", ["ru", "ru-RU", "RU", "ru_RU"])
-def test_a_russian_windows_locale_selects_russian(
-    locale: MtaSandbox,
-    code: str,
-) -> None:
-    # getLocalization() returns {code, name} -- verified in
-    # CLuaFunctionDefs::GetLocalization.
-    detected = locale.eval(
-        "function(c) return ANKIGTA.Locale.detect({code = c, name = 'x'}) end"
-    )(code)
-
-    assert detected == "ru"
-
-
-@pytest.mark.parametrize("code", ["en-US", "de", "fr", "", "pl"])
-def test_any_other_locale_selects_english(locale: MtaSandbox, code: str) -> None:
-    detected = locale.eval(
-        "function(c) return ANKIGTA.Locale.detect({code = c, name = 'x'}) end"
-    )(code)
-
-    assert detected == "en"
-
-
-def test_language_switches_without_a_resource_restart(locale: MtaSandbox) -> None:
-    before = locale.eval('ANKIGTA.Locale.text("settings.title")')
-    assert before == "Settings"
-
-    locale.eval('function() ANKIGTA.Locale.setLanguage("ru") end')()
-
-    assert locale.eval('ANKIGTA.Locale.text("settings.title")') == "Настройки"
-    locale.eval('function() ANKIGTA.Locale.setLanguage("en") end')()
-    assert locale.eval('ANKIGTA.Locale.text("settings.title")') == "Settings"
-
-
-def test_auto_follows_the_reported_locale(locale: MtaSandbox) -> None:
-    ok, chosen = locale.eval(
-        "function() return ANKIGTA.Locale.setLanguage("
-        "'auto', {code = 'ru-RU', name = 'Russian'}) end"
-    )()
-
-    assert ok is True
-    assert chosen == "ru"
-    assert locale.eval('ANKIGTA.Locale.text("settings.title")') == "Настройки"
-
-
-def test_english_is_the_complete_table(locale: MtaSandbox) -> None:
-    """English is the fallback, so every key any language holds is in it.
-
-    This was equality in both directions until Russian stopped being kept up
-    (ticket 08 removes it). Equality would now mean a string added in English
-    had to be translated in the same commit to be added at all, which is the
-    tail wagging the dog for a table that is on its way out. What it still
-    catches is the one that matters: a key that exists only in Russian is a key
-    the fallback cannot answer, so it renders as its own name for every English
-    player and as words for nobody who reports it.
-    """
-    english = set(locale.eval("ANKIGTA.Locale.strings.en").keys())
-    russian = set(locale.eval("ANKIGTA.Locale.strings.ru").keys())
-
-    assert russian - english == set()
-
-
-def test_russian_strings_survive_the_round_trip_as_utf8(
-    locale: MtaSandbox,
-) -> None:
-    """Read what the interpreter actually holds, not the file's bytes."""
-    locale.eval('function() ANKIGTA.Locale.setLanguage("ru") end')()
-
-    value = locale.eval('ANKIGTA.Locale.text("settings.title")')
-
-    assert value == "Настройки"
-    assert value.encode("utf-8").decode("utf-8") == value
-
-
-def test_a_missing_translation_falls_back_to_english_and_logs(
-    locale: MtaSandbox,
-) -> None:
-    locale.eval(
-        'function() ANKIGTA.Locale.strings.ru["settings.title"] = nil end'
-    )()
-    locale.eval('function() ANKIGTA.Locale.setLanguage("ru") end')()
-
-    assert locale.eval('ANKIGTA.Locale.text("settings.title")') == "Settings"
-    assert any(
-        "missing_translation" in line for line in locale.recorder.debug_messages()
-    )
-
-
-def test_a_key_missing_everywhere_shows_the_key_and_logs(
-    locale: MtaSandbox,
-) -> None:
+def test_a_key_the_table_lacks_shows_the_key_and_logs(locale: MtaSandbox) -> None:
     value = locale.eval('ANKIGTA.Locale.text("nothing.here")')
 
     # Visible gap beats a blank control nobody can diagnose.
     assert value == "nothing.here"
     assert any(
-        "untranslated_key" in line for line in locale.recorder.debug_messages()
+        "missing_string" in line for line in locale.recorder.debug_messages()
     )
-
-
-def test_stored_technical_values_do_not_change_with_language(
-    settings: MtaSandbox,
-) -> None:
-    sandbox = MtaSandbox()
-    try:
-        sandbox.load("shared/settings.lua")
-        sandbox.load("shared/locale.lua")
-
-        def snapshot() -> tuple[Any, ...]:
-            return (
-                sandbox.eval('ANKIGTA.Settings.default("indicatorMode")'),
-                sandbox.eval('ANKIGTA.Settings.authorityOf("activationRadius")'),
-                sandbox.eval('ANKIGTA.Settings.default("activationRadius")'),
-            )
-
-        sandbox.eval('function() ANKIGTA.Locale.setLanguage("en") end')()
-        english = snapshot()
-        sandbox.eval('function() ANKIGTA.Locale.setLanguage("ru") end')()
-
-        assert snapshot() == english
-    finally:
-        sandbox.close()
 
 
 def test_every_setting_has_an_authority_and_a_default_that_passes_its_own_rule(

@@ -1143,8 +1143,8 @@ local function recheckPendingMapSave(player, mapId, entityId)
     end
     local verified, outcome =
         ANKIGTA.MapIdentity.recheckPendingMapSave(mapId, entityId)
-    -- The notice travels as a key: the player's language is a client-owned
-    -- setting, so the side that renders it is the side that translates it.
+    -- The notice travels as a key: the string table is the client's, so the
+    -- side that shows the notice is the side that words it.
     triggerClientEvent(
         player,
         PENDING_NOTICE_EVENT,

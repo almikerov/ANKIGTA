@@ -5,7 +5,9 @@ fail loudly -- it renders as `settings.title` where the word "Settings" should
 be. That is invisible to every existing test, because no test renders the page.
 
 This one reads the keys straight out of the page and the schema, and checks
-them against `shared/locale.lua`. It is the seam the CEF checklist cannot be.
+them against the table `shared/locale.lua` loads. It is the seam the CEF
+checklist cannot be. `tests/test_localization.py` does the same for the keys
+the Lua side names; between them, every key anything asks for is checked.
 """
 
 from __future__ import annotations
@@ -15,36 +17,12 @@ from pathlib import Path
 
 import pytest
 
+from tests.test_localization import locale_keys
+
 REPO = Path(__file__).resolve().parent.parent
 PANEL = REPO / "mta" / "ankigta" / "client" / "panel"
-LOCALE_LUA = REPO / "mta" / "ankigta" / "shared" / "locale.lua"
 PANEL_LUA = REPO / "mta" / "ankigta" / "client" / "panel.lua"
 SETTINGS_LUA = REPO / "mta" / "ankigta" / "shared" / "settings.lua"
-
-
-def locale_tables() -> dict[str, set[str]]:
-    """The keys each language defines, read out of the Lua source.
-
-    Parsed rather than executed: there is no Lua runtime in this suite, and the
-    table is a flat literal, so a regex over each language's block is honest.
-    """
-    source = LOCALE_LUA.read_text(encoding="utf-8")
-    tables: dict[str, set[str]] = {}
-    # Each language opens with `    en = {` at one indent inside `Locale.strings`.
-    for match in re.finditer(r"\n    (\w+) = \{\n", source):
-        language = match.group(1)
-        start = match.end()
-        depth = 1
-        index = start
-        while index < len(source) and depth > 0:
-            if source[index] == "{":
-                depth += 1
-            elif source[index] == "}":
-                depth -= 1
-            index += 1
-        block = source[start:index]
-        tables[language] = set(re.findall(r'\["([^"]+)"\]\s*=', block))
-    return tables
 
 
 def html_keys() -> set[str]:
@@ -120,42 +98,18 @@ def all_panel_keys() -> set[str]:
     return html_keys() | js_literal_keys() | js_prefixed_keys() | panel_lua_keys()
 
 
-def test_the_panel_names_keys_the_locale_table_defines() -> None:
+def test_the_panel_names_keys_the_string_table_defines() -> None:
     """No label may render as its own key.
 
-    English is the fallback, so a key absent here is a key the player reads as
-    `f7.pickEntity` on a button.
+    There is no second table to fall back to, so a key absent here is a key the
+    player reads as `f7.pickEntity` on a button.
     """
-    english = locale_tables()["en"]
-    missing = sorted(key for key in all_panel_keys() if key not in english)
+    defined = locale_keys()
+    missing = sorted(key for key in all_panel_keys() if key not in defined)
     assert not missing, (
-        "the panel renders these as raw keys, because `en` does not define "
-        f"them:\n  " + "\n  ".join(missing)
+        "the panel renders these as raw keys, because shared/locale.lua does "
+        f"not define them:\n  " + "\n  ".join(missing)
     )
-
-
-def test_no_language_holds_a_panel_key_english_lacks() -> None:
-    """English is the fallback, so it has to be the complete table.
-
-    This asked the opposite as well -- that Russian keep up with English --
-    until Russian stopped being maintained and started being removed (ticket
-    08). Requiring it would now mean a string could not be added in English
-    without translating it in the same commit, for a table on its way out.
-
-    The direction that still matters is this one. A key only Russian defines is
-    a key the fallback cannot answer: it renders as its own name for every
-    English player, and as words for nobody who would report it.
-    """
-    tables = locale_tables()
-    english = tables["en"]
-    for language, defined in tables.items():
-        if language == "en":
-            continue
-        orphaned = sorted(key for key in defined if key not in english)
-        assert not orphaned, (
-            f"`{language}` defines strings English has no fallback for:\n  "
-            + "\n  ".join(orphaned)
-        )
 
 
 def test_the_page_reaches_every_element_it_binds() -> None:

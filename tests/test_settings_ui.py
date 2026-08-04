@@ -485,16 +485,15 @@ def test_the_input_path_reports_the_reason_the_schema_gives(
     assert control(client, key)["error"] == reason
 
 
-def test_the_rejection_reason_is_shown_in_the_language_in_use(
+def test_the_rejection_reason_is_shown_as_words_and_not_as_its_key(
     client: MtaSandbox,
 ) -> None:
-    call(client, 'function() ANKIGTA.Locale.setLanguage("ru") end')
     open_panel(client)
 
     apply_number(client, "activationRadius", "200")
 
     assert translate(client, control(client, "activationRadius")["error"]) == (
-        "Значение вне допустимого диапазона"
+        "Value is outside the allowed range"
     )
 
 
@@ -801,25 +800,18 @@ def test_a_player_without_the_study_right_changes_nothing(wired: MtaSandbox) -> 
     assert server_value(wired, "activationRadius") == 3
 
 
-# --- language ----------------------------------------------------------------
+# --- a row says what it is for ------------------------------------------------
 
 
-def test_switching_language_relabels_the_open_panel_without_a_restart(
+def test_a_row_carries_a_key_the_page_can_turn_into_words(
     client: MtaSandbox,
 ) -> None:
     open_panel(client)
-    english = translate(client, control(client, "activationRadius")["labelKey"])
 
-    call(
-        client,
-        "function() end",
-    )
-    panel_action(client, "setSetting", {"key": "language", "value": "ru"})
+    label = control(client, "activationRadius")["labelKey"]
 
-    russian = translate(client, control(client, "activationRadius")["labelKey"])
-    assert english == "Activation Zone radius (m)"
-    assert russian == "Радиус зоны активации (м)"
-    assert client_value(client, "language") == "ru"
+    assert label == "settings.activationRadius"
+    assert translate(client, label) == "Activation Zone radius (m)"
 
 
 def test_a_choice_the_schema_does_not_offer_is_rejected(client: MtaSandbox) -> None:

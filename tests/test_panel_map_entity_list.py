@@ -55,7 +55,6 @@ def panel_client() -> Iterator[MtaSandbox]:
         sandbox.load("shared/entity_types.lua")
         sandbox.load("client/layout.lua")
         sandbox.load("client/panel.lua")
-        sandbox.eval('function() ANKIGTA.Locale.setLanguage("en") end')()
         sandbox.eval(
             """
             function()

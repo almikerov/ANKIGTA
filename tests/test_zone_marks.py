@@ -318,7 +318,6 @@ def world() -> Iterator[MtaSandbox]:
     sandbox.add_world_element(
         "object", x=10.0, y=20.0, z=30.0, model=1337, ankigtaEntityId="e1"
     )
-    sandbox.eval('function() ANKIGTA.Locale.setLanguage("en") end')()
     # A corona is worn whether or not anyone opens the list, so the panel is
     # authorized but left shut. Every test that needs it open says so.
     sandbox.eval(

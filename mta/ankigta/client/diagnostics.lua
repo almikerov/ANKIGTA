@@ -12,9 +12,9 @@ ANKIGTA = ANKIGTA or {}
 -- state is read from the module that owns it rather than copied into a second
 -- place that could disagree with it.
 --
--- Nothing here is a sentence. The heading is the only translated string; every
--- value is a stable technical name or a number, which is what makes a pasted
--- report readable by someone whose client is set to the other language.
+-- Nothing here is a sentence. The heading is the only string that comes from
+-- the table; every value is a stable technical name or a number, which is what
+-- makes a pasted report mean the same thing to whoever reads the report.
 
 local Diagnostics = {
     sections = {},

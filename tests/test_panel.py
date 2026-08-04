@@ -201,20 +201,10 @@ def test_the_page_is_given_the_string_table_rather_than_baked_text(
 
     state = last_state(client)
     assert state["locale"]["panel.title"]
-    assert state["locale"]["connection.connect"]
-    assert state["language"] in ("en", "ru")
-
-
-def test_the_language_setting_reaches_the_open_panel(client: MtaSandbox) -> None:
-    authorize(client)
-    press_f7(client)
-    page_ready(client)
-
-    client.eval('function() ANKIGTA.Locale.setLanguage("ru") end')()
-
-    state = last_state(client)
-    assert state["language"] == "ru"
-    assert state["locale"]["connection.connect"] == "Подключиться"
+    assert state["locale"]["connection.connect"] == "Connect"
+    # The whole table, not the handful of keys this state happens to need: the
+    # page renders from what it was given and cannot ask for more.
+    assert len(state["locale"]) > 100
 
 
 # --- the connection gate ------------------------------------------------------
@@ -450,8 +440,9 @@ def test_the_page_ships_no_readable_text_of_its_own() -> None:
     """A key in the markup, a sentence only from the table.
 
     The Cyrillic guard reads compiled Lua chunks and cannot see an HTML file,
-    so the page needs its own check — otherwise the one place with no guard is
-    the one place with the most words.
+    and it would not catch an English sentence in the markup either, so the
+    page needs its own check — otherwise the one place with no guard is the one
+    place with the most words.
     """
     import re
 
@@ -462,19 +453,19 @@ def test_the_page_ships_no_readable_text_of_its_own() -> None:
         for fragment in re.findall(r">([^<>]+)<", page)
         if fragment.strip()
     ]
-    # ANKIGTA is a product name, not a word to translate. It appears twice:
-    # the document title and the heading.
+    # ANKIGTA is a product name, not a string from the table. It appears
+    # twice: the document title and the heading.
     assert set(stray) == {"ANKIGTA"}, stray
 
 
-def test_every_key_the_page_asks_for_exists_in_english() -> None:
+def test_every_key_the_page_asks_for_exists_in_the_table() -> None:
     import re
 
     sandbox = MtaSandbox()
     try:
         sandbox.load("shared/locale.lua")
-        english = sandbox.eval("ANKIGTA.Locale.strings.en")
-        known = {str(key) for key in english.keys()}
+        strings = sandbox.eval("ANKIGTA.Locale.strings")
+        known = {str(key) for key in strings.keys()}
     finally:
         sandbox.close()
 
