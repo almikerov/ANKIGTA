@@ -242,6 +242,9 @@ def card_search_response(
             "total": page.total,
             "query": page.query,
             "deckFilter": page.deck_filter,
+            # What a row on this page is. Echoed so the switch on screen and
+            # the rows under it cannot come to disagree.
+            "scope": page.scope.value,
             # Every deck, with the page rather than behind a second request.
             # The search already had to read them all to name one page of
             # cards, so this costs nothing and cannot disagree with what the

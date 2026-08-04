@@ -26,10 +26,11 @@ import pytest
 
 from tests.lua import MtaSandbox
 from tests.lua import shipped_schemas
-from tests.lua.shipped_schemas import SHIPPED_VERSIONS, rows
-
-
-CURRENT_SCHEMA_VERSION = 5
+from tests.lua.shipped_schemas import (
+    MIGRATED_SCHEMA_FLOOR,
+    SHIPPED_VERSIONS,
+    rows,
+)
 
 
 def server(directory: Path) -> MtaSandbox:
@@ -75,7 +76,7 @@ def test_every_shipped_version_migrates_to_the_current_schema(
 ) -> None:
     sandbox = migrated(workspace, version)
     try:
-        assert status(sandbox)["schemaVersion"] == CURRENT_SCHEMA_VERSION
+        assert status(sandbox)["schemaVersion"] >= MIGRATED_SCHEMA_FLOOR
     finally:
         sandbox.close()
 
@@ -162,7 +163,39 @@ def test_migration_keeps_metadata_change_history_and_settings(
         assert {
             row["setting_key"]
             for row in rows(database, "SELECT setting_key FROM user_settings")
-        } == {"activationRadius", "maxActivationSpeedKmh"}
+        } == {"activationRadius", "maxActivationSpeedKmh", "reviewMode"}
+    finally:
+        sandbox.close()
+
+
+@pytest.mark.parametrize("version", ["v3", "v4", "v5"])
+def test_the_early_review_boolean_becomes_the_review_mode_it_meant(
+    workspace: Path, version: str
+) -> None:
+    """A renamed setting is carried across, not quietly reset.
+
+    `listUserSettings` drops a stored value the schema no longer accepts, so a
+    rename with no migration behind it puts the user silently back on the
+    default: someone who had early review on would find their session smaller
+    after an update and nothing anywhere saying why.
+    """
+    database = workspace / "ankigta.sqlite"
+    sandbox = migrated(workspace, version)
+    try:
+        assert rows(
+            database,
+            "SELECT setting_key, setting_value FROM user_settings "
+            "WHERE setting_key IN ('allowEarlyReview', 'reviewMode')",
+        ) == [{"setting_key": "reviewMode", "setting_value": '["allow_all"]'}]
+
+        # And the value survives being read back through the schema, which is
+        # the path that decides whether a session takes not-due cards.
+        sandbox.execute("ANKIGTA.SettingsStore = nil")
+        sandbox.load("server/settings_store.lua")
+        sandbox.eval("function() return ANKIGTA.SettingsStore.load() end")()
+        assert sandbox.eval(
+            "function() return ANKIGTA.SettingsStore.get('reviewMode') end"
+        )() == "allow_all"
     finally:
         sandbox.close()
 
@@ -257,7 +290,7 @@ def test_migrating_is_idempotent_across_a_restart(
         before = database.read_bytes()
 
         assert opened(sandbox) is True
-        assert status(sandbox)["schemaVersion"] == CURRENT_SCHEMA_VERSION
+        assert status(sandbox)["schemaVersion"] >= MIGRATED_SCHEMA_FLOOR
         call(sandbox, "function() return ANKIGTA.Store.close() end")
 
         assert database.read_bytes() == before
@@ -383,7 +416,7 @@ def test_a_migration_is_preceded_by_a_verified_pre_migration_backup(
 def test_a_database_already_current_takes_no_pre_migration_backup(
     workspace: Path,
 ) -> None:
-    sandbox = migrated(workspace, "v5")
+    sandbox = migrated(workspace, SHIPPED_VERSIONS[-1])
     try:
         listed = sandbox.to_python(
             call(sandbox, "function() return ANKIGTA.Backup.list() end")

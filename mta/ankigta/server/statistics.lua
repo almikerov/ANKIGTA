@@ -62,9 +62,10 @@ end
 --- Count unique cards by bucket.
 --
 -- `cardStates` is keyed `collectionUuid/cardId` and holds the state Anki
--- reported. `includedMaps` is the Active Map Set. `allowEarlyReview` decides
--- whether not-due cards are studied at all.
-function Statistics.summarize(links, cardStates, includedMaps, allowEarlyReview)
+-- reported. `includedMaps` is the Active Map Set. `allowNotDue` decides whether
+-- not-due cards are studied at all -- which Review mode it came from is the
+-- caller's business, not this one's.
+function Statistics.summarize(links, cardStates, includedMaps, allowNotDue)
     local counts = {new = 0, learning = 0, due = 0, early = 0, total = 0}
     local seen = {}
 
@@ -79,7 +80,7 @@ function Statistics.summarize(links, cardStates, includedMaps, allowEarlyReview)
                 seen[key] = true
                 local state = cardStates and cardStates[key] or nil
                 local bucket = state and COUNTED_STATES[state] or nil
-                if bucket == "early" and allowEarlyReview ~= true then
+                if bucket == "early" and allowNotDue ~= true then
                     -- Preview only, so not part of the work to be done.
                     bucket = nil
                 end

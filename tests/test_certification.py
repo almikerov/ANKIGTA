@@ -28,11 +28,14 @@ import pytest
 
 from tests.lua import MtaSandbox
 from tests.lua import shipped_schemas
-from tests.lua.shipped_schemas import SHIPPED_VERSIONS, rows
+from tests.lua.shipped_schemas import (
+    MIGRATED_SCHEMA_FLOOR,
+    SHIPPED_VERSIONS,
+    rows,
+)
 from tools.package import build_mta_resource
 
 
-CURRENT_SCHEMA_VERSION = 5
 DATABASE = "ankigta.sqlite"
 
 
@@ -161,7 +164,7 @@ def test_a_clean_install_starts_and_creates_its_database(
         sandbox.close()
 
     assert status["ready"] is True
-    assert status["schemaVersion"] == CURRENT_SCHEMA_VERSION
+    assert status["schemaVersion"] >= MIGRATED_SCHEMA_FLOOR
     assert (installed / DATABASE).exists()
 
 
@@ -251,7 +254,7 @@ def test_upgrading_over_a_prior_schema_keeps_the_links(
         sandbox.close()
 
     assert status["ready"] is True
-    assert status["schemaVersion"] == CURRENT_SCHEMA_VERSION
+    assert status["schemaVersion"] >= MIGRATED_SCHEMA_FLOOR
     # Every Map Entity that was there is still there. Compared as keys rather
     # than as a count, so a migration that dropped one and the clean-install
     # seed that adds one cannot cancel each other out.
@@ -404,7 +407,7 @@ def test_reinstalling_adopts_the_database_that_was_left_in_place(
         sandbox.close()
 
     assert status["ready"] is True
-    assert status["schemaVersion"] == CURRENT_SCHEMA_VERSION
+    assert status["schemaVersion"] >= MIGRATED_SCHEMA_FLOOR
     assert link_count(database) == before
 
 

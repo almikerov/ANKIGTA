@@ -145,8 +145,30 @@
     select.value = (picker && picker.deckFilter) || chosen || "";
   }
 
+  /* The expression the rows are an answer to, and whether a row is a card or
+   * a note. Both follow the answer rather than the control, and both only when
+   * the answer itself changed: a state push happens whenever anything at all
+   * changes, and putting the switch back — or wiping a half-typed expression —
+   * on an unrelated redraw is how a choice made a moment ago disappears. */
+  var lastQuery = null;
+  var lastScope = null;
+
+  function renderSearch(picker) {
+    var query = (picker && picker.query) || "";
+    if (query !== lastQuery) {
+      lastQuery = query;
+      document.getElementById("search-query").value = query;
+    }
+    var scope = (picker && picker.scope) || "cards";
+    if (scope !== lastScope) {
+      lastScope = scope;
+      document.getElementById("scope").value = scope;
+    }
+  }
+
   function renderCards(picker) {
     selectedCardLabel = "";
+    renderSearch(picker);
     renderDecks(picker);
     var host = document.getElementById("cards");
     host.textContent = "";
@@ -349,11 +371,35 @@
     }
   }
 
+  /* Two rows carry the same setting key when it is per map, so the id is the
+   * key and the map together: duplicate ids would point every label at the
+   * first control and leave the rest unreachable by their own names. */
+  function settingId(row) {
+    return "set-" + row.key + (row.mapId ? "-" + row.mapId : "");
+  }
+
+  /* A map's own name is the user's words, so it arrives as text rather than as
+   * a key to look up. Everything else is named by the string table. */
+  function settingLabel(row) {
+    return row.labelText !== undefined && row.labelText !== null
+      ? row.labelText
+      : t(row.labelKey || "settings." + row.key);
+  }
+
   function settingRow(row) {
-    var wrap = element("div", "setting");
+    /* A group's heading and the line that says there is nothing under it are
+     * text, not controls: giving them a label and an empty field would offer
+     * something to change where there is nothing. */
+    if (row.kind === "heading") {
+      return element("h3", "setting-heading", settingLabel(row));
+    }
+    if (row.kind === "note") {
+      return element("p", "setting-note", settingLabel(row));
+    }
+    var wrap = element("div", row.mapId ? "setting per-map" : "setting");
     var label = element("label", "setting-label");
-    label.setAttribute("for", "set-" + row.key);
-    label.appendChild(element("span", null, t("settings." + row.key)));
+    label.setAttribute("for", settingId(row));
+    label.appendChild(element("span", null, settingLabel(row)));
     if (row.kind === "number" && row.min !== undefined) {
       /* The range is helper text, not a secret to be discovered by being
        * refused. */
@@ -370,7 +416,7 @@
     error.setAttribute("role", "alert");
     error.hidden = !row.error;
     wrap.appendChild(error);
-    if (row.error) wrap.className = "setting invalid";
+    if (row.error) wrap.className += " invalid";
     return wrap;
   }
 
@@ -378,17 +424,19 @@
     if (row.kind === "boolean") {
       var toggle = element("button", "toggle");
       toggle.type = "button";
-      toggle.id = "set-" + row.key;
+      toggle.id = settingId(row);
       toggle.textContent = t("settings.value." + String(row.value));
       toggle.setAttribute("aria-pressed", String(row.value === true));
       toggle.addEventListener("click", function () {
-        send("setSetting", {key: row.key, value: !row.value});
+        /* The map travels with the change: a per-map setting written without
+         * one is a global value that nothing reads. */
+        send("setSetting", {key: row.key, value: !row.value, mapId: row.mapId});
       });
       return toggle;
     }
     if (row.kind === "choice") {
       var select = document.createElement("select");
-      select.id = "set-" + row.key;
+      select.id = settingId(row);
       for (var i = 0; i < row.options.length; i += 1) {
         var option = document.createElement("option");
         option.value = row.options[i];
@@ -402,7 +450,7 @@
       return select;
     }
     var input = document.createElement("input");
-    input.id = "set-" + row.key;
+    input.id = settingId(row);
     input.type = row.kind === "number" ? "number" : "text";
     if (row.kind === "number") {
       input.min = row.min;
@@ -593,7 +641,11 @@
   });
   document.getElementById("search").addEventListener("submit", function (event) {
     event.preventDefault();
-    send("searchCards", {query: "", deck: document.getElementById("deck").value});
+    send("searchCards", {
+      query: document.getElementById("search-query").value,
+      deck: document.getElementById("deck").value,
+      scope: document.getElementById("scope").value
+    });
   });
   function applyConnection() {
     var portText = document.getElementById("port").value;

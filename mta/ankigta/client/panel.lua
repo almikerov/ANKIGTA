@@ -48,6 +48,11 @@ local SETTINGS_REJECTED_EVENT = "ankigta:settingRejected"
 local CONNECTION_SETTINGS_REQUEST_EVENT = "ankigta:requestConnectionSettings"
 local CONNECTION_SETTINGS_SNAPSHOT_EVENT = "ankigta:connectionSettingsSnapshot"
 local PAGE_URL = "http://mta/local/client/panel/index.html"
+-- The notices a completed search answers, and so retires.
+local CARD_PICKER_NOTICES = {
+    ["notice.cardPickerRejected"] = true,
+    ["notice.cardPickerUnavailable"] = true,
+}
 
 local authorized = false
 local guiBrowser = nil
@@ -109,6 +114,9 @@ local requestedSection = nil
 -- per key so the reason sits on the row that earned it rather than at the top
 -- of a form.
 local serverValues = {}
+--- Every map the server knows about, and whether its entities take part in
+--- study. Held apart from `serverValues` because this one setting is per map.
+local serverMaps = {}
 local settingsRejections = {}
 -- What was sent to the server and not yet answered. Shown in place of the
 -- stored value while it is in flight: snapping the field back to the old
@@ -309,12 +317,62 @@ local function currentValue(key)
     return schema().default(key)
 end
 
+--- The one setting that is per map, as a row per map.
+--
+-- `includeInStudy` decides whether one map's entities take part in the study
+-- session; excluding a map must not take the rest of the Active Map Set with
+-- it. Built from the schema like every other setting, it came out as a single
+-- switch belonging to no map at all -- one that wrote a global value nothing
+-- reads, under a name that promised something about maps.
+--
+-- The label is the map's own name, which is the user's words and so is never
+-- translated; the setting's name introduces the group above them.
+--
+-- A refusal is remembered against the map it was about, not against the
+-- setting: one refused map must not put a red border on every other map's row.
+local function rejectionKey(key, mapId)
+    if type(mapId) ~= "string" or mapId == "" then
+        return key
+    end
+    return key .. "\0" .. mapId
+end
+
+local function appendMapPreferenceRows(rows, key)
+    table.insert(rows, {
+        key = key,
+        labelKey = "settings." .. key,
+        kind = "heading",
+    })
+    if #serverMaps == 0 then
+        table.insert(rows, {
+            key = key,
+            labelKey = "settings.noMaps",
+            kind = "note",
+        })
+        return
+    end
+    for _, preference in ipairs(serverMaps) do
+        table.insert(rows, {
+            key = key,
+            mapId = preference.mapId,
+            labelText = preference.mapName or preference.mapId,
+            kind = "boolean",
+            value = preference.includeInStudy == true,
+            owner = "server",
+            error = settingsRejections[rejectionKey(key, preference.mapId)]
+                or false,
+        })
+    end
+end
+
 local function settingsRows()
     local rows = {}
     for _, key in ipairs(schema().orderedKeys()) do
         local definition = schema().definition(key)
         local rule = definition and definition.rule or {}
-        if offered(key, rule) then
+        if key == "includeInStudy" then
+            appendMapPreferenceRows(rows, key)
+        elseif offered(key, rule) then
             local row = {
                 key = key,
                 labelKey = "settings." .. key,
@@ -770,6 +828,11 @@ local function push()
             cards = cardRows(lastCards, lastSnapshot),
             decks = deckNames(lastCards),
             deckFilter = lastCards and lastCards.deckFilter or false,
+            -- What was actually searched for, as the companion understood it.
+            -- The page keeps its own field while typing; this is what the
+            -- rows below it are an answer to.
+            query = lastCards and lastCards.query or "",
+            scope = lastCards and lastCards.scope or "cards",
         },
         -- What the selected card actually says, once it has been read.
         note = selectedNote or false,
@@ -1034,7 +1097,7 @@ function actions.setSetting(payload)
         -- Not redrawn here on purpose: snapping the field back while the
         -- server is still deciding looks exactly like a rejection. The
         -- snapshot that follows is what shows the new value.
-        settingsRejections[key] = nil
+        settingsRejections[rejectionKey(key, payload.mapId)] = nil
         settingsPending[key] = value
         triggerServerEvent(
             SETTINGS_UPDATE_EVENT, resourceRoot, key, value, payload.mapId
@@ -1264,10 +1327,17 @@ function actions.searchCards(payload)
     triggerServerEvent(
         CARD_PICKER_REQUEST_EVENT,
         resourceRoot,
+        -- The expression as written. Anki is the thing that understands
+        -- `deck:Spanish -is:suspended`, so nothing on the way there touches it.
         tostring(payload.query or ""),
         tostring(payload.deck or ""),
         0,
-        50
+        50,
+        -- Absent rather than empty when the page did not choose: the server
+        -- refuses a scope it does not have, and "" is not one of them.
+        type(payload.scope) == "string" and payload.scope ~= ""
+            and payload.scope
+            or false
     )
 end
 
@@ -1513,6 +1583,13 @@ addEventHandler(CARD_PICKER_SNAPSHOT_EVENT, resourceRoot, function(snapshot)
         return
     end
     lastCards = snapshot
+    -- A search that answered clears the last complaint about searching, and
+    -- only that one. Nothing else dismisses a notice, so "Anki did not accept
+    -- the search" would otherwise sit over the correct rows the player got by
+    -- fixing exactly what it complained about.
+    if notice and CARD_PICKER_NOTICES[notice.key] then
+        notice = false
+    end
     local arrivedAt = getTickCount()
     push()
     local cards = type(snapshot.cards) == "table" and snapshot.cards or {}
@@ -1627,6 +1704,7 @@ addEventHandler(SETTINGS_SNAPSHOT_EVENT, resourceRoot, function(values)
         return
     end
     serverValues = type(values.values) == "table" and values.values or values
+    serverMaps = type(values.maps) == "table" and values.maps or {}
     -- The owner has spoken, so nothing is in flight any more and what it says
     -- is what the row shows -- including when it says something else.
     settingsPending = {}
@@ -1644,13 +1722,15 @@ addEventHandler(CONNECTION_SETTINGS_SNAPSHOT_EVENT, resourceRoot, function(value
 end)
 
 addEvent(SETTINGS_REJECTED_EVENT, true)
-addEventHandler(SETTINGS_REJECTED_EVENT, resourceRoot, function(key, reason)
+addEventHandler(SETTINGS_REJECTED_EVENT, resourceRoot, function(key, reason, mapId)
     if source ~= resourceRoot or type(key) ~= "string" then
         return
     end
     -- The server refused after the fact, so the reason lands on the row that
-    -- earned it rather than in the chat, where it would scroll away.
-    settingsRejections[key] = reason or "settings.error.not_saved"
+    -- earned it rather than in the chat, where it would scroll away. For the
+    -- one per-map setting that means the row of the map it was about.
+    settingsRejections[rejectionKey(key, mapId)] =
+        reason or "settings.error.not_saved"
     settingsPending[key] = nil
     push()
 end)

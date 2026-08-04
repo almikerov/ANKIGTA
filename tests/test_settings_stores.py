@@ -349,7 +349,7 @@ def history_count(sandbox: MtaSandbox) -> int:
         ("indicatorMode", "minimap_only", "wrong_authority"),
         ("activationRadius", 200, "settings.error.out_of_range"),
         ("activationRadius", 1.3, "settings.error.not_on_step"),
-        ("allowEarlyReview", "yes", "settings.error.not_a_boolean"),
+        ("reviewMode", "allow_early", "settings.error.not_a_choice"),
     ],
 )
 def test_the_database_refuses_what_the_schema_refuses(
@@ -427,12 +427,12 @@ def test_stored_settings_are_read_back_as_the_schema_s_types(
     store: MtaSandbox,
 ) -> None:
     set_setting(store, "activationRadius", 7.5)
-    set_setting(store, "allowEarlyReview", True)
+    set_setting(store, "reviewMode", "allow_all")
 
     persisted = store.eval("function() return ANKIGTA.Store.listUserSettings() end")()
 
     assert persisted["activationRadius"] == 7.5
-    assert persisted["allowEarlyReview"] is True
+    assert persisted["reviewMode"] == "allow_all"
 
 
 # --- the server settings store -----------------------------------------------
@@ -535,7 +535,7 @@ SERVER_VALUES = {
     "activationRadius": 7.5,
     "activationDelaySeconds": 2.5,
     "maxActivationSpeedKmh": 45,
-    "allowEarlyReview": True,
+    "reviewMode": "allow_all",
     "includeInStudy": False,
 }
 
@@ -641,7 +641,7 @@ def test_a_snapshot_carries_every_answerable_setting_and_no_secret(
         "activationRadius",
         "activationDelaySeconds",
         "maxActivationSpeedKmh",
-        "allowEarlyReview",
+        "reviewMode",
         "includeInStudy",
         "connectionPort",
     } == keys
@@ -1041,10 +1041,10 @@ def test_a_setting_that_cannot_be_written_does_not_change_in_memory_either(
     assert client_get(player, "uiScale") == 1.5
 
 
-def test_the_early_review_policy_a_request_asks_for_outlives_the_request(
+def test_the_review_mode_a_request_asks_for_outlives_the_request(
     tmp_path: Any,
 ) -> None:
-    """The server owns the policy, so the study request changes the setting and
+    """The server owns the mode, so the study request changes the setting and
     the setting is what governs -- including after a restart."""
     database = str(tmp_path / "ankigta.sqlite")
     server = MtaSandbox(database_path=database)
@@ -1055,7 +1055,7 @@ def test_the_early_review_policy_a_request_asks_for_outlives_the_request(
     server.trigger(
         "ankigta:startStudy",
         server.eval("resourceRoot"),
-        True,
+        "allow_all",
         client=study_player,
     )
     server.close()
@@ -1067,10 +1067,10 @@ def test_the_early_review_policy_a_request_asks_for_outlives_the_request(
     restarted_player = restarted.add_study_player()
     restarted.trigger("onResourceStart")
     try:
-        assert get(restarted, "allowEarlyReview") is True
+        assert get(restarted, "reviewMode") == "allow_all"
 
-        # A later request carries no flag at all; the stored policy is what
-        # the companion is told, not `false`.
+        # A later request names no mode at all; the stored one is what the
+        # companion is told, not `false`.
         restarted.trigger(
             "ankigta:startStudy",
             restarted.eval("resourceRoot"),
@@ -1080,6 +1080,44 @@ def test_the_early_review_policy_a_request_asks_for_outlives_the_request(
         assert json.loads(sent["options"]["postData"])["allowEarlyReview"] is True
     finally:
         restarted.close()
+
+
+@pytest.mark.parametrize(
+    ("mode", "takes_not_due"),
+    [("allow_due", False), ("allow_all", True)],
+)
+def test_each_review_mode_admits_the_cards_its_name_says(
+    tmp_path: Any,
+    mode: str,
+    takes_not_due: bool,
+) -> None:
+    """The point of the rename: each value now says which cards it takes.
+
+    `Allow due` builds the session out of what the scheduler calls due;
+    `Allow all` takes cards whether they are due or not. Asserted at the
+    request the companion actually receives, because that is where the mode
+    stops being a word and starts being a session.
+    """
+    server = MtaSandbox(database_path=str(tmp_path / "ankigta.sqlite"))
+    for script in manifest_scripts("shared", "server"):
+        server.load(script)
+    publish(server, port=32145)
+    study_player = server.add_study_player()
+    server.trigger("onResourceStart")
+    try:
+        server.trigger(
+            "ankigta:startStudy",
+            server.eval("resourceRoot"),
+            mode,
+            client=study_player,
+        )
+
+        assert get(server, "reviewMode") == mode
+        sent = server.recorder.remote_fetches[-1]
+        body = json.loads(sent["options"]["postData"])
+        assert body["allowEarlyReview"] is takes_not_due
+    finally:
+        server.close()
 
 
 def test_starting_the_resource_restores_what_the_user_chose(tmp_path: Any) -> None:

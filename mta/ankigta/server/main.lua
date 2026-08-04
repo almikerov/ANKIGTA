@@ -977,19 +977,30 @@ local function activeCardIdentities()
     return identities
 end
 
-local function requestStudyStart(player, rebuild, allowEarlyReview)
+--- Does the Review mode now in force take cards the scheduler does not call
+--- due?
+--
+-- The setting names the mode; the companion is asked a narrower question --
+-- whether this session admits not-due cards -- and that stays true of a mode
+-- which builds no session at all. Translating here, once, is what keeps the
+-- two vocabularies from leaking into each other.
+local function studyTakesNotDueCards()
+    return ANKIGTA.SettingsStore.get("reviewMode") == "allow_all"
+end
+
+local function requestStudyStart(player, rebuild, reviewMode)
     local authorized, authorizationError = playerAuthorization(player)
     if not authorized then
         return false, authorizationError.category
     end
-    -- The early-review policy is the server's (ADR 0014). The request carries
-    -- what the player asked for; the setting is what actually governs, so the
-    -- request changes the setting and then the setting is read back. A study
-    -- session started after a restart uses the same policy as the one before.
-    if type(allowEarlyReview) == "boolean" then
-        ANKIGTA.SettingsStore.set("allowEarlyReview", allowEarlyReview)
+    -- The Review mode is the server's (ADR 0014). The request carries what the
+    -- player asked for; the setting is what actually governs, so the request
+    -- changes the setting and then the setting is read back. A study session
+    -- started after a restart uses the same mode as the one before.
+    if type(reviewMode) == "string" then
+        ANKIGTA.SettingsStore.set("reviewMode", reviewMode)
     end
-    allowEarlyReview = ANKIGTA.SettingsStore.get("allowEarlyReview") == true
+    local allowNotDue = studyTakesNotDueCards()
     local identities, identityError = activeCardIdentities()
     if not identities then
         return false, identityError
@@ -998,13 +1009,13 @@ local function requestStudyStart(player, rebuild, allowEarlyReview)
         return ANKIGTA.CompanionGateway.requestSessionRebuild(
             player,
             identities,
-            allowEarlyReview == true
+            allowNotDue
         )
     end
     return ANKIGTA.CompanionGateway.requestSessionStart(
         player,
         identities,
-        allowEarlyReview == true
+        allowNotDue
     )
 end
 
@@ -1267,7 +1278,10 @@ addEventHandler(SETTINGS_UPDATE_EVENT, resourceRoot, function(key, value, mapId)
             SETTINGS_REJECTED_EVENT,
             resourceRoot,
             key,
-            reason
+            reason,
+            -- Which map the refusal was about, where it was about one: the
+            -- panel puts the reason on that map's row and not on every map's.
+            mapId
         )
         return
     end
@@ -1299,7 +1313,8 @@ addEventHandler(CARD_PICKER_REQUEST_EVENT, resourceRoot, function(
     query,
     deckFilter,
     page,
-    pageSize
+    pageSize,
+    scope
 )
     if not client or source ~= resourceRoot then
         return
@@ -1319,7 +1334,8 @@ addEventHandler(CARD_PICKER_REQUEST_EVENT, resourceRoot, function(
         query,
         deckFilter,
         page,
-        pageSize
+        pageSize,
+        scope
     )
     if not requested then
         triggerClientEvent(
@@ -1390,7 +1406,7 @@ end)
 
 addEvent(START_STUDY_REQUEST_EVENT, true)
 addEventHandler(START_STUDY_REQUEST_EVENT, resourceRoot, function(
-    allowEarlyReview
+    reviewMode
 )
     if not client or source ~= resourceRoot then
         return
@@ -1398,7 +1414,7 @@ addEventHandler(START_STUDY_REQUEST_EVENT, resourceRoot, function(
     local requested, requestError = requestStudyStart(
         client,
         false,
-        allowEarlyReview
+        reviewMode
     )
     if not requested then
         triggerClientEvent(
@@ -1413,7 +1429,7 @@ end)
 
 addEvent(REBUILD_STUDY_REQUEST_EVENT, true)
 addEventHandler(REBUILD_STUDY_REQUEST_EVENT, resourceRoot, function(
-    allowEarlyReview
+    reviewMode
 )
     if not client or source ~= resourceRoot then
         return
@@ -1421,7 +1437,7 @@ addEventHandler(REBUILD_STUDY_REQUEST_EVENT, resourceRoot, function(
     local requested, requestError = requestStudyStart(
         client,
         true,
-        allowEarlyReview
+        reviewMode
     )
     if not requested then
         triggerClientEvent(
@@ -2269,8 +2285,7 @@ addEventHandler(CARD_STATES_REFRESHED_EVENT, resourceRoot, function(
         return
     end
     local includedMaps = includedMapSet()
-    local allowEarlyReview =
-        ANKIGTA.SettingsStore.get("allowEarlyReview") == true
+    local allowNotDue = studyTakesNotDueCards()
 
     triggerClientEvent(
         player,
@@ -2280,7 +2295,7 @@ addEventHandler(CARD_STATES_REFRESHED_EVENT, resourceRoot, function(
             rows,
             cardStates,
             includedMaps,
-            allowEarlyReview
+            allowNotDue
         )
     )
 
@@ -2299,7 +2314,7 @@ addEventHandler(CARD_STATES_REFRESHED_EVENT, resourceRoot, function(
                 cardStateKey(row.collection_uuid, tonumber(row.card_id))
             ]
             local activatable = state and ACTIVATABLE_STATES[state] or false
-            if activatable == "early" and not allowEarlyReview then
+            if activatable == "early" and not allowNotDue then
                 -- Preview only, so not something to walk into (story 35).
                 activatable = false
             end
