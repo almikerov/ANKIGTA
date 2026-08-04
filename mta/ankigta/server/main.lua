@@ -1824,6 +1824,13 @@ addEventHandler(ENTITY_METADATA_REQUEST_EVENT, resourceRoot, function(
         -- adoption renames it and the row on screen is one snapshot behind.
         -- Both are answered by asking the store about the element itself.
         local element = elementByAdoptionName(entityId, client)
+        if not element then
+            outputDebugString(
+                "[ANKIGTA] entity_element_not_found map=" .. tostring(mapId)
+                    .. " entity=" .. tostring(entityId),
+                2
+            )
+        end
         if element then
             local adopted = ANKIGTA.Store.findMapEntityByRuntimeElement(element)
             if adopted then
@@ -1831,6 +1838,24 @@ addEventHandler(ENTITY_METADATA_REQUEST_EVENT, resourceRoot, function(
             else
                 local record, adoptError = adoptOffer(client, element)
                 if not record then
+                    -- Everything the refusal turned on, because "not loaded"
+                    -- about a thing standing in front of the player is a claim
+                    -- only this side can check. The stamp and the owning
+                    -- resource are what `findMapEntityByRuntimeElement` reads.
+                    outputDebugString(
+                        "[ANKIGTA] entity_adopt_refused"
+                            .. " map=" .. tostring(mapId)
+                            .. " entity=" .. tostring(entityId)
+                            .. " reason=" .. tostring(adoptError)
+                            .. " stamp=" .. tostring(
+                                getElementData(element, "ankigtaEntityId")
+                            )
+                            .. " stampedMap=" .. tostring(
+                                getElementData(element, "ankigtaMapId")
+                            )
+                            .. " type=" .. tostring(getElementType(element)),
+                        2
+                    )
                     triggerClientEvent(
                         client, PENDING_NOTICE_EVENT, resourceRoot,
                         "notice.entityUpdateFailed", adoptError
