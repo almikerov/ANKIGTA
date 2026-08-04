@@ -55,7 +55,9 @@ A newly added resource is typically picked up on the *second* pass rather than t
 
 Copying a folder is not atomic, and MTA can scan it between the manifest landing and the scripts that manifest names — the resource is then real but broken, and starting it fails. Discovery retries such a name on the next few passes rather than writing it off, and gives up after three, so a partial copy completes on its own while a genuinely broken resource does not fill the console forever.
 
-Discovery runs while Autoupdate is on. `hotreload discover` forces a pass at any time; the first call with no baseline yet only records the current list, and says so, rather than adopting every resource on the server.
+Discovery runs while Autoupdate is on. `hotreload discover` forces a pass from the console at any time; the first call with no baseline yet only records the current list, and says so, rather than adopting every resource on the server.
+
+There is deliberately **no button** for it. Discovery is a convenience for the hands-off case, and the panel already has an explicit path that does the same thing without surprises: **Refresh list** makes a newly dropped resource visible, then **Start** runs it and **Allow** puts it under the file watch. A button that silently allowed and started resources would be doing two mutating things under a name that sounds like a read.
 
 Selections are saved in the private `@hotreload_state.xml` file. The UI requires the logged-in account to have `command.hotreload` ACL permission. Restricted console commands remain available as an emergency fallback:
 

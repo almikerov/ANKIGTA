@@ -44,7 +44,6 @@ local TEXT = {
         customOnly = "Custom resources only",
         refresh = "Refresh list",
         reload = "Reload allowed",
-        discover = "Find new",
         autoupdate = "Autoupdate (watch files)",
         startup = "Startup",
         toggleStartup = "Toggle startup",
@@ -93,7 +92,6 @@ local TEXT = {
         customOnly = "Только пользовательские",
         refresh = "Обновить список",
         reload = "Перезагрузить разрешённые",
-        discover = "Найти новые",
         autoupdate = "Автообновление (следить за файлами)",
         startup = "Автозапуск",
         toggleStartup = "Переключить автозапуск",
@@ -568,9 +566,8 @@ createInterface = function()
 
     local reloadButton = guiCreateButton(12, buttonRow, 175, 32, text("reload"), false, UI.window)
     local refreshButton = guiCreateButton(193, buttonRow, 130, 32, text("refresh"), false, UI.window)
-    local discoverButton = guiCreateButton(329, buttonRow, 120, 32, text("discover"), false, UI.window)
     UI.keyButton = guiCreateButton(
-        455, buttonRow, 180, 32, text("openKeyButton"):format(openKey), false, UI.window
+        329, buttonRow, 180, 32, text("openKeyButton"):format(openKey), false, UI.window
     )
     local closeButton = guiCreateButton(width - 132, buttonRow, 120, 32, text("close"), false, UI.window)
 
@@ -579,10 +576,6 @@ createInterface = function()
     addEventHandler("onClientGUIClick", UI.stopButton, function() controlSelected("stop") end, false)
     addEventHandler("onClientGUIClick", UI.restartButton, function() controlSelected("restart") end, false)
     addEventHandler("onClientGUIClick", refreshButton, function() requestCatalog(true) end, false)
-    addEventHandler("onClientGUIClick", discoverButton, function()
-        setStatus(text("updating"), false)
-        triggerServerEvent("dev_hotreload:discover", resourceRoot)
-    end, false)
     addEventHandler("onClientGUIClick", UI.keyButton, beginKeyCapture, false)
     addEventHandler("onClientGUIClick", reloadButton, function()
         setStatus(text("saving"), false)

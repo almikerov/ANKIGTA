@@ -1007,25 +1007,6 @@ addEventHandler("dev_hotreload:reloadAll", resourceRoot, function()
     sendCatalogToClient(client, message)
 end)
 
-addEvent("dev_hotreload:discover", true)
-addEventHandler("dev_hotreload:discover", resourceRoot, function()
-    if refuseUnlessAdmin(client) then
-        return
-    end
-    local player = client
-    local hadBaseline = knownResources ~= nil
-    pollForNewResources()
-    -- The pass may have started something, and a resource asked to start is
-    -- not running yet, so the catalog is read a moment later.
-    setTimer(function()
-        if isElement(player) then
-            sendCatalogToClient(player, hadBaseline
-                and "Looked for new resources"
-                or "Baselined the resource list; press again after adding one")
-        end
-    end, 500, 1)
-end)
-
 addEvent("dev_hotreload:controlResource", true)
 addEventHandler("dev_hotreload:controlResource", resourceRoot, function(
     resourceName, action
