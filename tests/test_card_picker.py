@@ -31,6 +31,7 @@ OTHER_UUID = "22222222-2222-4222-8222-222222222222"
 @dataclass
 class FakeNote:
     tags: list[str]
+    id: int = 0
 
 
 @dataclass
@@ -40,9 +41,13 @@ class FakeCard:
     queue: int
     due: int
     note_tags: list[str]
+    #: Which note this card belongs to. Defaulted to the card's own id so a
+    #: card written without one is still a note of its own, the way a
+    #: single-template note type behaves.
+    note_id: int = 0
 
     def note(self) -> FakeNote:
-        return FakeNote(self.note_tags)
+        return FakeNote(self.note_tags, self.note_id or self.id)
 
 
 class FakeDecks:
@@ -81,6 +86,17 @@ class FakeCollection:
         self.queries.append(query)
         return sorted(self.cards)
 
+    def find_notes(self, query: str) -> list[int]:
+        self.queries.append(query)
+        return sorted({card.note_id or card.id for card in self.cards.values()})
+
+    def card_ids_of_note(self, note_id: int) -> list[int]:
+        return [
+            card.id
+            for card in sorted(self.cards.values(), key=lambda card: card.id)
+            if (card.note_id or card.id) == note_id
+        ]
+
     def get_card(self, card_id: int) -> FakeCard | None:
         return self.cards.get(card_id)
 
@@ -116,6 +132,100 @@ def test_search_pagination_and_stale_state_are_explicit() -> None:
 
     with pytest.raises(CardPickerError, match="card is missing"):
         service.read(4)
+
+
+def test_a_written_anki_expression_reaches_anki_unchanged() -> None:
+    """What the player typed is the search, not a phrase to be reinterpreted.
+
+    `-is:suspended` means "not suspended" to Anki and nothing at all to a
+    substring match, so anything this side did to the text -- quoting it,
+    escaping it, splitting it into words -- would silently answer a different
+    question from the one that was asked.
+    """
+    collection = FakeCollection()
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+
+    service.search(query="deck:Spanish tag:verb -is:suspended")
+
+    assert collection.queries == ["deck:Spanish tag:verb -is:suspended"]
+
+
+class SearchError(Exception):
+    """What Anki raises when the expression itself is what it cannot accept.
+
+    Named for `anki.errors.SearchError`, which is what `find_cards` raises on
+    an expression it cannot parse. There is no Anki in this suite, and the
+    companion recognises that class by name, so a double of the same name is
+    the honest stand-in.
+    """
+
+
+def test_an_expression_anki_rejects_is_reported_as_rejected() -> None:
+    """A refused expression is not an empty collection.
+
+    Reporting it as no results tells the player their search ran and matched
+    nothing, which sends them looking for the missing cards instead of at the
+    bracket they left open.
+    """
+    collection = FakeCollection()
+
+    def refuse(query: str) -> list[int]:
+        raise SearchError("Invalid search - please check for typing mistakes.")
+
+    collection.find_cards = refuse  # type: ignore[method-assign]
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+
+    with pytest.raises(CardPickerError) as rejected:
+        service.search(query="deck:(Spanish")
+
+    assert rejected.value.category == "search_rejected"
+    assert "typing mistakes" in rejected.value.message
+
+
+def test_a_collection_failure_that_is_not_the_expression_stays_a_read_failure() -> None:
+    collection = FakeCollection()
+
+    def fail(query: str) -> list[int]:
+        raise RuntimeError("the collection is closed")
+
+    collection.find_cards = fail  # type: ignore[method-assign]
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+
+    with pytest.raises(CardPickerError) as failure:
+        service.search()
+
+    assert failure.value.category == "card_search_failed"
+
+
+def test_the_note_card_switch_changes_what_a_result_row_is() -> None:
+    """Notes mode lists notes; cards mode lists cards, as Anki's browser does.
+
+    A note with two cards is two rows in one mode and one in the other, and the
+    row a note stands for is its first card, so linking still names a card.
+    """
+    collection = FakeCollection()
+    collection.cards[3] = FakeCard(3, 10, 0, 0, ["anki"], note_id=2)
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+
+    cards = service.search(scope="cards")
+    notes = service.search(scope="notes")
+
+    assert [card.identity.card_id for card in cards.cards] == [2, 3, 4, 6]
+    assert cards.total == 4
+    assert [card.identity.card_id for card in notes.cards] == [2, 4, 6]
+    assert notes.total == 3
+    assert notes.scope == "notes"
+
+
+def test_a_scope_the_picker_does_not_have_is_refused() -> None:
+    collection = FakeCollection()
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+
+    with pytest.raises(CardPickerError) as refused:
+        service.search(scope="decks")
+
+    assert refused.value.category == "invalid_scope"
+    assert collection.queries == []
 
 
 def test_card_search_is_blocked_when_collection_is_not_bound() -> None:
@@ -258,6 +368,52 @@ def test_card_control_rejects_malformed_search_parameters() -> None:
     assert response["error"]["category"] == "invalid_query"
 
 
+def test_a_rejected_expression_and_the_chosen_scope_cross_the_http_boundary() -> None:
+    """The gateway can only tell the two apart if the answer does.
+
+    A rejected expression has to arrive as a refusal the panel can name, and
+    the scope has to come back with the page so the switch and the rows on
+    screen cannot drift apart.
+    """
+    collection = FakeCollection()
+    collection.cards[3] = FakeCard(3, 10, 0, 0, ["anki"], note_id=2)
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+    observation = RuntimeObservation(
+        anki_version="26.05",
+        v3_scheduler=True,
+        fsrs_enabled=True,
+        collection=CollectionObservation(state=CollectionState.OPEN),
+    )
+
+    with HealthServer(lambda: observation, card_picker=service) as server:
+        scoped_status, scoped = _post(
+            server,
+            "/v1/cards/search",
+            {"query": "", "scope": "notes"},
+        )
+
+        def refuse(query: str) -> list[int]:
+            raise SearchError("Invalid search - please check for typing mistakes.")
+
+        collection.find_cards = refuse  # type: ignore[method-assign]
+        rejected_status, rejected = _post(
+            server,
+            "/v1/cards/search",
+            {"query": "deck:(Spanish"},
+        )
+
+    assert scoped_status == 200
+    assert scoped["payload"]["scope"] == "notes"
+    assert [card["identity"]["cardId"] for card in scoped["payload"]["cards"]] == [
+        2,
+        4,
+        6,
+    ]
+    assert rejected_status == 400
+    assert rejected["error"]["category"] == "search_rejected"
+    assert "typing mistakes" in rejected["error"]["message"]
+
+
 class CountingCollection:
     """A collection that records how much of itself was read.
 
@@ -271,6 +427,7 @@ class CountingCollection:
         self.card_count = card_count
         self.card_reads = 0
         self.deck_reads = 0
+        self.note_card_reads = 0
 
         class CountingDecks:
             def all_names_and_ids(inner) -> list[tuple[str, int]]:
@@ -281,6 +438,13 @@ class CountingCollection:
 
     def find_cards(self, query: str) -> list[int]:
         return list(range(1, self.card_count + 1))
+
+    def find_notes(self, query: str) -> list[int]:
+        return list(range(1, self.card_count + 1))
+
+    def card_ids_of_note(self, note_id: int) -> list[int]:
+        self.note_card_reads += 1
+        return [note_id]
 
     def get_card(self, card_id: int) -> FakeCard | None:
         if not 1 <= card_id <= self.card_count:
@@ -300,6 +464,23 @@ def test_a_page_of_fifty_reads_fifty_cards_however_many_the_search_matched() -> 
     assert collection.card_reads == 50
     # And the deck list once for the page, not once per card.
     assert collection.deck_reads == 1
+
+
+def test_a_page_of_notes_costs_a_page_of_notes() -> None:
+    """Notes mode pays the same way cards mode does.
+
+    Standing a note up as a row means finding its first card, and doing that
+    for every note the search matched -- rather than for the fifty on screen --
+    would spend the whole of the page's budget on notes nobody asked to see.
+    """
+    collection = CountingCollection(100_000)
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+
+    result = service.search(scope="notes", page=0, page_size=50)
+
+    assert result.total == 100_000
+    assert collection.note_card_reads == 50
+    assert collection.card_reads == 50
 
 
 def test_a_later_page_reads_its_own_cards_and_no_earlier_ones() -> None:

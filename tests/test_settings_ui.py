@@ -251,6 +251,13 @@ def test_every_setting_in_the_schema_is_reachable_in_the_panel(
             assert entry is None
             continue
         assert entry is not None, f"{key} is not reachable in the settings panel"
+        if key == "includeInStudy":
+            # The one per-map setting. It is reachable as a group -- a heading
+            # naming the setting, then a row per loaded map -- rather than as a
+            # single switch belonging to no map;
+            # `test_the_per_map_study_setting_is_a_row_per_map` covers the rows.
+            assert entry["kind"] == "heading"
+            continue
         assert entry["kind"] in (
             "number",
             "boolean",
@@ -303,6 +310,85 @@ def test_every_label_the_panel_shows_comes_from_the_locale_table(
         assert entry["labelKey"] in locale, (
             f"{key} shows a label the locale table does not own"
         )
+
+
+def settings_snapshot(sandbox: MtaSandbox, maps: list[dict[str, Any]]) -> None:
+    """The settings the server owns, arriving as `sendSettingsSnapshot` sends
+    them."""
+    call(
+        sandbox,
+        """
+        function(payload)
+            triggerEvent(
+                "ankigta:settingsSnapshot", resourceRoot, fromJSON(payload)
+            )
+        end
+        """,
+        json.dumps({"values": {}, "maps": maps}),
+    )
+
+
+def rows_for(sandbox: MtaSandbox, key: str) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in pushed_state(sandbox).get("settings", {}).get("rows", [])
+        if row["key"] == key
+    ]
+
+
+def test_the_per_map_study_setting_is_a_row_per_map(client: MtaSandbox) -> None:
+    """It decides whether *one* map's entities take part in the study session.
+
+    Built from the schema like every other setting, it came out as a single
+    switch belonging to no map: its writes went to a global value nothing
+    reads, and excluding one map was not something the panel could express at
+    all. The name says "this map"; the rows have to be per map for that to be
+    true.
+    """
+    open_panel(client)
+    settings_snapshot(
+        client,
+        [
+            {"mapId": "m1", "mapName": "maps/study.map", "includeInStudy": True},
+            {"mapId": "m2", "mapName": "maps/second.map", "includeInStudy": False},
+        ],
+    )
+
+    heading, first, second = rows_for(client, "includeInStudy")
+    assert heading["kind"] == "heading"
+    assert heading["labelKey"] == "settings.includeInStudy"
+    # A map's own name is the user's words, so it is shown rather than looked up.
+    assert [first["labelText"], second["labelText"]] == [
+        "maps/study.map",
+        "maps/second.map",
+    ]
+    assert [first["value"], second["value"]] == [True, False]
+
+    panel_action(
+        client,
+        "setSetting",
+        {"key": "includeInStudy", "value": False, "mapId": "m1"},
+    )
+
+    update = [
+        event
+        for event in client.recorder.server_events
+        if event.name == "ankigta:updateSetting"
+    ][-1]
+    assert update.args[0] == "includeInStudy"
+    assert update.args[1] is False
+    assert update.args[2] == "m1"
+
+
+def test_with_no_map_loaded_the_study_setting_says_so(client: MtaSandbox) -> None:
+    """Rather than an empty space where a switch used to be."""
+    open_panel(client)
+    settings_snapshot(client, [])
+
+    heading, note = rows_for(client, "includeInStudy")
+    assert heading["kind"] == "heading"
+    assert note["kind"] == "note"
+    assert note["labelKey"] == "settings.noMaps"
 
 
 # --- rejection, never clamping ----------------------------------------------

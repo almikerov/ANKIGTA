@@ -22,7 +22,7 @@ import pytest
 
 from tests.lua import MtaSandbox
 from tests.lua import shipped_schemas
-from tests.lua.shipped_schemas import rows
+from tests.lua.shipped_schemas import CURRENT_SCHEMA_VERSION, rows
 
 
 def server(directory: Path) -> MtaSandbox:
@@ -450,7 +450,7 @@ def test_restarting_after_an_interrupted_restore_finishes_it(
     try:
         assert opened(restarted) is True
 
-        assert status(restarted)["schemaVersion"] == 5
+        assert status(restarted)["schemaVersion"] == CURRENT_SCHEMA_VERSION
         assert readable(workspace / "ankigta.sqlite")
         assert not (workspace / "backups" / "staging.sqlite").exists()
         # The damaged original was not tidied away by the restart.

@@ -28,11 +28,14 @@ import pytest
 
 from tests.lua import MtaSandbox
 from tests.lua import shipped_schemas
-from tests.lua.shipped_schemas import SHIPPED_VERSIONS, rows
+from tests.lua.shipped_schemas import (
+    CURRENT_SCHEMA_VERSION,
+    SHIPPED_VERSIONS,
+    rows,
+)
 from tools.package import build_mta_resource
 
 
-CURRENT_SCHEMA_VERSION = 5
 DATABASE = "ankigta.sqlite"
 
 

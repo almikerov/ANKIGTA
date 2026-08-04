@@ -95,6 +95,13 @@ def js_prefixed_keys() -> set[str]:
     for key in re.findall(r'\n    (\w+) = \{\n\s+authority', settings):
         keys.add("settings." + key)
 
+    # And one per value a choice offers, for the same reason: the options come
+    # from the schema at runtime, so a value added there with no string behind
+    # it renders in the dropdown as `settings.value.allow_due`.
+    for values in re.findall(r"rule = choice\(\{([^}]*)\}\)", settings):
+        for value in re.findall(r'"([^"]+)"', values):
+            keys.add("settings.value." + value)
+
     # Booleans render their value as a word.
     keys |= {"settings.value.true", "settings.value.false"}
     return keys

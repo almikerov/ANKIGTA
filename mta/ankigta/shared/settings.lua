@@ -69,7 +69,15 @@ Settings.schema = {
         default = 0,
         rule = numeric(0, 100000, nil, 2),
     },
-    allowEarlyReview = {authority = SERVER, default = false, rule = toggle()},
+    -- Which cards the session takes. `allowEarlyReview` was a boolean whose
+    -- name described neither of its states: off did not mean "no review" and
+    -- on did not mean "early only". A mode says which one is in force, and
+    -- leaves room for the one that shows text instead of a card (ticket 05).
+    reviewMode = {
+        authority = SERVER,
+        default = "allow_due",
+        rule = choice({"allow_due", "allow_all"}),
+    },
     includeInStudy = {authority = SERVER, default = true, rule = toggle()},
 
     -- Presentation, input and audio: this player's machine only.
@@ -121,7 +129,7 @@ Settings.order = {
     "activationRadius",
     "activationDelaySeconds",
     "maxActivationSpeedKmh",
-    "allowEarlyReview",
+    "reviewMode",
     "includeInStudy",
     "indicatorMode",
     "reviewProtection",

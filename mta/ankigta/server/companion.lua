@@ -24,6 +24,10 @@ local RENDER_CLOSE_PATH = "/v1/render/close"
 local RENDER_RESULT_EVENT = "ankigta:renderIssued"
 local REVIEW_RESULT_EVENT = "ankigta:reviewResult"
 local CARD_PICKER_SNAPSHOT_EVENT = "ankigta:cardPickerSnapshot"
+-- What one Card Picker row stands for, the way Anki's browser offers it, and
+-- what a search asks for when nothing else was chosen.
+local CARD_SEARCH_SCOPE = {cards = true, notes = true}
+local DEFAULT_CARD_SEARCH_SCOPE = "cards"
 local REQUEST_TIMEOUT_MS = 4900
 local SESSION_TIMEOUT_MS = 30000
 local AUTO_RECONNECT_INTERVAL_MS = 2000
@@ -1070,16 +1074,46 @@ function Gateway.requestHealth(
     return true, requestId
 end
 
+--- The Card Picker could not answer, and the reason is about the link.
+--
+-- The key is a locale key rather than a sentence: this side does not know
+-- which language the player reads, and the string it used to build here
+-- reached the panel as its own name in every language.
 local function cardPickerFailure(player, category)
     if isElement(player) then
         triggerClientEvent(
             player,
             "ankigta:pendingMapSaveNotice",
             resourceRoot,
-            "Card Picker unavailable: " .. tostring(category),
-            category
+            "notice.cardPickerUnavailable",
+            tostring(category)
         )
     end
+end
+
+--- The companion answered, in its own protocol, that it will not run this
+--- search.
+--
+-- Kept apart from `cardPickerFailure` because the two send the player to
+-- different places. A refused expression is something to retype; anything else
+-- is something to check the connection over, and reporting one as the other is
+-- how a typed bracket became "Card Picker unavailable: protocol_error".
+local function cardPickerRejected(player, detail)
+    if not isElement(player) then
+        return
+    end
+    -- Anki's own sentence when there is one. A refusal that arrived without a
+    -- message still has to read as a refusal rather than as the word `nil`.
+    if type(detail) ~= "string" or detail == "" then
+        detail = "search_rejected"
+    end
+    triggerClientEvent(
+        player,
+        "ankigta:pendingMapSaveNotice",
+        resourceRoot,
+        "notice.cardPickerRejected",
+        detail
+    )
 end
 
 local function cardStateFailure(player, category)
@@ -1142,7 +1176,16 @@ local function validCardPickerPayload(payload)
         or payload.total ~= math.floor(payload.total)
         or payload.total < 0
         or type(payload.query) ~= "string"
-        or (payload.deckFilter ~= false and type(payload.deckFilter) ~= "string")
+        -- "No deck filter" arrives as JSON `null`, which MTA decodes to nil and
+        -- not to `false`. Written against `false` alone, this rejected every
+        -- answer to a search of every deck -- the whole answer, cards and all,
+        -- reported to the player as `protocol_error`.
+        or (payload.deckFilter ~= nil
+            and payload.deckFilter ~= false
+            and type(payload.deckFilter) ~= "string")
+        -- Optional for the same reason the deck list is: an older companion
+        -- answers without it, and cards is what it was always answering with.
+        or (payload.scope ~= nil and type(payload.scope) ~= "string")
         -- Optional: an older companion answers without it, and a picker with
         -- no deck list is worse than a refused search, not better.
         or (payload.decks ~= nil and type(payload.decks) ~= "table")
@@ -1699,6 +1742,16 @@ local function cardPickerCallback(body, info, requestId, generation)
         or httpStatus ~= 200
         or not isJsonContentType(info.headers)
     then
+        -- A refusal the companion wrote is not a link in doubt. `ok = false`
+        -- with this request's id is the add-on saying it read the search and
+        -- will not run it, which is the player's to fix and nobody else's.
+        local refusal = decodeJson(body)
+        if companionAnswered(refusal, requestId)
+            and refusal.error.category == "search_rejected"
+        then
+            cardPickerRejected(request.player, refusal.error.message)
+            return
+        end
         cardPickerFailure(request.player, "protocol_error")
         return
     end
@@ -1758,7 +1811,8 @@ function Gateway.requestCardPicker(
     query,
     deckFilter,
     page,
-    pageSize
+    pageSize,
+    scope
 )
     if not canPresentTo(player) then
         return false, "forbidden"
@@ -1772,6 +1826,14 @@ function Gateway.requestCardPicker(
         deckFilter = false
     elseif type(deckFilter) ~= "string" then
         return false, "invalid_deck_filter"
+    end
+    -- Cards unless notes were asked for. Anything else is refused here rather
+    -- than sent on: the companion would refuse it too, and a round trip to
+    -- learn that is a round trip spent on a value nothing produced.
+    if scope == nil or scope == false then
+        scope = DEFAULT_CARD_SEARCH_SCOPE
+    elseif not CARD_SEARCH_SCOPE[scope] then
+        return false, "invalid_scope"
     end
     if page == nil then
         page = 0
@@ -1819,6 +1881,7 @@ function Gateway.requestCardPicker(
         requestId = requestId,
         query = query,
         deckFilter = deckFilter,
+        scope = scope,
         page = page,
         pageSize = pageSize,
     })

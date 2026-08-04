@@ -18,7 +18,10 @@ each of which is the inverse of a shipped shape:
   from before vehicles and peds; the shape `needsEntityTypeMigration` detects.
 - **v3** — the three entity types, `spatial_links` still restricted to
   `state = 'active'`.
-- **v4** — the current shape, with `card_missing` admitted.
+- **v4** — `card_missing` admitted on a Spatial Link.
+- **v5** — `map_entities` widened again so a card can hang on a marker.
+- **v6** — the current shape. Its tables are v5's; what changed is a row, the
+  `allowEarlyReview` boolean rewritten as the `reviewMode` it meant.
 
 `history=True` adds the tables ticket 11 introduced. They are created by
 `ensureChangeHistorySchema` on every open regardless of version, so any database
@@ -29,6 +32,7 @@ renames `map_entities` can cascade a metadata row into nothing.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from pathlib import Path
 
@@ -37,7 +41,30 @@ UUID = "11111111-1111-4111-8111-111111111111"
 MAP_SHA = "A" * 64
 
 #: Every shape a released ANKIGTA could have left on disk.
-SHIPPED_VERSIONS = ("v1", "v2", "v3legacy", "v3", "v4", "v5")
+SHIPPED_VERSIONS = ("v1", "v2", "v3legacy", "v3", "v4", "v5", "v6")
+
+_STORE_LUA = Path(__file__).resolve().parents[2] / "mta" / "ankigta" / "server" / "store.lua"
+
+
+def _current_schema_version() -> int:
+    """The version the resource itself says it writes.
+
+    Read out of `store.lua` rather than repeated here. Four test files assert
+    against this number, and a copy in each is four places to forget when a
+    migration lands -- which is exactly how a green suite can sit on top of a
+    database nobody migrated.
+    """
+    match = re.search(
+        r"^local CURRENT_SCHEMA_VERSION = (\d+)$",
+        _STORE_LUA.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    if match is None:
+        raise AssertionError("store.lua no longer declares CURRENT_SCHEMA_VERSION")
+    return int(match.group(1))
+
+
+CURRENT_SCHEMA_VERSION = _current_schema_version()
 
 
 _MAPS = """
@@ -230,6 +257,15 @@ SETTINGS = [
     ("maxActivationSpeedKmh", "25"),
 ]
 
+#: The boolean that became `reviewMode`, stored the way the store writes one:
+#: `toJSON` serialises its argument *list*, so a lone value comes back wrapped.
+#: A migration that only understood the bare form would leave every database
+#: the resource itself wrote un-migrated.
+_EARLY_REVIEW_SETTING = ("allowEarlyReview", "[true]")
+
+#: What that same choice looks like once it has a mode to be.
+_REVIEW_MODE_SETTING = ("reviewMode", '["allow_all"]')
+
 
 def _typed(version: str) -> bool:
     return version in ("v3", "v4")
@@ -242,7 +278,7 @@ def build(path: Path, version: str, *, history: bool | None = None) -> None:
     if history is None:
         # Any build after ticket 11 creates these on open, so the shapes that
         # can still be met in the wild at that version carry them.
-        history = version in ("v3", "v4", "v5")
+        history = version in ("v3", "v4", "v5", "v6")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path)
@@ -255,7 +291,9 @@ def build(path: Path, version: str, *, history: bool | None = None) -> None:
 
 
 def _create(connection: sqlite3.Connection, version: str, *, history: bool) -> None:
-    numeric = {"v1": 1, "v2": 2, "v3legacy": 3, "v3": 3, "v4": 4, "v5": 5}[version]
+    numeric = {
+        "v1": 1, "v2": 2, "v3legacy": 3, "v3": 3, "v4": 4, "v5": 5, "v6": 6,
+    }[version]
     connection.execute(
         "CREATE TABLE schema_meta ("
         "    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),"
@@ -274,12 +312,13 @@ def _create(connection: sqlite3.Connection, version: str, *, history: bool) -> N
             "v3": _ENTITIES_V3,
             "v4": _ENTITIES_V3,
             "v5": _ENTITIES_CURRENT,
+            "v6": _ENTITIES_CURRENT,
         }[version]
     )
     if version in ("v3legacy", "v3"):
         connection.execute(_LINKS_V3)
         connection.execute(_COLLISIONS)
-    elif version in ("v4", "v5"):
+    elif version in ("v4", "v5", "v6"):
         connection.execute(_LINKS_V4)
         connection.execute(_COLLISIONS)
     if history:
@@ -346,7 +385,8 @@ def _fill(connection: sqlite3.Connection, version: str, *, history: bool) -> Non
     )
     connection.executemany(
         "INSERT INTO user_settings (setting_key, setting_value) VALUES (?, ?)",
-        SETTINGS,
+        SETTINGS
+        + [_REVIEW_MODE_SETTING if version == "v6" else _EARLY_REVIEW_SETTING],
     )
     connection.executemany(
         "INSERT INTO change_history "

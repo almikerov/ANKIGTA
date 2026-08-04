@@ -55,7 +55,7 @@ def can_write(sandbox: MtaSandbox, side: str, key: str) -> Any:
         ("activationRadius", "server"),
         ("activationDelaySeconds", "server"),
         ("maxActivationSpeedKmh", "server"),
-        ("allowEarlyReview", "server"),
+        ("reviewMode", "server"),
         ("includeInStudy", "server"),
         ("indicatorMode", "client"),
         ("reviewProtection", "client"),
@@ -212,7 +212,7 @@ def test_change_history_covers_exactly_what_the_server_owns(
 
 @pytest.mark.parametrize(
     "key",
-    ["activationRadius", "allowEarlyReview", "includeInStudy"],
+    ["activationRadius", "reviewMode", "includeInStudy"],
 )
 def test_settings_the_server_owns_are_undoable(
     settings: MtaSandbox,
@@ -257,7 +257,7 @@ def test_a_server_setting_can_still_be_excluded_from_history(
         ("activationRadius", 3),
         ("activationDelaySeconds", 0),
         ("maxActivationSpeedKmh", 0),
-        ("allowEarlyReview", False),
+        ("reviewMode", "allow_due"),
         ("indicatorMode", "none"),
         ("reviewProtection", True),
         ("disablePlayerControls", True),
@@ -398,7 +398,7 @@ def test_the_indicator_modes_match_the_schema(settings: MtaSandbox) -> None:
         ("activationDelaySeconds", 1.234, "settings.error.too_precise"),
         ("maxActivationSpeedKmh", -5, "settings.error.out_of_range"),
         ("indicatorMode", "sphere_only", "settings.error.not_a_choice"),
-        ("allowEarlyReview", "yes", "settings.error.not_a_boolean"),
+        ("reviewMode", "allow_early", "settings.error.not_a_choice"),
         ("uiScale", 10, "settings.error.out_of_range"),
     ],
 )
@@ -424,7 +424,7 @@ def test_invalid_input_is_rejected_with_a_reason_never_clamped(
         ("activationDelaySeconds", 12.34),
         ("maxActivationSpeedKmh", 0),
         ("indicatorMode", "minimap_only"),
-        ("allowEarlyReview", True),
+        ("reviewMode", "allow_all"),
         ("uiScale", 0.5),
         ("uiScale", 2),
         # Story 54 allows two decimal places by hand; only the buttons move in
@@ -452,7 +452,7 @@ def test_every_rejection_reason_has_a_translation(settings: MtaSandbox) -> None:
             ("activationRadius", "wide"),
             ("activationDelaySeconds", 1.234),
             ("indicatorMode", "sphere_only"),
-            ("allowEarlyReview", "yes"),
+            ("reviewMode", "allow_early"),
             ("nonexistent", 1),
         ):
             _ok, reason = sandbox.eval(

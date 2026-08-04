@@ -573,6 +573,61 @@ def test_every_workspace_action_reaches_the_event_it_always_did(
         assert server_events(client, name), name
 
 
+def test_the_expression_and_the_scope_the_page_chose_reach_the_server(
+    client: MtaSandbox,
+) -> None:
+    """The panel is the only place an Anki expression can be written.
+
+    It reaches the server as written -- `-is:suspended` means "not suspended"
+    to Anki and nothing at all to a substring match -- and the note/card switch
+    travels with it, because it decides what the rows come back as.
+    """
+    open_workspace(client)
+
+    act(
+        client,
+        "searchCards",
+        {"query": "deck:Spanish tag:verb -is:suspended", "deck": "", "scope": "notes"},
+    )
+
+    request = server_events(client, "ankigta:requestCardPicker")[-1]
+    assert request.args[0] == "deck:Spanish tag:verb -is:suspended"
+    assert request.args[4] == "notes"
+
+
+def test_a_search_with_no_scope_chosen_leaves_the_server_to_its_default(
+    client: MtaSandbox,
+) -> None:
+    """`""` is not a scope, and the server refuses one it does not have."""
+    open_workspace(client)
+
+    act(client, "searchCards", {"query": "", "deck": "", "scope": ""})
+
+    assert server_events(client, "ankigta:requestCardPicker")[-1].args[4] is False
+
+
+def test_the_page_is_told_what_the_rows_it_has_are_an_answer_to(
+    client: MtaSandbox,
+) -> None:
+    open_workspace(client)
+    client.eval(
+        """
+        function()
+            triggerEvent("ankigta:cardPickerSnapshot", resourceRoot, {
+                enabled = true,
+                cards = {},
+                query = "tag:verb",
+                scope = "notes",
+            })
+        end
+        """
+    )()
+
+    picker = last_state(client)["cardPicker"]
+    assert picker["query"] == "tag:verb"
+    assert picker["scope"] == "notes"
+
+
 def test_an_action_with_nothing_selected_sends_nothing(client: MtaSandbox) -> None:
     """A button that acts on "whatever was last in the list" is how a
     confirmation ends up applied to the wrong row."""

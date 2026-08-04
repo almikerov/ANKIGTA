@@ -1,7 +1,7 @@
 ANKIGTA = ANKIGTA or {}
 
 local DATABASE_PATH = "ankigta.sqlite"
-local CURRENT_SCHEMA_VERSION = 5
+local CURRENT_SCHEMA_VERSION = 6
 local HISTORY_LIMIT = 100
 
 -- The volume ticket 30 states its thresholds against. Nothing here is a limit:
@@ -589,6 +589,49 @@ local function migrateVersionFive()
     })
 end
 
+--- Version 6: `allowEarlyReview` becomes the Review mode it meant.
+--
+-- Carried across rather than dropped. `listUserSettings` discards a stored
+-- value the schema no longer accepts, which for a renamed setting would mean
+-- silently putting the user back on the default -- a player who had turned
+-- early review on would find their session quietly smaller after an update,
+-- with nothing anywhere saying why.
+--
+-- The old value is read through the same JSON the store writes, because a
+-- boolean has been written both bare and inside `toJSON`'s argument list, and
+-- a rename that only understood one of the two shapes would migrate half the
+-- databases in the wild.
+local function migrateVersionSix()
+    local steps = {}
+    local ok, rows = execute(
+        Store.connection,
+        "SELECT setting_value FROM user_settings WHERE setting_key = ?",
+        "allowEarlyReview"
+    )
+    -- A database from before the settings table exists has nothing to carry;
+    -- it is the version number that has to move, not a row.
+    if ok and rows[1] then
+        local wasAllowed = jsonDecode(rows[1].setting_value) == true
+        table.insert(steps, {
+            "INSERT OR REPLACE INTO user_settings "
+                .. "(setting_key, setting_value) VALUES (?, ?)",
+            {
+                "reviewMode",
+                jsonEncode(wasAllowed and "allow_all" or "allow_due"),
+            },
+        })
+        table.insert(steps, {
+            "DELETE FROM user_settings WHERE setting_key = ?",
+            {"allowEarlyReview"},
+        })
+    end
+    table.insert(steps, {
+        "UPDATE schema_meta SET version = ? WHERE singleton = 1",
+        {6},
+    })
+    return transaction(Store.connection, steps)
+end
+
 local function hasIdentityCollisionTable()
     local ok, rows = execute(
         Store.connection,
@@ -694,6 +737,12 @@ local MIGRATIONS = {
         from = 4,
         to = 5,
         apply = migrateVersionFive,
+    },
+    {
+        id = "review_mode_setting",
+        from = 5,
+        to = 6,
+        apply = migrateVersionSix,
     },
 }
 

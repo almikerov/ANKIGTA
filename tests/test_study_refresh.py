@@ -271,7 +271,8 @@ def test_a_not_due_card_activates_only_with_early_review_enabled(
     assert as_list(last_payload(server, "ankigta:spatialCandidates")) == []
 
     server.eval(
-        "function() return ANKIGTA.SettingsStore.set('allowEarlyReview', true) end"
+        "function() return ANKIGTA.SettingsStore.set("
+        "'reviewMode', 'allow_all') end"
     )()
     refresh(server, player)
     answer(server, {key(11): "not_due"})

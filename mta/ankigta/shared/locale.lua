@@ -60,7 +60,7 @@ Locale.strings = {
         ["settings.activationDelaySeconds"] = "Activation delay (s)",
         ["settings.maxActivationSpeedKmh"] =
             "Open cards when speed lower than:",
-        ["settings.allowEarlyReview"] = "Allow early review",
+        ["settings.reviewMode"] = "Review mode",
         ["settings.indicatorMode"] = "Next Card Indicator",
         ["settings.reviewProtection"] = "Review Protection",
         ["settings.disablePlayerControls"] = "Disable player controls",
@@ -69,7 +69,9 @@ Locale.strings = {
         ["settings.muteGameWorld"] = "Mute world while reviewing",
         ["settings.uiScale"] = "UI scale",
         ["settings.language"] = "Language",
-        ["settings.includeInStudy"] = "Maps included in study",
+        -- Per map, and about that map's entities rather than about a list of
+        -- maps: the old plural read as a global switch over all of them.
+        ["settings.includeInStudy"] = "This map's entities take part in study",
         ["settings.uiPlacement"] = "Window placement",
         ["settings.connectionPort"] = "Companion port",
         ["settings.connectionToken"] = "Companion token",
@@ -82,6 +84,10 @@ Locale.strings = {
         ["settings.value.sphere_and_minimap"] = "Sphere and minimap",
         ["settings.value.minimap_only"] = "Minimap only",
         ["settings.value.none"] = "No marker",
+        -- Each says which cards the session takes, which is the whole reason
+        -- this stopped being a checkbox called "Allow early review".
+        ["settings.value.allow_due"] = "Allow due",
+        ["settings.value.allow_all"] = "Allow all",
         ["settings.value.auto"] = "Follow Windows",
         ["settings.value.ru"] = "Русский",
         ["settings.value.en"] = "English",
@@ -216,6 +222,11 @@ Locale.strings = {
         ["cardPicker.title"] = "ANKIGTA — Card Picker",
         ["cardPicker.replaceTitle"] = "ANKIGTA — Replace card",
         ["cardPicker.search"] = "Search cards",
+        -- The field takes what Anki takes, so the hint is an Anki search and
+        -- not an invitation to type a word and hope.
+        ["cardPicker.queryHint"] = "Anki search, e.g. tag:verb -is:suspended",
+        ["cardPicker.scope.cards"] = "Cards",
+        ["cardPicker.scope.notes"] = "Notes",
         ["cardPicker.column.card"] = "Card",
         ["cardPicker.column.deck"] = "Deck",
         ["cardPicker.column.state"] = "State",
@@ -311,6 +322,10 @@ Locale.strings = {
             "Map copy decision applied; New copy has no automatic Spatial Link.",
         ["notice.copyDecisionFailed"] = "Map copy decision was not applied: %s",
         ["notice.cardPickerUnavailable"] = "Card Picker unavailable: %s",
+        -- Anki refused the expression, in its own words. Separate from the
+        -- line above because that one sends the player to the connection and
+        -- this one sends them back to what they typed.
+        ["notice.cardPickerRejected"] = "Anki did not accept the search: %s",
         ["notice.studyStartFailed"] = "Study start failed: %s",
         ["notice.studyRebuildFailed"] = "Study rebuild failed: %s",
         ["notice.studyPauseFailed"] = "Study pause failed: %s",
@@ -348,7 +363,7 @@ Locale.strings = {
         ["settings.activationDelaySeconds"] = "Задержка активации (с)",
         ["settings.maxActivationSpeedKmh"] =
             "Открывать карточки при скорости ниже:",
-        ["settings.allowEarlyReview"] = "Разрешить досрочное повторение",
+        ["settings.reviewMode"] = "Режим повторения",
         ["settings.indicatorMode"] = "Индикатор следующей карточки",
         ["settings.reviewProtection"] = "Защита во время повторения",
         ["settings.disablePlayerControls"] = "Отключать управление игроком",
@@ -357,7 +372,7 @@ Locale.strings = {
         ["settings.muteGameWorld"] = "Заглушать мир во время повторения",
         ["settings.uiScale"] = "Масштаб интерфейса",
         ["settings.language"] = "Язык",
-        ["settings.includeInStudy"] = "Карты, участвующие в изучении",
+        ["settings.includeInStudy"] = "Сущности этой карты участвуют в изучении",
         ["settings.uiPlacement"] = "Размещение окна",
         ["settings.connectionPort"] = "Порт компаньона",
         ["settings.connectionToken"] = "Токен компаньона",
@@ -370,6 +385,8 @@ Locale.strings = {
         ["settings.value.sphere_and_minimap"] = "Сфера и миникарта",
         ["settings.value.minimap_only"] = "Только миникарта",
         ["settings.value.none"] = "Без отметки",
+        ["settings.value.allow_due"] = "Только подошедшие",
+        ["settings.value.allow_all"] = "Все",
         ["settings.value.auto"] = "Как в Windows",
         ["settings.value.ru"] = "Русский",
         ["settings.value.en"] = "English",
@@ -502,6 +519,10 @@ Locale.strings = {
         ["cardPicker.title"] = "ANKIGTA — Card Picker",
         ["cardPicker.replaceTitle"] = "ANKIGTA — Replace card",
         ["cardPicker.search"] = "Искать карточки",
+        ["cardPicker.queryHint"] =
+            "Поиск Anki, например tag:verb -is:suspended",
+        ["cardPicker.scope.cards"] = "Карточки",
+        ["cardPicker.scope.notes"] = "Заметки",
         ["cardPicker.column.card"] = "Карточка",
         ["cardPicker.column.deck"] = "Колода",
         ["cardPicker.column.state"] = "Состояние",
@@ -600,6 +621,7 @@ Locale.strings = {
             "Решение о копии карты применено; у New copy нет автоматической Spatial Link.",
         ["notice.copyDecisionFailed"] = "Решение о копии карты не применено: %s",
         ["notice.cardPickerUnavailable"] = "Card Picker недоступен: %s",
+        ["notice.cardPickerRejected"] = "Anki не принял поиск: %s",
         ["notice.studyStartFailed"] = "Не удалось начать обучение: %s",
         ["notice.studyRebuildFailed"] = "Не удалось перестроить обучение: %s",
         ["notice.studyPauseFailed"] = "Не удалось приостановить обучение: %s",

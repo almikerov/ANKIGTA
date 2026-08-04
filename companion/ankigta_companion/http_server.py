@@ -357,6 +357,7 @@ class HealthServer:
                         if self.path == CARD_SEARCH_PATH:
                             raw_query = request.get("query", "")
                             raw_deck_filter = request.get("deckFilter")
+                            raw_scope = request.get("scope", "cards")
                             raw_page = request.get("page", 0)
                             raw_page_size = request.get("pageSize", 50)
                             if not isinstance(raw_query, str):
@@ -372,6 +373,11 @@ class HealthServer:
                                 raise CardPickerError(
                                     "invalid_deck_filter",
                                     "deckFilter must be a string",
+                                )
+                            if not isinstance(raw_scope, str):
+                                raise CardPickerError(
+                                    "invalid_scope",
+                                    "scope must be a string",
                                 )
                             if (
                                 not isinstance(raw_page, int)
@@ -396,6 +402,7 @@ class HealthServer:
                             search_page = card_picker.search(
                                 query=query,
                                 deck_filter=deck_filter,
+                                scope=raw_scope,
                                 page=page,
                                 page_size=page_size,
                             )
@@ -438,6 +445,11 @@ class HealthServer:
                             "invalid_pagination": 400,
                             "invalid_query": 400,
                             "invalid_deck_filter": 400,
+                            "invalid_scope": 400,
+                            # The expression is the request, so an expression
+                            # Anki will not parse is a bad request rather than
+                            # a collection that could not be read.
+                            "search_rejected": 400,
                             "collection_not_bound": 409,
                             "collection_unavailable": 503,
                             "card_missing": 404,

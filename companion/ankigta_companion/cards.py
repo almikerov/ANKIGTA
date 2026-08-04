@@ -47,6 +47,19 @@ def card_state(queue: int, due: int, today: int) -> CardState:
     return CardState.NOT_DUE
 
 
+#: The class Anki raises when the search expression itself is what it cannot
+#: accept: `anki.errors.SearchError`. Recognised by name rather than by
+#: importing it, because this module deliberately holds no Anki import -- that
+#: is what lets the Card Picker be exercised without a collection at all -- and
+#: the name is the whole of what telling a bad expression from a bad collection
+#: needs.
+SEARCH_REJECTED_ERROR = "SearchError"
+
+#: How much of Anki's own words about a refused expression is passed on. Anki
+#: writes a sentence; anything much longer than one is not an explanation.
+MAX_SEARCH_REJECTION_LENGTH = 240
+
+
 class CardPickerError(ValueError):
     """A safe, user-visible Card Picker failure."""
 
@@ -54,6 +67,19 @@ class CardPickerError(ValueError):
         super().__init__(message)
         self.category = category
         self.message = message
+
+
+class SearchScope(StrEnum):
+    """What one result row stands for: a card, or the note behind it.
+
+    Anki's browser offers the same switch, and it changes the rows rather than
+    the search. A note whose three cards all match is one row here and three
+    there; the row a note stands for is still one of its cards, so linking has
+    an Anki Card Identity either way.
+    """
+
+    CARDS = "cards"
+    NOTES = "notes"
 
 
 class CardState(StrEnum):
@@ -91,6 +117,10 @@ class CollectionLike(Protocol):
     decks: DecksLike
 
     def find_cards(self, query: str) -> Sequence[int]: ...
+
+    def find_notes(self, query: str) -> Sequence[int]: ...
+
+    def card_ids_of_note(self, note_id: int) -> Sequence[int]: ...
 
     def get_card(self, card_id: int) -> CardLike | None: ...
 
@@ -134,6 +164,9 @@ class CardSearchPage:
     #: rather than typed. Carried with the page because the search already read
     #: them all to name its cards.
     decks: tuple[DeckView, ...] = ()
+    #: What a row on this page stands for. Echoed back so the switch on screen
+    #: and the rows under it cannot come to disagree.
+    scope: SearchScope = SearchScope.CARDS
 
 
 IdentityProvider = Callable[[], CollectionIdentityObservation | None]
@@ -159,6 +192,7 @@ class CardPickerService:
         *,
         query: str = "",
         deck_filter: str | None = None,
+        scope: str = SearchScope.CARDS,
         page: int = 0,
         page_size: int = 50,
     ) -> CardSearchPage:
@@ -167,20 +201,24 @@ class CardPickerService:
                 "invalid_pagination",
                 "page must be non-negative and pageSize must be between 1 and 200",
             )
+        normalized_scope = self._normalize_scope(scope)
         collection_uuid, collection = self._bound_collection()
         normalized_query = self._normalize_query(query)
         normalized_deck = self._normalize_deck_filter(deck_filter)
         anki_query = self._build_query(normalized_query, normalized_deck)
         try:
-            raw_ids = collection.find_cards(anki_query)
+            if normalized_scope is SearchScope.NOTES:
+                raw_ids = collection.find_notes(anki_query)
+            else:
+                raw_ids = collection.find_cards(anki_query)
         except Exception as error:
-            raise CardPickerError(
-                "card_search_failed",
-                "Anki rejected the card search",
-            ) from error
+            raise self._search_failure(error) from error
 
-        matched = self._matched_card_ids(raw_ids)
+        matched = self._matched_ids(raw_ids)
         start = page * page_size
+        page_ids = matched[start : start + page_size]
+        if normalized_scope is SearchScope.NOTES:
+            page_ids = self._first_card_of_each(collection, page_ids)
         # Read once for the whole answer: the page's names and the deck list
         # are the same list, and asking twice made a page cost two reads.
         names = self._deck_names(collection)
@@ -188,7 +226,7 @@ class CardPickerService:
             cards=self._read_page(
                 collection,
                 collection_uuid,
-                matched[start : start + page_size],
+                page_ids,
                 names,
             ),
             page=page,
@@ -202,6 +240,7 @@ class CardPickerService:
                 # nesting sorts into a tree correctly as plain text.
                 for deck_id, name in sorted(names.items(), key=lambda p: p[1])
             ),
+            scope=normalized_scope,
         )
 
     def read(self, card_id: int) -> CardView:
@@ -283,6 +322,39 @@ class CardPickerService:
         return query.strip()
 
     @staticmethod
+    def _normalize_scope(scope: str) -> SearchScope:
+        try:
+            return SearchScope(scope)
+        except ValueError as error:
+            raise CardPickerError(
+                "invalid_scope",
+                "scope must be either cards or notes",
+            ) from error
+
+    @staticmethod
+    def _search_failure(error: Exception) -> CardPickerError:
+        """Was the expression refused, or did the read of the collection fail?
+
+        Told apart because they send the player to different places. A refused
+        expression is a bracket they left open, and reporting it as a failed
+        read -- or, worse, as an empty collection -- sends them looking for
+        cards that were never searched for.
+        """
+        if type(error).__name__ != SEARCH_REJECTED_ERROR:
+            return CardPickerError(
+                "card_search_failed",
+                "Anki rejected the card search",
+            )
+        # Anki's own sentence, whitespace-collapsed: it is already written for
+        # the person who typed the expression, and rewriting it here would
+        # trade a specific complaint for a vague one.
+        said = " ".join(str(error).split())[:MAX_SEARCH_REJECTION_LENGTH]
+        return CardPickerError(
+            "search_rejected",
+            said or "Anki did not accept this search expression",
+        )
+
+    @staticmethod
     def _normalize_deck_filter(deck_filter: str | None) -> str | None:
         if deck_filter is None:
             return None
@@ -299,24 +371,60 @@ class CardPickerService:
         return f'deck:"{escaped}"' + (f" {query}" if query else "")
 
     @staticmethod
-    def _matched_card_ids(raw_ids: Sequence[int]) -> list[int]:
+    def _matched_ids(raw_ids: Sequence[int]) -> list[int]:
         """What the search matched, as ids: deduplicated and in a stable order.
 
-        Ids only, because reading a card is what costs. A page of fifty is
-        fifty cards however many the search matched, and shaping every match to
-        serve one page read a hundred thousand cards for the reference
-        collection's first page — the whole of that threshold's budget spent on
-        cards nobody asked to see.
+        Cards or notes, depending on what was asked for; ids only either way,
+        because reading one is what costs. A page of fifty is fifty reads
+        however many the search matched, and shaping every match to serve one
+        page read a hundred thousand cards for the reference collection's first
+        page — the whole of that threshold's budget spent on rows nobody asked
+        to see.
         """
         return sorted(
             {
-                card_id
-                for card_id in raw_ids
-                if isinstance(card_id, int)
-                and not isinstance(card_id, bool)
-                and card_id > 0
+                matched_id
+                for matched_id in raw_ids
+                if isinstance(matched_id, int)
+                and not isinstance(matched_id, bool)
+                and matched_id > 0
             }
         )
+
+    @staticmethod
+    def _first_card_of_each(
+        collection: CollectionLike,
+        note_ids: Sequence[int],
+    ) -> list[int]:
+        """The card that stands for each note on this page.
+
+        Anki's browser shows a note by its first card, and so does this: the
+        order `card_ids_of_note` returns is template order, so the first of
+        them is the note's first card rather than whichever card happens to
+        have the lowest id.
+
+        Asked for the page's notes only, never for every note the search
+        matched — the same rule that keeps a page of fifty cards fifty reads.
+        A note whose cards have all gone leaves a gap, as a deleted card does.
+        """
+        first_cards: list[int] = []
+        for note_id in note_ids:
+            try:
+                card_ids = collection.card_ids_of_note(note_id)
+            except Exception as error:
+                raise CardPickerError(
+                    "card_read_failed",
+                    "Anki rejected a note's card list",
+                ) from error
+            for card_id in card_ids:
+                if (
+                    isinstance(card_id, int)
+                    and not isinstance(card_id, bool)
+                    and card_id > 0
+                ):
+                    first_cards.append(card_id)
+                    break
+        return first_cards
 
     def _read_page(
         self,

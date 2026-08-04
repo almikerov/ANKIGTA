@@ -56,10 +56,10 @@ For each of new, learning, relearning, due review:
 
 For a not-due card:
 
-- With `Разрешить досрочное повторение` off: confirm it is not counted, has no
-  zone, is never marked, and opens as Preview only with no rating buttons.
-- With it on: confirm it counts in `Early`, gets a zone, and rates through
-  Anki with the early-review warning shown.
+- With `Режим повторения` on `Только подошедшие`: confirm it is not counted, has
+  no zone, is never marked, and opens as Preview only with no rating buttons.
+- On `Все`: confirm it counts in `Early`, gets a zone, and rates through Anki
+  with the early-review warning shown.
 
 For suspended and buried:
 
