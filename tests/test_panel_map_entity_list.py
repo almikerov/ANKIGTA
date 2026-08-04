@@ -794,6 +794,53 @@ def test_an_entity_stored_under_one_map_is_written_to_from_another(
     ).fetchone() == (1,)
 
 
+def test_an_already_stamped_element_is_listed_as_the_entity_it_is(
+    server: MtaSandbox,
+) -> None:
+    """Not offered again under empty metadata.
+
+    The owner's stairs had a row under one map while the world held it under
+    another, so it was listed as something to take in -- with `showRadius`
+    hardcoded false over a row that said otherwise. Ticking the box wrote
+    correctly and the next snapshot put it straight back.
+    """
+    known = install_resource_world(
+        server, current_resource="current-map", duplicate_entity_id="already-here"
+    )
+    seed_entity(
+        server,
+        map_id="a-map-that-is-not-running",
+        resource_name="a-map-that-is-not-running",
+        entity_id="stairs-9",
+    )
+    server.connection.raw.execute(
+        "INSERT INTO map_entity_metadata"
+        " (map_id, entity_id, name, entity_tag, radius, show_radius)"
+        " VALUES (?, ?, '', '', 3, 1)",
+        ("a-map-that-is-not-running", "stairs-9"),
+    )
+    server.connection.raw.commit()
+    standing = server.add_world_element(
+        entity_id="stairs-9", map_id="stairs-9", ankigtaEntityId="stairs-9"
+    )
+    standing["__parent"] = known["__parent"]
+
+    snapshot = request_snapshot(server)
+    rows = {
+        row["mapEntity"]["entityId"]: row for row in snapshot["entities"]
+    }
+
+    assert "stairs-9" in rows, sorted(rows)
+    stairs = rows["stairs-9"]
+    assert stairs["metadata"]["showRadius"] is True
+    # A stored row, not an offer: an offer carries `adoptable`.
+    assert "adoptable" not in stairs
+    # And exactly once: an entity is one row, not a row and an offer of itself.
+    assert [r["mapEntity"]["entityId"] for r in snapshot["entities"]].count(
+        "stairs-9"
+    ) == 1
+
+
 def test_a_panel_row_describes_position_and_location_not_identity(
     panel_client: MtaSandbox,
 ) -> None:
