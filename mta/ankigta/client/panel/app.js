@@ -45,8 +45,8 @@
   var lastEntities = [];
   var selectedCardLabel = "";
 
-  /* A link state is a stable technical value; only its display comes from the
-   * string table, and its tone is set here rather than in that table. */
+  /* A link state is a stable technical value; only its display follows the
+   * language, and its tone is set here rather than in the string table. */
   var TONES = {
     "Active Spatial Link": "good",
     "Unlinked": "",
@@ -117,32 +117,62 @@
     });
   }
 
-  /* A deck is chosen, not typed. Rebuilt only when the list actually changed,
-   * so an open dropdown is not yanked shut by an unrelated redraw. */
+  /* A deck is chosen, not typed. The chosen value lives here rather than on a
+   * control, because the control is a button and a list of buttons now. */
+  var chosenDeck = "";
   var lastDeckList = null;
+
+  function deckMenuOpen(open) {
+    document.getElementById("deck-menu").hidden = !open;
+    document.getElementById("deck").setAttribute("aria-expanded", String(!!open));
+  }
+
+  function chooseDeck(name) {
+    chosenDeck = name;
+    document.getElementById("deck").textContent = name || t("cardPicker.anyDeck");
+    deckMenuOpen(false);
+  }
 
   function renderDecks(picker) {
     var decks = (picker && picker.decks) || [];
     var signature = JSON.stringify(decks);
+    /* Rebuilt only when the list actually changed, so an open menu is not
+     * yanked shut by an unrelated redraw. */
     if (signature === lastDeckList) return;
     lastDeckList = signature;
 
-    var select = document.getElementById("deck");
-    var chosen = select.value;
-    select.textContent = "";
-    var any = document.createElement("option");
-    any.value = "";
-    any.textContent = t("cardPicker.anyDeck");
-    select.appendChild(any);
-    for (var i = 0; i < decks.length; i += 1) {
-      var option = document.createElement("option");
-      option.value = decks[i];
-      option.textContent = decks[i];
-      select.appendChild(option);
+    var menu = document.getElementById("deck-menu");
+    menu.textContent = "";
+    var names = [""].concat(decks);
+    for (var i = 0; i < names.length; i += 1) {
+      menu.appendChild(deckOption(names[i]));
     }
     /* What the server says the filter is beats what was left in the control:
      * they disagree only when somebody else changed it. */
-    select.value = (picker && picker.deckFilter) || chosen || "";
+    chooseDeck((picker && picker.deckFilter) || chosenDeck || "");
+  }
+
+  function deckOption(name) {
+    var option = element("button", "picklist-option", name || t("cardPicker.anyDeck"));
+    option.type = "button";
+    option.setAttribute("role", "option");
+    option.setAttribute("data-deck", name);
+    option.addEventListener("click", function () {
+      chooseDeck(name);
+      submitSearch();
+    });
+    return option;
+  }
+
+  /* Cards or notes is one of two, so it is a switch rather than a list to open.
+   * The button says which it currently is, as every other toggle here does. */
+  var chosenScope = "cards";
+
+  function chooseScope(scope) {
+    chosenScope = scope === "notes" ? "notes" : "cards";
+    var button = document.getElementById("scope");
+    button.textContent = t("cardPicker.scope." + chosenScope);
+    button.setAttribute("aria-pressed", String(chosenScope === "notes"));
   }
 
   /* The expression the rows are an answer to, and whether a row is a card or
@@ -162,7 +192,7 @@
     var scope = (picker && picker.scope) || "cards";
     if (scope !== lastScope) {
       lastScope = scope;
-      document.getElementById("scope").value = scope;
+      chooseScope(scope);
     }
   }
 
@@ -184,7 +214,7 @@
       row.setAttribute("role", "listitem");
 
       var primary = element("div", "primary-cell");
-      primary.appendChild(element("strong", null, card.question || card.cardId));
+      primary.appendChild(element("strong", null, card.label || card.cardId));
       primary.appendChild(element("span", "sub", card.deck));
       if (card.foreignMapName) {
         primary.appendChild(
@@ -200,7 +230,7 @@
 
       if (card.cardId === selected.cardId) {
         row.className = "row card selected";
-        selectedCardLabel = (card.question || card.cardId) + " — " + card.deck;
+        selectedCardLabel = (card.label || card.cardId) + " — " + card.deck;
       }
       bindSelectCard(row, card);
       host.appendChild(row);
@@ -296,25 +326,64 @@
    * not thrown away by an unrelated redraw -- a state push happens whenever
    * anything at all changes, and most of it is not this. */
   var shownNote = null;
+  /* Whether the editor is slid out. The player's, not the state's: a card
+   * being selected is not by itself a request to edit it, and a panel that
+   * opens a form every time a row is clicked has decided that for them. */
+  var inspectorOpen = false;
+  /* The boxes on screen and the note as Anki last reported it. Save is offered
+   * against the difference between the two: a Save that is always available
+   * says nothing about whether there is anything to save. */
+  var noteBoxes = [];
+  var noteBaseline = null;
+
+  function noteIsEdited() {
+    if (!noteBaseline || noteBoxes.length !== noteBaseline.fields.length) {
+      return false;
+    }
+    for (var i = 0; i < noteBoxes.length; i += 1) {
+      if (noteBoxes[i].value !== noteBaseline.fields[i]) return true;
+    }
+    return document.getElementById("inspector-tags").value !== noteBaseline.tags;
+  }
+
+  function refreshSaveState() {
+    document.getElementById("save-note").disabled = !noteIsEdited();
+  }
+
+  function renderInspectorToggle() {
+    var button = document.getElementById("toggle-inspector");
+    button.disabled = !selected.cardId;
+    button.setAttribute("aria-expanded", String(inspectorOpen));
+    button.textContent = t(inspectorOpen ? "inspector.close" : "inspector.open");
+    /* The third column exists only while it is open, so the two lists have the
+     * whole panel the rest of the time. */
+    document.getElementById("workspace").className =
+      inspectorOpen && selected.cardId ? "workspace editing" : "workspace";
+  }
 
   function renderInspector(state) {
     var box = document.getElementById("inspector");
     var error = document.getElementById("inspector-error");
     var status = document.getElementById("inspector-state");
 
+    renderInspectorToggle();
+    box.hidden = !selected.cardId || !inspectorOpen;
     if (!selected.cardId) {
-      box.hidden = true;
       shownNote = null;
+      noteBaseline = null;
+      noteBoxes = [];
+      refreshSaveState();
       return;
     }
-    box.hidden = false;
 
     if (state.noteError) {
       error.textContent = t("inspector.unreadable").replace("%s", state.noteError);
       status.textContent = "";
       document.getElementById("inspector-fields").textContent = "";
-      document.getElementById("save-note").disabled = true;
       shownNote = null;
+      noteBaseline = null;
+      noteBoxes = [];
+      refreshSaveState();
       return;
     }
     error.textContent = "";
@@ -322,34 +391,45 @@
     var note = state.note;
     if (!note) {
       status.textContent = t("inspector.loading");
-      document.getElementById("save-note").disabled = true;
+      noteBaseline = null;
+      noteBoxes = [];
+      refreshSaveState();
       return;
     }
     status.textContent = "";
-    document.getElementById("save-note").disabled = false;
+
+    var fields = note.fields || [];
+    /* What Anki holds, refreshed on every state: a save answers with the note
+     * read back, and the button has to go quiet again once it has. */
+    noteBaseline = {
+      fields: fields.map(function (f) { return f.value; }),
+      tags: (note.tags || []).join(" ")
+    };
 
     var signature = JSON.stringify([
       note.noteId,
-      (note.fields || []).map(function (f) { return f.name; })
+      fields.map(function (f) { return f.name; })
     ]);
-    if (signature === shownNote) return;
-    shownNote = signature;
-
-    var host = document.getElementById("inspector-fields");
-    host.textContent = "";
-    var fields = note.fields || [];
-    for (var i = 0; i < fields.length; i += 1) {
-      var wrap = element("label", "inspector-field");
-      wrap.appendChild(element("span", null, fields[i].name));
-      var input = document.createElement("textarea");
-      input.rows = 2;
-      input.value = fields[i].value;
-      input.setAttribute("data-field", fields[i].name);
-      wrap.appendChild(input);
-      host.appendChild(wrap);
+    if (signature !== shownNote) {
+      shownNote = signature;
+      var host = document.getElementById("inspector-fields");
+      host.textContent = "";
+      noteBoxes = [];
+      for (var i = 0; i < fields.length; i += 1) {
+        var wrap = element("label", "inspector-field");
+        wrap.appendChild(element("span", null, fields[i].name));
+        var input = document.createElement("textarea");
+        input.rows = 2;
+        input.value = fields[i].value;
+        input.setAttribute("data-field", fields[i].name);
+        input.addEventListener("input", refreshSaveState);
+        wrap.appendChild(input);
+        host.appendChild(wrap);
+        noteBoxes.push(input);
+      }
+      document.getElementById("inspector-tags").value = noteBaseline.tags;
     }
-    document.getElementById("inspector-tags").value =
-      (note.tags || []).join(" ");
+    refreshSaveState();
   }
 
   function renderNotice(notice) {
@@ -449,27 +529,6 @@
       });
       return select;
     }
-    /* Text and a swatch rather than `<input type="color">`. The picker is a
-     * native dialog, and this page is rendered offscreen into a game window
-     * that has no desktop to put one on -- the control would open nothing. */
-    if (row.kind === "colour") {
-      var wrap = element("span", "colour-field");
-      var field = document.createElement("input");
-      field.id = settingId(row);
-      field.type = "text";
-      field.value = row.value || "";
-      var swatch = element("span", "swatch");
-      swatch.style.background = row.value || "transparent";
-      field.addEventListener("input", function () {
-        swatch.style.background = field.value;
-      });
-      field.addEventListener("change", function () {
-        send("setSetting", {key: row.key, value: field.value});
-      });
-      wrap.appendChild(field);
-      wrap.appendChild(swatch);
-      return wrap;
-    }
     var input = document.createElement("input");
     input.id = settingId(row);
     input.type = row.kind === "number" ? "number" : "text";
@@ -499,6 +558,7 @@
   /** The one entry point Lua calls. A whole state in, a whole render out. */
   function receive(state) {
     locale = state.locale || {};
+    document.documentElement.lang = state.language || "en";
     applyLocale();
     renderConnection(state.connection || {state: "disconnected"});
     selected = state.selected || {mapId: false, entityId: false, cardId: false};
@@ -541,26 +601,21 @@
     document.getElementById("copy-decision").hidden =
       !entity || !entity.copyCollision;
 
-    /* Only a row the store holds has an Activation Zone: an offer has nothing
-     * to write one on yet. */
+    /* Offered for every selected row, including one the list is only offering:
+     * writing to it is what takes it into the store. A form that appears only
+     * after a card has been linked makes naming a thing a statement about a
+     * card. */
     var settings = document.getElementById("entity-settings");
-    settings.hidden = !entity || entity.adoptable === true;
+    settings.hidden = !entity;
     if (!settings.hidden) {
       document.getElementById("entity-name").value = entity.name || "";
       document.getElementById("entity-radius").value = entity.radius;
-      document.getElementById("entity-show-corona").checked =
-        entity.showCorona === true;
-      /* False is the entity saying nothing of its own, and an empty field is
-       * how that reads. The swatch still shows a colour, because the corona
-       * has one either way -- the one Settings gives it. */
-      var colour = document.getElementById("entity-corona-colour");
-      colour.value = entity.coronaColour || "";
-      document.getElementById("entity-corona-swatch").style.background =
-        entity.coronaColour || entity.settingsCoronaColour || "transparent";
-      document.getElementById("entity-corona-opacity").value =
-        entity.coronaOpacity === false || entity.coronaOpacity === undefined
-          ? ""
-          : entity.coronaOpacity;
+      document.getElementById("entity-draw-now").checked =
+        entity.drawNow === true;
+      /* Independent of the look: "always" is a standing answer about the
+       * entity, so it can be given without first asking to see the zone. */
+      document.getElementById("entity-draw-always").checked =
+        entity.showAlways === true;
     }
 
     renderInspector(state);
@@ -643,36 +698,40 @@
       name: document.getElementById("entity-name").value
     });
   });
-  document.getElementById("entity-show-corona").addEventListener("change", function () {
+  /* Two answers, not one. "Draw it" is a look that lasts as long as this
+   * opening of F7; "Draw always" is what the entity itself says, and the world
+   * shows it whether or not the panel is open. */
+  document.getElementById("entity-draw-now").addEventListener("change", function () {
     send("setEntityRadius", {
-      showCorona: document.getElementById("entity-show-corona").checked
+      drawNow: document.getElementById("entity-draw-now").checked
+    });
+  });
+  document.getElementById("entity-draw-always").addEventListener("change", function () {
+    send("setEntityRadius", {
+      showAlways: document.getElementById("entity-draw-always").checked
     });
   });
 
-  /* An emptied field is a decision, not an absence: it says this entity has
-   * nothing of its own to say and follows Settings again. `false` carries that
-   * across, because leaving the field out would mean "unchanged". */
-  function coronaOverride(id, asNumber) {
-    return function () {
-      var typed = document.getElementById(id).value.trim();
-      var payload = {};
-      payload[id === "entity-corona-colour" ? "coronaColour" : "coronaOpacity"] =
-        typed === "" ? false : (asNumber ? parseFloat(typed) : typed);
-      send("setEntityRadius", payload);
-    };
-  }
-  document.getElementById("entity-corona-colour")
-    .addEventListener("change", coronaOverride("entity-corona-colour", false));
-  document.getElementById("entity-corona-opacity")
-    .addEventListener("change", coronaOverride("entity-corona-opacity", true));
-
+  document.getElementById("toggle-inspector").addEventListener("click", function () {
+    inspectorOpen = !inspectorOpen;
+    renderInspectorToggle();
+    document.getElementById("inspector").hidden =
+      !selected.cardId || !inspectorOpen;
+    /* The page cannot resize its own window, so it says which shape it is in
+     * and Lua gives it the room. The editor slides out beside the lists rather
+     * than taking a third of the room from them. */
+    send("editorVisible", {open: inspectorOpen});
+  });
+  document.getElementById("inspector-tags").addEventListener(
+    "input",
+    refreshSaveState
+  );
   document.getElementById("save-note").addEventListener("click", function () {
     var fields = [];
-    var boxes = document.querySelectorAll("#inspector-fields [data-field]");
-    for (var i = 0; i < boxes.length; i += 1) {
+    for (var i = 0; i < noteBoxes.length; i += 1) {
       fields.push({
-        name: boxes[i].getAttribute("data-field"),
-        value: boxes[i].value
+        name: noteBoxes[i].getAttribute("data-field"),
+        value: noteBoxes[i].value
       });
     }
     /* Split on whitespace: Anki separates tags by spaces, so what the field
@@ -687,13 +746,29 @@
     e.preventDefault();
     send("filter", {text: document.getElementById("filter").value});
   });
-  document.getElementById("search").addEventListener("submit", function (event) {
-    event.preventDefault();
+  function submitSearch() {
     send("searchCards", {
       query: document.getElementById("search-query").value,
-      deck: document.getElementById("deck").value,
-      scope: document.getElementById("scope").value
+      deck: chosenDeck,
+      scope: chosenScope
     });
+  }
+
+  document.getElementById("search").addEventListener("submit", function (event) {
+    event.preventDefault();
+    submitSearch();
+  });
+  /* A chosen deck and a chosen row-kind apply themselves. Both are dropdowns
+   * whose whole meaning is which rows are below them, and picking a value that
+   * changes nothing until a second button is pressed reads as a broken filter.
+   * The expression keeps the button: it is typed, and searching per keystroke
+   * would ask Anki a question after every letter. */
+  document.getElementById("deck").addEventListener("click", function () {
+    deckMenuOpen(document.getElementById("deck-menu").hidden);
+  });
+  document.getElementById("scope").addEventListener("click", function () {
+    chooseScope(chosenScope === "notes" ? "cards" : "notes");
+    submitSearch();
   });
   function applyConnection() {
     var portText = document.getElementById("port").value;
@@ -746,7 +821,15 @@
   /* Escape closes, because a panel that traps the cursor and cannot be left is
    * the defect this replaces. */
   document.addEventListener("keydown", function (event) {
-    if (event.key === "Escape") send("close");
+    /* An open menu is what Escape closes first: closing the whole panel out
+     * from under someone who only wanted to back out of a list is not what
+     * they pressed it for. */
+    if (event.key !== "Escape") return;
+    if (!document.getElementById("deck-menu").hidden) {
+      deckMenuOpen(false);
+      return;
+    }
+    send("close");
   });
 
   window.ANKIGTA = {receive: receive};

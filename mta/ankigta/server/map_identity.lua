@@ -816,14 +816,11 @@ function MapIdentity.recoverPersistedCollisions()
 end
 
 function MapIdentity.linkSnapshot(row)
-    local coronaColour, coronaOpacity = ANKIGTA.Store.coronaOf(row)
     local metadata = {
         name = row.entity_name or "",
         entityTag = row.entity_tag or "",
         radius = tonumber(row.radius) or 3,
-        showCorona = tonumber(row.show_radius) == 1,
-        coronaColour = coronaColour,
-        coronaOpacity = coronaOpacity,
+        showRadius = tonumber(row.show_radius) == 1,
     }
     local pending = pendingByEntity[entityKey(row.map_id, row.entity_id)]
     if ANKIGTA.Store.rowIsIdentityCollision(row) then
@@ -855,8 +852,8 @@ function MapIdentity.linkSnapshot(row)
         }
     end
     if pending then
-        -- Guidance travels as a key, not a sentence: this side has no string
-        -- table, and the F7 window that shows the guidance does.
+        -- Guidance travels as a key, not a sentence: this side has no
+        -- language, and the F7 window that shows it does.
         local guidanceKey = "guidance.saveWithEditor"
         if pending.lastReadBackOutcome == "identity_collision" then
             return {

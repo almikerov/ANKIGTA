@@ -55,6 +55,7 @@ def panel_client() -> Iterator[MtaSandbox]:
         sandbox.load("shared/entity_types.lua")
         sandbox.load("client/layout.lua")
         sandbox.load("client/panel.lua")
+        sandbox.eval('function() ANKIGTA.Locale.setLanguage("en") end')()
         sandbox.eval(
             """
             function()
@@ -142,7 +143,7 @@ def panel_entry(
             "name": name,
             "entityTag": "",
             "radius": 3,
-            "showCorona": False,
+            "showRadius": False,
         },
         "link": {"state": "Unlinked"},
     }
@@ -433,7 +434,7 @@ def test_the_editor_list_skips_representations_and_its_deleted_dimension(
         entity_id="representation", map_id="representation", dimension=200
     )
     representation["__parent"] = editor_root
-    representation["edf:rep"] = True
+    representation["__edf_representation"] = True
     deleted = server.add_world_element(
         entity_id="deleted", map_id="deleted", dimension=201
     )
@@ -616,6 +617,230 @@ def test_adopting_an_editor_row_uses_the_editable_copy_not_the_play_test_copy(
     assert row[0] == 99
 
 
+def test_naming_something_the_list_only_offered_takes_it_in(
+    server: MtaSandbox,
+) -> None:
+    """A Map Entity does not need a card in order to exist.
+
+    Adoption used to happen only on the way to a link, so naming an object --
+    or saying how close you must stand to it -- could not be done until a card
+    had been chosen. The glossary has always had it the other way round: a
+    Spatial Link is a link *between* a Map Entity and one card, so the entity
+    is what the link is made of.
+    """
+    # A running map, plus one thing standing in it that carries no ANKIGTA
+    # identity at all -- which is what an offer is.
+    known = install_resource_world(
+        server, current_resource="current-map", duplicate_entity_id="already-here"
+    )
+    offered = server.add_world_element(entity_id="lamp-3", map_id="lamp-3")
+    offered["__parent"] = known["__parent"]
+    player = server.add_study_player()
+    player["x"], player["y"], player["z"] = 0, 0, 0
+
+    server.trigger(
+        "ankigta:updateEntityMetadata",
+        server.lua.globals().resourceRoot,
+        "current-map",
+        "lamp-3",
+        server.lua.table_from({"name": "The lamp", "radius": 7.5}),
+        client=player,
+    )
+
+    row = server.connection.raw.execute(
+        "SELECT name, radius FROM map_entity_metadata WHERE entity_id = ?",
+        ("lamp-3",),
+    ).fetchone()
+    assert row is not None, "the offer was not taken into the store"
+    assert row[0] == "The lamp"
+    assert row[1] == 7.5
+
+    # And with no Spatial Link, because none was asked for.
+    links = server.connection.raw.execute(
+        "SELECT COUNT(*) FROM spatial_links WHERE entity_id = ?", ("lamp-3",)
+    ).fetchone()
+    assert links[0] == 0
+
+
+def test_a_zone_that_asks_to_be_shown_is_drawn_at_its_own_radius(
+    panel_client: MtaSandbox,
+) -> None:
+    """`showRadius` had no drawing behind it at all.
+
+    It only told the Next Card Indicator to pulse its own column where a zone
+    happened to coincide -- so a zone appeared for the one card the scheduler
+    had chosen next, in one indicator mode, and never otherwise. Turning the
+    setting on therefore did nothing visible, which is what was reported.
+    """
+    quiet = panel_entry()
+    shown = panel_entry(entity_id="gate-18")
+    shown["metadata"]["showRadius"] = True
+    shown["metadata"]["radius"] = 7.5
+    push_client_snapshot(panel_client, entities=[quiet, shown])
+
+    panel_client.trigger("onClientRender")
+    ring = panel_client.drawn_lines_3d
+
+    assert ring, "the zone was not drawn"
+    # A ring around the entity, at the radius the entity carries.
+    x, y = 10.25, -20.5
+    distances = {
+        round(((p["startX"] - x) ** 2 + (p["startY"] - y) ** 2) ** 0.5, 3)
+        for p in ring
+    }
+    assert distances == {7.5}
+    # One ring, not two: the row that did not ask for one contributed nothing.
+    assert len(ring) == 24
+    assert {segment["width"] for segment in ring} == {2.0}
+
+
+def test_draw_always_outlives_the_panel_and_draw_it_does_not(
+    panel_client: MtaSandbox,
+) -> None:
+    """Two answers, and only one of them is about the entity.
+
+    `Draw it` is a look the player asked for in this opening of F7, so it goes
+    when F7 does. `Draw always` is what the entity itself says, and the world
+    shows it whether or not the panel is open.
+    """
+    standing = panel_entry(entity_id="gate-18")
+    standing["metadata"]["showRadius"] = True
+    glance = panel_entry()
+    glance["metadata"]["showRadius"] = False
+    push_client_snapshot(panel_client, entities=[standing, glance])
+    panel_action(
+        panel_client, "select", {"mapId": "current-map-id", "entityId": "gate-17"}
+    )
+    panel_action(panel_client, "setEntityRadius", {"drawNow": True})
+
+    panel_client.trigger("onClientRender")
+    assert len(panel_client.drawn_lines_3d) == 48, "both zones while F7 is open"
+
+    # Closing F7 drops the look and keeps the standing answer.
+    panel_client.eval("function() togglePanel() end")()
+    panel_client.drawn_lines_3d.clear()
+    panel_client.trigger("onClientRender")
+
+    assert len(panel_client.drawn_lines_3d) == 24
+
+
+def test_a_look_is_never_written_to_the_entity(
+    panel_client: MtaSandbox,
+) -> None:
+    """`Draw it` is not a decision about the thing, so nothing is stored."""
+    push_client_snapshot(panel_client, entities=[panel_entry()])
+    panel_action(
+        panel_client, "select", {"mapId": "current-map-id", "entityId": "gate-17"}
+    )
+
+    panel_action(panel_client, "setEntityRadius", {"drawNow": True})
+
+    assert [
+        event
+        for event in panel_client.recorder.server_events
+        if event.name == "ankigta:updateEntityMetadata"
+    ] == []
+
+
+def test_an_entity_stored_under_one_map_is_written_to_from_another(
+    server: MtaSandbox,
+) -> None:
+    """The owner's `vgsSstairs04_lvs`, exactly.
+
+    Its row was stored under `editor_dump` while the world had it under
+    `editor_test`, so the identity the panel names -- built from the map it is
+    standing in -- missed a row that plainly existed, and
+    `findMapEntityByRuntimeElement` refused on the owning resource. `Draw
+    always` came back "the entity was not changed" for a thing standing in
+    front of the player.
+
+    The element carries ANKIGTA's own stamp, and that is the durable half of
+    its identity; the map it happens to be in today is not.
+    """
+    known = install_resource_world(
+        server, current_resource="current-map", duplicate_entity_id="already-here"
+    )
+    seed_entity(
+        server,
+        map_id="a-map-that-is-not-running",
+        resource_name="a-map-that-is-not-running",
+        entity_id="stairs-9",
+    )
+    standing = server.add_world_element(
+        entity_id="stairs-9", map_id="stairs-9", ankigtaEntityId="stairs-9"
+    )
+    standing["__parent"] = known["__parent"]
+    player = server.add_study_player()
+    player["x"], player["y"], player["z"] = 0, 0, 0
+
+    server.trigger(
+        "ankigta:updateEntityMetadata",
+        server.lua.globals().resourceRoot,
+        "current-map",
+        "stairs-9",
+        server.lua.table_from({"showRadius": True}),
+        client=player,
+    )
+
+    refused = [
+        event
+        for event in server.recorder.client_events
+        if event.name == "ankigta:pendingMapSaveNotice"
+    ]
+    assert refused == [], f"refused: {[event.args for event in refused]}"
+    assert server.connection.raw.execute(
+        "SELECT show_radius FROM map_entity_metadata WHERE entity_id = ?",
+        ("stairs-9",),
+    ).fetchone() == (1,)
+
+
+def test_an_already_stamped_element_is_listed_as_the_entity_it_is(
+    server: MtaSandbox,
+) -> None:
+    """Not offered again under empty metadata.
+
+    The owner's stairs had a row under one map while the world held it under
+    another, so it was listed as something to take in -- with `showRadius`
+    hardcoded false over a row that said otherwise. Ticking the box wrote
+    correctly and the next snapshot put it straight back.
+    """
+    known = install_resource_world(
+        server, current_resource="current-map", duplicate_entity_id="already-here"
+    )
+    seed_entity(
+        server,
+        map_id="a-map-that-is-not-running",
+        resource_name="a-map-that-is-not-running",
+        entity_id="stairs-9",
+    )
+    server.connection.raw.execute(
+        "INSERT INTO map_entity_metadata"
+        " (map_id, entity_id, name, entity_tag, radius, show_radius)"
+        " VALUES (?, ?, '', '', 3, 1)",
+        ("a-map-that-is-not-running", "stairs-9"),
+    )
+    server.connection.raw.commit()
+    standing = server.add_world_element(
+        entity_id="stairs-9", map_id="stairs-9", ankigtaEntityId="stairs-9"
+    )
+    standing["__parent"] = known["__parent"]
+
+    snapshot = request_snapshot(server)
+    rows = {
+        row["mapEntity"]["entityId"]: row for row in snapshot["entities"]
+    }
+
+    assert "stairs-9" in rows, sorted(rows)
+    stairs = rows["stairs-9"]
+    assert stairs["metadata"]["showRadius"] is True
+    # A stored row, not an offer: an offer carries `adoptable`.
+    assert "adoptable" not in stairs
+    # And exactly once: an entity is one row, not a row and an offer of itself.
+    assert [r["mapEntity"]["entityId"] for r in snapshot["entities"]].count(
+        "stairs-9"
+    ) == 1
+
+
 def test_a_panel_row_describes_position_and_location_not_identity(
     panel_client: MtaSandbox,
 ) -> None:
@@ -641,6 +866,27 @@ def test_an_unnamed_row_uses_words_instead_of_its_identifier(
 
     assert row["name"] == "Unnamed Map Entity"
     assert row["entityId"] not in row["name"]
+
+
+def test_a_ped_is_named_by_its_skin_and_never_asked_about_as_an_object(
+    panel_client: MtaSandbox,
+) -> None:
+    """`engineGetModelNameFromID` reads `CModelNames`, which holds objects.
+
+    Asked about a ped skin it answers `false` and logs `Expected valid model
+    ID` -- a warning per ped per snapshot, which both left every ped reading as
+    "Unnamed Map Entity" and buried anything else worth reading in the client
+    log. MTA has no name for a ped skin at all, so the skin is the name.
+    """
+    entry = panel_entry(name="")
+    entry["mapEntity"]["type"] = "ped"
+    entry["mapEntity"]["model"] = 7
+    push_client_snapshot(panel_client, entities=[entry])
+
+    row = panel_client.pushed_panel_state()["entities"][0]
+
+    assert row["name"] == "Ped skin 7"
+    assert panel_client.script_warnings == []
 
 
 def test_a_card_linked_to_another_map_names_that_map(
@@ -674,7 +920,7 @@ def test_a_card_linked_to_another_map_names_that_map(
                 enabled = true,
                 cards = {
                     {identity = {collectionUuid = uuid, cardId = 7},
-                     deck = {name = "Deck"}, state = "review", question = "Here"},
+                     deck = {name = "Deck"}, state = "review", sortField = "Here"},
                 },
             })
         end
@@ -689,7 +935,7 @@ def test_a_card_linked_to_another_map_names_that_map(
     assert cards["7"]["foreignMap"] is False
     assert cards["42"]["foreignMap"] is True
     assert cards["42"]["foreignMapName"] == "Other Map"
-    assert cards["42"]["question"] == ""
+    assert cards["42"]["label"] == ""
 
 
 def test_renaming_uses_the_selected_identity_and_only_changes_the_name(
@@ -759,47 +1005,56 @@ def test_focusing_a_row_points_the_camera_without_moving_the_player(
     assert panel_client.camera_interior == 7
 
 
-def test_the_editors_stand_in_for_an_entity_is_not_taken_for_the_entity(
+def test_the_camera_comes_back_to_the_player_who_left_the_car(
     panel_client: MtaSandbox,
 ) -> None:
-    """While the stock Map Editor is open, each element is in the world twice.
+    """`getCameraTarget()` answers with the vehicle while the player rides one.
 
-    Its stand-in carries the same identity as the thing it stands for, so
-    without telling them apart every Map Entity is found twice and the panel
-    can act on the copy the player cannot see. `edf` marks its own with the
-    element data `edf:rep`, which is ordinary synced data this side can read --
-    it used to be asked of a server-only export instead, which answered nothing
-    here and left the filter dead.
+    Handing that element back afterwards is right only while they are still in
+    it. Get out in between and the camera stays on an empty car, watching it
+    from wherever it is parked -- the player left with no way to see themselves
+    at all.
     """
-    representation = panel_client.add_world_element(
-        entity_id="gate-17",
-        map_id="gate-17",
-        x=500,
-        y=500,
-        z=500,
-        ankigtaEntityId="gate-17",
-        ankigtaMapId="current-map-id",
-    )
-    representation["edf:rep"] = True
-    panel_client.add_world_element(
-        entity_id="gate-17",
-        map_id="gate-17",
-        x=10.25,
-        y=-20.5,
-        z=3,
-        ankigtaEntityId="gate-17",
-        ankigtaMapId="current-map-id",
-    )
-    push_client_snapshot(panel_client, entities=[panel_entry(available=True)])
+    push_client_snapshot(panel_client, entities=[panel_entry(available=False)])
+    car = panel_client.add_world_element(kind="vehicle")
+    panel_client.occupied_vehicle = car
+    panel_client.camera_target = car
 
     panel_action(
         panel_client,
         "focusEntity",
         {"mapId": "current-map-id", "entityId": "gate-17"},
     )
+    # They get out while the camera is away.
+    panel_client.occupied_vehicle = False
+    panel_action(panel_client, "close")
 
-    # The one the player can see, not the editor's copy of it.
-    assert panel_client.camera_matrix[3:6] == (10.25, -20.5, 3.0)
+    same = panel_client.eval("function(c) return getCameraTarget() == c end")
+    assert same(car) is False
+    assert panel_client.eval(
+        "function() return getCameraTarget() == localPlayer end"
+    )() is True
+
+
+def test_the_camera_goes_back_to_the_car_they_are_still_sitting_in(
+    panel_client: MtaSandbox,
+) -> None:
+    """Coming back wrong is not better than coming back."""
+    push_client_snapshot(panel_client, entities=[panel_entry(available=False)])
+    car = panel_client.add_world_element(kind="vehicle")
+    panel_client.occupied_vehicle = car
+    panel_client.camera_target = car
+
+    panel_action(
+        panel_client,
+        "focusEntity",
+        {"mapId": "current-map-id", "entityId": "gate-17"},
+    )
+    panel_action(panel_client, "close")
+
+    assert panel_client.eval(
+        "function(c) return getCameraTarget() == c end"
+    )(car) is True
 
 
 def test_focusing_a_distant_row_uses_its_authored_position_without_streaming(
@@ -946,7 +1201,7 @@ def test_a_fresh_f7_snapshot_updates_entity_and_card_rows_without_reopening(
                 enabled = true,
                 cards = {
                     {identity = {collectionUuid = uuid, cardId = 42},
-                     deck = {name = "Deck"}, state = "review", question = "Gate"},
+                     deck = {name = "Deck"}, state = "review", sortField = "Gate"},
                 },
             })
         end

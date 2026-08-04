@@ -213,6 +213,9 @@ def card_view_payload(card: CardView) -> dict[str, object]:
         "state": card.state.value,
         "due": card.due,
         "tags": list(card.tags),
+        # What Anki lists the note by. A row headed by a card id names nothing
+        # a person chose; this is the column Anki's own browser sorts on.
+        "sortField": card.sort_field,
         # Present only where the note was read, which is the single card being
         # inspected rather than any card on a list.
         "note": {

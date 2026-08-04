@@ -201,10 +201,20 @@ def test_the_page_is_given_the_string_table_rather_than_baked_text(
 
     state = last_state(client)
     assert state["locale"]["panel.title"]
-    assert state["locale"]["connection.connect"] == "Connect"
-    # The whole table, not the handful of keys this state happens to need: the
-    # page renders from what it was given and cannot ask for more.
-    assert len(state["locale"]) > 100
+    assert state["locale"]["connection.connect"]
+    assert state["language"] in ("en", "ru")
+
+
+def test_the_language_setting_reaches_the_open_panel(client: MtaSandbox) -> None:
+    authorize(client)
+    press_f7(client)
+    page_ready(client)
+
+    client.eval('function() ANKIGTA.Locale.setLanguage("ru") end')()
+
+    state = last_state(client)
+    assert state["language"] == "ru"
+    assert state["locale"]["connection.connect"] == "Подключиться"
 
 
 # --- the connection gate ------------------------------------------------------
@@ -440,9 +450,8 @@ def test_the_page_ships_no_readable_text_of_its_own() -> None:
     """A key in the markup, a sentence only from the table.
 
     The Cyrillic guard reads compiled Lua chunks and cannot see an HTML file,
-    and it would not catch an English sentence in the markup either, so the
-    page needs its own check — otherwise the one place with no guard is the one
-    place with the most words.
+    so the page needs its own check — otherwise the one place with no guard is
+    the one place with the most words.
     """
     import re
 
@@ -453,19 +462,19 @@ def test_the_page_ships_no_readable_text_of_its_own() -> None:
         for fragment in re.findall(r">([^<>]+)<", page)
         if fragment.strip()
     ]
-    # ANKIGTA is a product name, not a string from the table. It appears
-    # twice: the document title and the heading.
+    # ANKIGTA is a product name, not a word to translate. It appears twice:
+    # the document title and the heading.
     assert set(stray) == {"ANKIGTA"}, stray
 
 
-def test_every_key_the_page_asks_for_exists_in_the_table() -> None:
+def test_every_key_the_page_asks_for_exists_in_english() -> None:
     import re
 
     sandbox = MtaSandbox()
     try:
         sandbox.load("shared/locale.lua")
-        strings = sandbox.eval("ANKIGTA.Locale.strings")
-        known = {str(key) for key in strings.keys()}
+        english = sandbox.eval("ANKIGTA.Locale.strings.en")
+        known = {str(key) for key in english.keys()}
     finally:
         sandbox.close()
 
@@ -586,6 +595,36 @@ def test_the_expression_and_the_scope_the_page_chose_reach_the_server(
     assert request.args[4] == "notes"
 
 
+def test_the_picker_fills_itself_when_it_opens(client: MtaSandbox) -> None:
+    """Opening the picker is the question; a button press is not needed to ask.
+
+    An empty list behind a Search button reads as "your collection has nothing
+    in it". It is also why the deck dropdown was empty: the companion sends the
+    deck list with a search page, so until one had run there were no decks to
+    choose from.
+    """
+    open_workspace(client)
+
+    searches = server_events(client, "ankigta:requestCardPicker")
+    assert len(searches) == 1
+    assert searches[0].args[0] == ""
+
+
+def test_the_picker_fills_itself_once_and_not_on_every_snapshot(
+    client: MtaSandbox,
+) -> None:
+    """A snapshot arrives whenever anything at all changes.
+
+    Searching on each of them would restart the list under the player every few
+    seconds, and throw away the deck and expression they had chosen.
+    """
+    open_workspace(client)
+    linked_snapshot(client)
+    linked_snapshot(client)
+
+    assert len(server_events(client, "ankigta:requestCardPicker")) == 1
+
+
 def test_a_search_with_no_scope_chosen_leaves_the_server_to_its_default(
     client: MtaSandbox,
 ) -> None:
@@ -617,6 +656,29 @@ def test_the_page_is_told_what_the_rows_it_has_are_an_answer_to(
     picker = last_state(client)["cardPicker"]
     assert picker["query"] == "tag:verb"
     assert picker["scope"] == "notes"
+
+
+def test_the_panel_widens_for_the_editor_and_narrows_again(
+    client: MtaSandbox,
+) -> None:
+    """The editor slides out beside the lists rather than out of their width.
+
+    `CGUIWebBrowser_Impl::SetSize` resizes the underlying web view as well as
+    the CEGUI element, so the page is re-laid out at the new width rather than
+    stretched -- which is what makes growing the window the honest answer here
+    instead of squeezing a third column in.
+    """
+    open_workspace(client)
+    shut = client.browsers[0]["width"]
+
+    act(client, "editorVisible", {"open": True})
+    widened = client.browsers[0]["width"]
+
+    assert widened > shut
+
+    act(client, "editorVisible", {"open": False})
+
+    assert client.browsers[0]["width"] == shut
 
 
 def test_an_action_with_nothing_selected_sends_nothing(client: MtaSandbox) -> None:

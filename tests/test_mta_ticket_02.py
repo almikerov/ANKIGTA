@@ -109,10 +109,10 @@ def test_client_presents_only_the_sanitized_connection_status() -> None:
     assert "addEvent(STATUS_EVENT, true)" in source
     assert "outputChatBox" in source
 
-    # Ticket 27 moved this module's own string table out of it, so the
+    # Ticket 27 moved the two-language table out of this module, so the
     # categories are no longer literals in it. What matters is unchanged and is
     # now checked by running it: each sanitized category reaches the player as
-    # its own line, worded from the shared table.
+    # its own line, in the language the setting selects.
     sandbox = MtaSandbox()
     try:
         sandbox.load("shared/locale.lua")

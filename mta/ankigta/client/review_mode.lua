@@ -12,8 +12,7 @@ local AUTHORIZATION_EVENT = "ankigta:setAuthorized"
 
 local RATINGS = {"again", "hard", "good", "easy"}
 local function label(key)
-    -- Asked for at draw time, and the key stands in when the string table is
-    -- not loaded: a hot-reloaded client can run this module without it.
+    -- Read at draw time, so switching language needs no resource restart.
     if ANKIGTA.Locale then
         return ANKIGTA.Locale.text(key)
     end
@@ -28,8 +27,9 @@ local function formatted(key, ...)
 end
 
 --- Resolve a stored warning or result into text.
--- What is stored is the key and its arguments, never finished text: what is
--- held is what happened, and the words for it are the drawing's business.
+-- What is stored is the key and its arguments, never finished text: a language
+-- switch has to reach a warning that is already on screen, and it cannot if the
+-- string was frozen when the event arrived.
 local function message(entry)
     if type(entry) == "table" then
         return formatted(entry.key, unpack(entry.args or {}))

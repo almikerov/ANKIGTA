@@ -203,16 +203,50 @@ local function runtimeSnapshot(element)
     }
 end
 
+--- The row an element's own stamp names, wherever it is standing today.
+--
+-- ANKIGTA writes `ankigtaEntityId` on an element when it adopts it, so an
+-- element carrying one is already a Map Entity and the stamp is its durable
+-- half. The map is not: the same object can be saved into another `.map`, or
+-- met while a different map resource owns it, and then the identity the panel
+-- names -- which is built from the map it is standing in -- misses a row that
+-- plainly exists.
+--
+-- That is what refused `Draw always` on an object stored under `editor_dump`
+-- while the world had it under `editor_test`: `findMapEntityByRuntimeElement`
+-- checks the owning resource as well as the id, and answered "not loaded"
+-- about a thing standing in front of the player.
+--
+-- One row or none. Two maps holding the same entity id is a question about
+-- which entity is meant, and answering it by picking the first would write to
+-- whichever the walk happened to reach.
+local function rowByOwnStamp(entityElement)
+    local stamp = getElementData(entityElement, "ankigtaEntityId")
+    if type(stamp) ~= "string" or stamp == "" then
+        return nil
+    end
+    local rows = ANKIGTA.Store.listMapEntities()
+    if type(rows) ~= "table" then
+        return nil
+    end
+    local found = nil
+    for _, row in ipairs(rows) do
+        if row.entity_id == stamp then
+            if found then
+                return nil
+            end
+            found = row
+        end
+    end
+    return found
+end
+
 local function entityContract(row)
     local link = ANKIGTA.MapIdentity.linkSnapshot(row)
     local element = ANKIGTA.Teleport.findRuntimeInstance(
         row.map_id,
         row.entity_id
     )
-    -- `false` where the entity says nothing of its own and the corona follows
-    -- Settings. What that looks like is the client's to resolve: the setting
-    -- it falls back to is one the client already holds.
-    local coronaColour, coronaOpacity = ANKIGTA.Store.coronaOf(row)
     return {
         mapEntity = {
             mapId = row.map_id,
@@ -227,9 +261,7 @@ local function entityContract(row)
                 name = row.entity_name or "",
                 entityTag = row.entity_tag or "",
                 radius = tonumber(row.radius) or 3,
-                showCorona = tonumber(row.show_radius) == 1,
-                coronaColour = coronaColour,
-                coronaOpacity = coronaOpacity,
+                showRadius = tonumber(row.show_radius) == 1,
             },
             authored = {
                 position = {
@@ -253,9 +285,7 @@ local function entityContract(row)
             name = row.entity_name or "",
             entityTag = row.entity_tag or "",
             radius = tonumber(row.radius) or 3,
-            showCorona = tonumber(row.show_radius) == 1,
-            coronaColour = coronaColour,
-            coronaOpacity = coronaOpacity,
+            showRadius = tonumber(row.show_radius) == 1,
         },
         link = link,
         copyCollision = link.copyCollision == true,
@@ -303,10 +333,7 @@ local function candidateContract(element, name, resourceName)
             type = getElementType(element),
             model = getElementModel(element),
             map = {resourceName = resourceName, mapName = resourceName},
-            display = {
-                name = "", entityTag = "", radius = 3, showCorona = false,
-                coronaColour = false, coronaOpacity = false,
-            },
+            display = {name = "", entityTag = "", radius = 3, showRadius = false},
             authored = {
                 position = {x = x or 0, y = y or 0, z = z or 0},
                 rotation = {
@@ -323,8 +350,7 @@ local function candidateContract(element, name, resourceName)
             referenceId = getElementID(element) or "",
         },
         metadata = {
-            name = "", entityTag = "", radius = 3, showCorona = false,
-            coronaColour = false, coronaOpacity = false,
+            name = "", entityTag = "", radius = 3, showRadius = false,
         },
         link = {state = "Not adopted", guidanceKey = "f7.guidance.notAdopted"},
         copyCollision = false,
@@ -539,9 +565,19 @@ local function worldCandidates(player, storedRows, context)
     local rows, total = {}, #found
     for index = 1, math.min(total, CANDIDATE_LIMIT) do
         local entry = found[index]
-        rows[#rows + 1] = candidateContract(
-            entry.element, entry.name, context.resourceName
-        )
+        -- An element ANKIGTA has already stamped is a Map Entity, not an
+        -- offer to take one in. Its row can be stored under another map --
+        -- the same object saved into a second `.map` -- and offering it again
+        -- showed empty metadata over a row that had some, so a box ticked
+        -- against it sprang back on the next snapshot.
+        local adopted = rowByOwnStamp(entry.element)
+        if adopted then
+            rows[#rows + 1] = entityContract(adopted)
+        else
+            rows[#rows + 1] = candidateContract(
+                entry.element, entry.name, context.resourceName
+            )
+        end
     end
     return rows, total
 end
@@ -1143,8 +1179,8 @@ local function recheckPendingMapSave(player, mapId, entityId)
     end
     local verified, outcome =
         ANKIGTA.MapIdentity.recheckPendingMapSave(mapId, entityId)
-    -- The notice travels as a key: the string table is the client's, so the
-    -- side that shows the notice is the side that words it.
+    -- The notice travels as a key: the player's language is a client-owned
+    -- setting, so the side that renders it is the side that translates it.
     triggerClientEvent(
         player,
         PENDING_NOTICE_EVENT,
@@ -1732,6 +1768,41 @@ local function elementByAdoptionName(name, player)
     return nil
 end
 
+--- Take something standing in the world into the store, with no card involved.
+--
+-- Adoption used to happen only on the way to a link, which made a Map Entity a
+-- thing that could not exist without an Anki Card. The glossary has always said
+-- the opposite: a Spatial Link is a link *between* a Map Entity and one card,
+-- so the entity is what the link is made of rather than something the link
+-- brings into being. Naming an object, or saying how close you have to stand
+-- to it, is not a statement about any card -- and until now neither could be
+-- made until a card had been chosen.
+local function adoptOffer(player, entityElement)
+    local target, reason = validatePickEntity(player, entityElement, "pick")
+    if not target then
+        return false, reason
+    end
+    if not target.adoptable then
+        return false, "entity_already_adopted"
+    end
+    local record, recordError = adoptionRecord(
+        entityElement,
+        currentMapContext(player)
+    )
+    if not record then
+        return false, recordError
+    end
+    local row, adoptError = ANKIGTA.Store.adoptMapEntity(record)
+    if not row then
+        return false, adoptError
+    end
+    -- Remembered on the element so the next pick resolves without the walk,
+    -- and so a second Link on the same object is recognised as a replacement
+    -- rather than adopting it twice.
+    setElementData(entityElement, "ankigtaEntityId", record.entityId)
+    return record
+end
+
 addEvent(ADOPT_ENTITY_REQUEST_EVENT, true)
 addEventHandler(ADOPT_ENTITY_REQUEST_EVENT, resourceRoot, function(
     entityElement,
@@ -1748,28 +1819,10 @@ addEventHandler(ADOPT_ENTITY_REQUEST_EVENT, resourceRoot, function(
             return failAdoption(client, "entity_no_longer_in_the_world")
         end
     end
-    local target, reason = validatePickEntity(client, entityElement, "pick")
-    if not target then
-        return failAdoption(client, reason)
-    end
-    if not target.adoptable then
-        return failAdoption(client, "entity_already_adopted")
-    end
-    local record, recordError = adoptionRecord(
-        entityElement,
-        currentMapContext(client)
-    )
+    local record, adoptError = adoptOffer(client, entityElement)
     if not record then
-        return failAdoption(client, recordError)
-    end
-    local row, adoptError = ANKIGTA.Store.adoptMapEntity(record)
-    if not row then
         return failAdoption(client, adoptError)
     end
-    -- Remembered on the element so the next pick resolves without the walk,
-    -- and so a second Link on the same object is recognised as a replacement
-    -- rather than adopting it twice.
-    setElementData(entityElement, "ankigtaEntityId", record.entityId)
 
     local linked, linkError = linkCardToEntity(
         client,
@@ -1813,74 +1866,102 @@ addEventHandler(ENTITY_METADATA_REQUEST_EVENT, resourceRoot, function(
     end
     local row, readError = ANKIGTA.Store.getMapEntity(mapId, entityId)
     if not row then
+        -- Nothing stored under that identity. The panel is either naming an
+        -- offer -- and editing one is exactly what takes it in -- or naming an
+        -- entity by the identity it had *before* it was adopted, because
+        -- adoption renames it and the row on screen is one snapshot behind.
+        -- Both are answered by asking the store about the element itself.
+        local element = elementByAdoptionName(entityId, client)
+        if not element then
+            outputDebugString(
+                "[ANKIGTA] entity_element_not_found map=" .. tostring(mapId)
+                    .. " entity=" .. tostring(entityId),
+                2
+            )
+        end
+        if element then
+            local adopted = ANKIGTA.Store.findMapEntityByRuntimeElement(element)
+                or rowByOwnStamp(element)
+            if adopted then
+                mapId, entityId = adopted.map_id, adopted.entity_id
+            else
+                local record, adoptError = adoptOffer(client, element)
+                if not record then
+                    -- Everything the refusal turned on, because "not loaded"
+                    -- about a thing standing in front of the player is a claim
+                    -- only this side can check. The stamp and the owning
+                    -- resource are what `findMapEntityByRuntimeElement` reads.
+                    outputDebugString(
+                        "[ANKIGTA] entity_adopt_refused"
+                            .. " map=" .. tostring(mapId)
+                            .. " entity=" .. tostring(entityId)
+                            .. " reason=" .. tostring(adoptError)
+                            .. " stamp=" .. tostring(
+                                getElementData(element, "ankigtaEntityId")
+                            )
+                            .. " stampedMap=" .. tostring(
+                                getElementData(element, "ankigtaMapId")
+                            )
+                            .. " type=" .. tostring(getElementType(element)),
+                        2
+                    )
+                    triggerClientEvent(
+                        client, PENDING_NOTICE_EVENT, resourceRoot,
+                        "notice.entityUpdateFailed", adoptError
+                    )
+                    return
+                end
+                mapId, entityId = record.mapId, record.entityId
+            end
+            row = ANKIGTA.Store.getMapEntity(mapId, entityId)
+        end
+    end
+    if not row then
+        -- Named, because "not loaded" about an entity plainly standing in the
+        -- world is a claim the player cannot check and this side can. The
+        -- identity the panel asked by is the whole of what is in doubt.
+        outputDebugString(
+            "[ANKIGTA] entity_metadata_unresolved map=" .. tostring(mapId)
+                .. " entity=" .. tostring(entityId)
+                .. " reason=" .. tostring(readError or "entity_missing"),
+            2
+        )
         triggerClientEvent(
             client, PENDING_NOTICE_EVENT, resourceRoot,
             "notice.entityUpdateFailed", readError or "entity_missing"
         )
         return
     end
-    --- One per-entity value as it will be stored, or the reason it will not be.
-    --
-    -- Three answers, and they are not the same: `nil` for a field this update
-    -- did not mention, `false` for one the player cleared so that the entity
-    -- follows Settings again, and a value for one they set. Checked against
-    -- the schema's own rule for the setting it overrides, because a value
-    -- cannot be legal in Settings and illegal here, and the schema is the side
-    -- both can reach.
-    local function proposed(sent, key)
-        if sent == nil or sent == false then
-            return sent
-        end
-        -- Validated before it is normalized, which is the order every other
-        -- caller uses. Normalizing first hands whatever arrived over the wire
-        -- straight to the rule's own conversion: `coronaColour` lowercases,
-        -- and lowercasing a boolean is an error rather than a rejection, so a
-        -- client sending `true` took the handler down instead of being told no.
-        local valid, reason = ANKIGTA.Settings.validate(key, sent)
-        if not valid then
-            return nil, reason
-        end
-        return ANKIGTA.Settings.normalize(key, sent)
-    end
-
-    local sentRadius, radiusRefused = proposed(metadata.radius, "activationRadius")
-    local sentColour, colourRefused = proposed(metadata.coronaColour, "coronaColour")
-    local sentOpacity, opacityRefused =
-        proposed(metadata.coronaOpacity, "coronaOpacity")
-    local refused = radiusRefused or colourRefused or opacityRefused
-    if refused then
-        triggerClientEvent(
-            client, PENDING_NOTICE_EVENT, resourceRoot,
-            "notice.entityUpdateFailed", refused
+    local radius = tonumber(metadata.radius)
+    if radius ~= nil then
+        -- The schema's own rule for the global radius, applied to the
+        -- per-entity one: a number cannot be legal in Settings and illegal
+        -- here, and the schema is the side both can reach.
+        local valid, reason = ANKIGTA.Settings.validate(
+            "activationRadius", ANKIGTA.Settings.normalize("activationRadius", radius)
         )
-        return
-    end
-
-    -- What the row already says, for a field this update did not mention: the
-    -- page sends only what the player touched, and setting one field must not
-    -- quietly erase the others.
-    local storedColour, storedOpacity = ANKIGTA.Store.coronaOf(row)
-    local function orStored(sent, stored)
-        if sent == nil then
-            return stored
+        if not valid then
+            triggerClientEvent(
+                client, PENDING_NOTICE_EVENT, resourceRoot,
+                "notice.entityUpdateFailed", reason
+            )
+            return
         end
-        return sent
     end
-
     local updated, updateError = ANKIGTA.Store.updateEntityMetadata(
         mapId,
         entityId,
         {
-            name = orStored(metadata.name, row.entity_name or ""),
+            -- Everything the row already says, so setting one field does not
+            -- quietly erase the others.
+            name = metadata.name ~= nil and metadata.name
+                or (row.entity_name or ""),
             entityTag = row.entity_tag or "",
-            -- Clearing a radius is not a thing the panel offers: an entity
-            -- always has one, and `false` here would be a zone of no size.
-            radius = sentRadius or tonumber(row.radius) or 3,
-            showCorona = orStored(
-                metadata.showCorona, tonumber(row.show_radius) == 1
-            ) == true,
-            coronaColour = orStored(sentColour, storedColour),
-            coronaOpacity = orStored(sentOpacity, storedOpacity),
+            radius = radius or tonumber(row.radius) or 3,
+            showRadius = metadata.showRadius ~= nil
+                and metadata.showRadius == true
+                or (metadata.showRadius == nil
+                    and tonumber(row.show_radius) == 1),
         }
     )
     if not updated then
@@ -2372,7 +2453,7 @@ addEventHandler(CARD_STATES_REFRESHED_EVENT, resourceRoot, function(
                     entityId = row.entity_id,
                     cardIdentity = cardIdentity,
                     radius = tonumber(row.radius) or 3,
-                    showCorona = tonumber(row.show_radius) == 1,
+                    showRadius = tonumber(row.show_radius) == 1,
                     eligible = true,
                 }
                 table.insert(candidates, candidate)

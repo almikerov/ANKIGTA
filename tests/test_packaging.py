@@ -50,8 +50,8 @@ SECRET_PATTERNS: tuple[tuple[str, str], ...] = (
 
 #: Files that are allowed to talk about secrets without carrying one. The
 #: connection token is a first-class product concept, so the word appears in
-#: settings schemas, gateway code and the string table; what must never appear
-#: is a value assigned to it, which is what the patterns above look for.
+#: settings schemas, gateway code and localization; what must never appear is a
+#: value assigned to it, which is what the patterns above look for.
 TEXT_SUFFIXES = frozenset({".lua", ".py", ".json", ".xml", ".edf", ".map", ".md"})
 
 

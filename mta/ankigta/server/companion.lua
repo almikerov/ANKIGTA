@@ -1076,9 +1076,9 @@ end
 
 --- The Card Picker could not answer, and the reason is about the link.
 --
--- The key is a string-table key rather than a sentence: the table lives on the
--- client, and the sentence this side used to build reached the panel as a line
--- nothing else on screen was worded like.
+-- The key is a locale key rather than a sentence: this side does not know
+-- which language the player reads, and the string it used to build here
+-- reached the panel as its own name in every language.
 local function cardPickerFailure(player, category)
     if isElement(player) then
         triggerClientEvent(
@@ -1159,6 +1159,12 @@ local function validCardView(card)
         or type(card.due) ~= "number"
         or card.due ~= math.floor(card.due)
         or type(card.tags) ~= "table"
+        -- Optional: a companion older than the sort field answers without it,
+        -- and a row headed by its card id is worse than a refused page, not
+        -- better.
+        or (card.sortField ~= nil
+            and card.sortField ~= false
+            and type(card.sortField) ~= "string")
     then
         return false
     end

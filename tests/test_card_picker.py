@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from http.client import HTTPConnection
 
@@ -32,6 +32,19 @@ OTHER_UUID = "22222222-2222-4222-8222-222222222222"
 class FakeNote:
     tags: list[str]
     id: int = 0
+    #: Stored as Anki stores them: markup and media tags included.
+    fields: list[str] = field(default_factory=lambda: ["<div>你好</div>", "hello"])
+    #: Which field the note type nominates as the one Anki lists by.
+    sortf: int = 0
+
+    def note_type(self) -> dict[str, object]:
+        return {"sortf": self.sortf}
+
+    def items(self) -> list[tuple[str, str]]:
+        return list(zip(["Front", "Back"], self.fields))
+
+    def keys(self) -> list[str]:
+        return ["Front", "Back"]
 
 
 @dataclass
@@ -45,9 +58,21 @@ class FakeCard:
     #: card written without one is still a note of its own, the way a
     #: single-template note type behaves.
     note_id: int = 0
+    #: The note's stored fields and the index its note type lists by, so a test
+    #: about either can say so on the card it is about.
+    note_fields: list[str] | None = None
+    note_sortf: int = 0
 
     def note(self) -> FakeNote:
-        return FakeNote(self.note_tags, self.note_id or self.id)
+        return FakeNote(
+            self.note_tags,
+            self.note_id or self.id,
+            list(self.note_fields) if self.note_fields is not None
+            else ["<div>你好</div>", "hello"],
+            self.note_sortf,
+        )
+
+
 
 
 class FakeDecks:
@@ -82,7 +107,12 @@ class FakeCollection:
         }
         self.queries: list[str] = []
 
+    #: Steers the tests that are about the deck list rather than the cards.
+    deck_of_default = False
+
     def find_cards(self, query: str) -> list[int]:
+        if query == 'deck:"Default"':
+            return [1] if self.deck_of_default else []
         self.queries.append(query)
         return sorted(self.cards)
 
@@ -132,6 +162,88 @@ def test_search_pagination_and_stale_state_are_explicit() -> None:
 
     with pytest.raises(CardPickerError, match="card is missing"):
         service.read(4)
+
+
+def test_a_row_is_headed_by_what_anki_lists_the_note_by() -> None:
+    """The sort field, not the card id.
+
+    A card id names nothing the player chose the card for. Which field Anki
+    lists by belongs to the note type, as `sortf`, so a collection sorted by
+    Reading rather than Expression reads the same here as in Anki's browser --
+    and it arrives stripped of the markup Anki stores it in.
+    """
+    collection = FakeCollection()
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+
+    by_id = {
+        card.identity.card_id: card.sort_field for card in service.search().cards
+    }
+
+    assert by_id[2] == "你好"
+
+    # A note type that lists by its second field lists by its second field.
+    collection.cards[2].note_sortf = 1
+    assert service.search().cards[0].sort_field == "hello"
+
+
+def test_a_sort_field_is_a_line_of_text_not_the_markup_it_is_stored_as() -> None:
+    collection = FakeCollection()
+    collection.cards[2].note_fields = [
+        "<div>hello</div>[sound:hi.mp3]&nbsp;<b>there</b>",
+        "back",
+    ]
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+
+    assert service.search().cards[0].sort_field == "hello there"
+
+
+def test_an_empty_sort_field_falls_through_to_one_with_words() -> None:
+    """The owner's own collection sorts on a field many of its notes leave
+    empty.
+
+    Labelling those rows by card id names nothing anybody chose the card for,
+    and a field holding only an image or a `[sound:]` tag has no words once the
+    markup is gone. ADR 0029 settled the same question the same way for the
+    Text Label.
+    """
+    collection = FakeCollection()
+    collection.cards[2].note_fields = ["", "accepted"]
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+
+    assert service.search().cards[0].sort_field == "accepted"
+
+    # A field with nothing but media in it has no words either.
+    collection.cards[2].note_fields = ["[sound:hi.mp3]", "<img src=x>", "here"]
+    assert service.search().cards[0].sort_field == "here"
+
+    # And a note with nothing anywhere is left to the row to handle.
+    collection.cards[2].note_fields = ["", ""]
+    assert service.search().cards[0].sort_field == ""
+
+
+def test_ankis_own_empty_default_deck_is_not_offered_as_a_filter() -> None:
+    """Anki makes it in every collection and hides it once it is empty.
+
+    Offering it is offering a filter that returns nothing, for a deck nobody
+    made.
+    """
+    collection = FakeCollection()
+    collection.decks = NamedDecks([(10, "Languages"), (1, "Default")])
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+
+    assert [deck.name for deck in service.search().decks] == ["Languages"]
+
+    # One that holds cards is a real deck and stays.
+    collection.deck_of_default = True
+    assert [deck.name for deck in service.search().decks] == ["Default", "Languages"]
+
+
+class NamedDecks:
+    def __init__(self, pairs: list[tuple[int, str]]) -> None:
+        self.pairs = pairs
+
+    def all_names_and_ids(self) -> list[AnkiDeckNameId]:
+        return [AnkiDeckNameId(id=i, name=n) for i, n in self.pairs]
 
 
 def test_a_written_anki_expression_reaches_anki_unchanged() -> None:
@@ -438,6 +550,66 @@ def test_a_rejected_expression_and_the_chosen_scope_cross_the_http_boundary() ->
     assert rejected_status == 400
     assert rejected["error"]["category"] == "search_rejected"
     assert "typing mistakes" in rejected["error"]["message"]
+
+
+def test_a_card_id_survives_the_only_spelling_mta_can_send_it_in() -> None:
+    """MTA writes a Lua number to JSON as a float once it is large enough.
+
+    Every real Anki card id is that large: `1784032937016` leaves the panel and
+    arrives as `1784032937016.0`. Read as `int` alone it is not a card id at
+    all, and the sentinel `0` that stood in for it reached a validating
+    constructor, threw `ValueError` out of the request handler and closed the
+    connection with no response -- which the panel could only show as
+    `protocol_error` on every card the owner owns.
+    """
+    collection = FakeCollection()
+    collection.cards[1784032937016] = FakeCard(1784032937016, 10, 2, 12, ["hsk1"])
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+    observation = RuntimeObservation(
+        anki_version="26.05",
+        v3_scheduler=True,
+        fsrs_enabled=True,
+        collection=CollectionObservation(state=CollectionState.OPEN),
+    )
+
+    with HealthServer(lambda: observation, card_picker=service) as server:
+        status, read = _post(
+            server,
+            "/v1/cards/read",
+            {"cardId": 1784032937016.0, "collectionUuid": BOUND_UUID},
+        )
+        refused_status, refused = _post(
+            server,
+            "/v1/cards/read",
+            {"cardId": 12.5, "collectionUuid": BOUND_UUID},
+        )
+
+    assert status == 200
+    assert read["payload"]["card"]["identity"]["cardId"] == 1784032937016
+    # And a number that is not a card id is an answer, never a dropped
+    # connection: the panel can say what was wrong only if it gets one.
+    assert refused_status == 400
+    assert refused["error"]["category"] == "invalid_anki_card_identity"
+
+
+def test_the_inspector_gets_the_note_a_link_refresh_must_not_pay_for() -> None:
+    """A read by full identity is the inspector's read, and wants the note.
+
+    It returned the card with an empty note, so the inspector had no fields to
+    show for any card at all. The refresh that asks the same question of every
+    stored link still must not read them.
+    """
+    collection = FakeCollection()
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+    identity = AnkiCardIdentity(BOUND_UUID, 2)
+
+    inspected = service.read_identity(identity, with_note=True)
+    refreshed = service.read_identity(identity)
+
+    assert inspected.note_id == 2
+    assert [field.name for field in inspected.fields] == ["Front", "Back"]
+    assert refreshed.note_id == 0
+    assert refreshed.fields == ()
 
 
 class CountingCollection:

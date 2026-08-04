@@ -1,17 +1,14 @@
-# Ticket 27 — Settings and the string table manual checklist
+# Ticket 27 — Settings and localization manual checklist
 
 Status: not run
 
-Authority, defaults, validation, persistence and restart recovery are covered
-automatically — including a restart of each side against a real database and a
-real settings file, and including rendering F7, the Study window, the
-connection windows and the counter HUD and reading the control texts back.
-What needs a human is the settings UI itself, how the words *look* once CEGUI
-lays them out, and the behaviour of a real MTA client's private file directory.
-
-Ticket 07 removed the language setting, so the two-language steps are gone from
-this list; the guard that nothing outside the string table holds a Cyrillic
-constant is automatic and covers the whole resource.
+Authority, defaults, validation, persistence, restart recovery, the locale
+fallback and the runtime switch are covered automatically — including a restart
+of each side against a real database and a real settings file, and including
+rendering F7, the Study window, the connection windows and the counter HUD in
+both languages and reading the control texts back. What needs a human is the
+settings UI itself, how the two languages *look* once CEGUI lays them out, and
+the behaviour of a real MTA client's private file directory.
 
 ## Scenarios
 
@@ -23,7 +20,7 @@ constant is automatic and covers the whole resource.
   include in study) and restart the resource. Confirm each persists and appears
   in Change History, and that Undo restores it.
 - Change every client-owned setting (indicator mode, protection, controls,
-  close after rating, card audio, world muting, UI scale) and restart
+  close after rating, card audio, world muting, UI scale, language) and restart
   the client. Confirm each persists per machine — the file is
   `@ankigta-settings.json` in the client's private resource directory — and
   does **not** appear in Change History.
@@ -34,16 +31,23 @@ constant is automatic and covers the whole resource.
   Confirm the server reports a foreign override rather than adopting the port.
 - Type an out-of-range radius, an off-step radius, a three-decimal delay, a
   negative speed and a non-numeric value. Confirm each is rejected with a
-  readable reason and that the stored value is unchanged — nothing should be
-  silently clamped.
-- On a Russian Windows locale, confirm every surface is still in English and
-  that no language can be chosen anywhere in the settings panel.
-- Confirm no label is clipped by the control it sits in: the automated tests
-  read the text, not the pixels.
+  readable localized reason and that the stored value is unchanged — nothing
+  should be silently clamped.
+- On a Russian Windows locale, start with language `auto`. Confirm Russian.
+  On any other locale, confirm English.
+- Switch language while F7, the Card Picker, the Study window and Review Mode
+  are open. Confirm every label changes without restarting the resource and
+  without losing state — the selected row, the deck filter text and the open
+  card all survive the rebuild.
+- Confirm no Russian label is clipped by a control sized for the English one:
+  the automated tests read the text, not the pixels.
 - Confirm card text, Map Entity names you typed, Entity Tags and Anki Tags stay
-  exactly as entered, including when they are not in English.
+  exactly as entered in both languages.
+- Confirm stored values (setting keys, link states, identifiers) are unchanged
+  by switching language — check the database before and after.
 
 ## Expected evidence
 
-Screenshots of the settings UI, the database rows for each setting before and
-after restart, and the rejection message shown for each invalid input.
+Screenshots of the settings UI in both languages, the database rows for each
+setting before and after restart, and the rejection message shown for each
+invalid input.

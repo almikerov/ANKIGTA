@@ -472,8 +472,8 @@ def test_the_report_reads_the_same_way_twice_for_the_same_state(
 def test_every_reported_value_is_a_technical_value_rather_than_a_sentence(
     client: MtaSandbox,
 ) -> None:
-    """A report is pasted from one person to another, so nothing in it may be
-    a sentence: only the heading comes from the string table."""
+    """A report is pasted between people whose clients are set to different
+    languages, so only the heading may be translated."""
     observe(client, 0.0, [candidate("e1", x=1.0)])
 
     for line in lines(client):
@@ -484,9 +484,15 @@ def test_every_reported_value_is_a_technical_value_rather_than_a_sentence(
             assert pair.isascii(), line
 
 
-def test_the_command_prints_a_heading_from_the_table_and_the_raw_state() -> None:
+@pytest.mark.parametrize("language", ["en", "ru"])
+def test_the_command_prints_a_translated_heading_and_the_untranslated_state(
+    language: str,
+) -> None:
     sandbox = load_client()
     try:
+        sandbox.eval("function(l) return ANKIGTA.Locale.setLanguage(l) end")(
+            language
+        )
         observe(sandbox, 0.0, [candidate("e1", x=1.0)])
 
         sandbox.commands["ankigta-diagnostics"][0]()

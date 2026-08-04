@@ -71,8 +71,8 @@ local focusedCamera = nil
 -- what it was.
 local focusedHold = nil
 
--- The last thing each source told us. The page is redrawn from these, so a new
--- status or a new scale repaints without asking anyone again.
+-- The last thing each source told us. The page is redrawn from these, so a
+-- language change or a new status repaints without asking anyone again.
 local lastStatus = nil
 -- Sanitized connection fields as last reported by the server. The token value
 -- never crosses this boundary; the page only needs to know whether its masked
@@ -104,8 +104,8 @@ local adoptionTarget = nil
 -- render. One-shot on purpose: a filter typed *after* the pick is the player's
 -- latest word and must survive.
 local selectionArrivedFromOutside = false
--- What the player typed to narrow the list. Kept here so a rebuild the player
--- did not ask for does not throw away their filter.
+-- What the player typed to narrow the list. Kept here so a rebuild for another
+-- language does not throw away their filter.
 local entityFilter = ""
 -- Which section the player asked for, when it is theirs to ask. The connection
 -- gate is not a request but a consequence, so it stays out of this.
@@ -127,6 +127,20 @@ local settingsPending = {}
 -- because this is the side that waits.
 local panelRequestedAt = false
 local searchRequestedAt = false
+--- Whether this opening of the panel has already asked for cards. The picker
+--- fills itself once per open; a snapshot arrives whenever anything at all
+--- changes, and searching on each of them would restart the list under the
+--- player every few seconds.
+local searchIssued = false
+--- Whether the card editor is slid out. Held here as well as on the page,
+--- because the panel's own width follows it.
+local editorOpen = false
+--- Zones the player asked to see *now*, keyed `mapId\0entityId`.
+--
+-- Client-side and nothing else: "draw it" is a look, not a decision about the
+-- entity, so it belongs to this opening of F7 and is dropped when F7 closes.
+-- The store keeps only the standing answer, which is `Draw always`.
+local drawNowZones = {}
 
 -- Filled in further down, declared here: the commands and the Review Mode
 -- entry wire themselves to it before those definitions are reached.
@@ -171,17 +185,37 @@ local function takeCursor()
     showCursor(true)
 end
 
+--- Does this still carry the player, so that pointing the camera back at it
+--- points the camera back at them?
+--
+-- `getCameraTarget()` answers with the *vehicle* while the player is riding
+-- one, because that is what the camera follows. Handing that element back
+-- later is right only while they are still in it: get out in between, and the
+-- camera stays on an empty car, watching it from wherever it was parked. The
+-- player is then left with no way to see themselves at all -- which is the
+-- camera not coming back rather than coming back wrong.
+local function stillCarriesPlayer(element)
+    return element == localPlayer
+        or element == getPedOccupiedVehicle(localPlayer)
+end
+
 local function restoreFocusedCamera()
     if not focusedCamera then
         return
     end
     setCameraInterior(focusedCamera.interior or 0)
-    if isElement(focusedCamera.target) then
-        setCameraTarget(focusedCamera.target)
-    elseif type(focusedCamera.matrix) == "table"
+    local target = focusedCamera.target
+    if isElement(target) and stillCarriesPlayer(target) then
+        setCameraTarget(target)
+    elseif not target
+        and type(focusedCamera.matrix) == "table"
         and #focusedCamera.matrix >= 6
     then
+        -- No target when it was taken means somebody had the camera in a fixed
+        -- position; that is theirs to have back.
         setCameraMatrix(unpack(focusedCamera.matrix))
+    else
+        setCameraTarget(localPlayer)
     end
     focusedCamera = nil
 end
@@ -255,6 +289,9 @@ local function closePanel()
     guiBrowser = nil
     browser = nil
     pageReady = false
+    searchIssued = false
+    editorOpen = false
+    drawNowZones = {}
     releaseCursor()
 end
 
@@ -427,46 +464,11 @@ ANKIGTA.EntityTypes = ANKIGTA.EntityTypes or {
 local PANEL_ENTITY_TYPES = ANKIGTA.EntityTypes.order
 local PANEL_ENTITY_TYPE = ANKIGTA.EntityTypes.supported
 
---- Is this the stock Map Editor's own stand-in for an element?
---
--- Read off the element rather than asked of `edf`. `edfIsRepresentation` is a
--- server-only export -- `edf.lua` is one line, `getElementData(elem,
--- "edf:rep")` -- and calling it from here answered nothing while logging an
--- MTA error per call. Not a raise, so the `pcall` that used to wrap this
--- reported success and the falsy answer read as "not a representation": the
--- filter below never fired, and the duplicate row it exists to remove was
--- never removed. `edf`'s own client half reads the same element data.
 local function isEditorRepresentation(element)
-    return getElementData(element, "edf:rep") == true
-end
-
---- Every identity an element answers to, in the order they are trusted.
---
--- Three of them, because an element answers to different ones depending on who
--- put it there: the persistent one ANKIGTA wrote, the one the stock Map Editor
--- keeps while the map is open in it, and the one the `.map` file gave it.
---
--- Read here and nowhere else. Both callers below need the same three, and two
--- copies of "what identifies an element" is two places for a fourth to be
--- added to only one of.
-local function elementIdentities(element)
-    return getElementData(element, "ankigtaEntityId"),
-        getElementData(element, "me:ID"),
-        getElementID(element)
-end
-
---- Does this element stand for the Map Entity named by `mapId`/`entityId`?
---
--- The editor's own representation of an object is excluded -- it carries the
--- same identity as the object it represents, so without this every entity is
--- found twice while the editor is running.
-local function elementStandsFor(element, mapId, entityId)
-    local persistentId, editorId, elementId = elementIdentities(element)
-    local elementMapId = getElementData(element, "ankigtaMapId")
-    return (persistentId == entityId or editorId == entityId
-            or elementId == entityId)
-        and (not elementMapId or elementMapId == mapId)
-        and not isEditorRepresentation(element)
+    local ok, answer = pcall(function()
+        return exports.edf:edfIsRepresentation(element)
+    end)
+    return ok and answer == true
 end
 
 --- Resolve the real copy of a Map Entity when editor and play-test copies
@@ -476,7 +478,14 @@ local function runtimeElement(mapId, entityId, streamedOnly)
     local unstreamed = false
     for _, kind in ipairs(PANEL_ENTITY_TYPES) do
         for _, element in ipairs(getElementsByType(kind)) do
-            if elementStandsFor(element, mapId, entityId) then
+            local persistentId = getElementData(element, "ankigtaEntityId")
+            local editorId = getElementData(element, "me:ID")
+            local elementMapId = getElementData(element, "ankigtaMapId")
+            if (persistentId == entityId or editorId == entityId
+                    or getElementID(element) == entityId)
+                and (not elementMapId or elementMapId == mapId)
+                and not isEditorRepresentation(element)
+            then
                 if isElementStreamedIn(element) then
                     return element
                 end
@@ -487,81 +496,6 @@ local function runtimeElement(mapId, entityId, streamedOnly)
         end
     end
     return unstreamed
-end
-
---- A Map Entity named by the pair the server knows it by.
---
--- Never by entity id alone. The stock Map Editor names what it places `object
--- (1)`, `object (2)` and so on, counting from one per map -- so two loaded maps
--- collide on their first object, and an index keyed on the id alone quietly
--- files one map's element under the other map's row.
-local function panelEntityKey(mapId, entityId)
-    return tostring(mapId) .. "/" .. tostring(entityId)
-end
-
---- The streamed Runtime Instance of each of several Map Entity, at once.
---
--- One walk of the world for the whole set, keyed by `panelEntityKey`. The world
--- holds thousands of elements and `runtimeElement` walks all of them per
--- identity; what draws marks on the world asks about every entity that shows
--- one, and doing that a walk at a time is the world once per mark.
---
--- Streamed only: a mark is drawn on a thing that is here, and an entity whose
--- Runtime Instance is not streamed has nothing to draw one on.
-local function runtimeElementsFor(keys)
-    local wanted, found = {}, {}
-    local any = false
-    for _, key in ipairs(keys or {}) do
-        -- A list per id, because the same id in two maps is two Map Entity and
-        -- both of them may be asked for at once.
-        local sought = wanted[key.entityId]
-        if sought == nil then
-            sought = {}
-            wanted[key.entityId] = sought
-        end
-        sought[#sought + 1] = key.mapId
-        any = true
-    end
-    if not any then
-        return found
-    end
-    --- Record this element against every Map Entity that asked for this id.
-    --
-    -- Narrowed to the ids somebody asked about, never the thousands in the
-    -- world that nobody did: everything `elementStandsFor` does is per
-    -- candidate, and it used to include a call into another resource.
-    local function claim(element, entityId)
-        if not entityId then
-            return
-        end
-        for _, mapId in ipairs(wanted[entityId] or {}) do
-            local key = panelEntityKey(mapId, entityId)
-            if found[key] == nil
-                and elementStandsFor(element, mapId, entityId)
-            then
-                found[key] = element
-            end
-        end
-    end
-
-    for _, kind in ipairs(PANEL_ENTITY_TYPES) do
-        for _, element in ipairs(getElementsByType(kind)) do
-            if isElementStreamedIn(element) then
-                -- Looked up by each identity the element answers to rather
-                -- than compared against every wanted key in turn: the world
-                -- holds thousands of elements, and a scan per key inside a
-                -- scan of the world is the product of the two. Each is passed
-                -- separately because an element carries only some of them, and
-                -- a list with a hole in it ends at the hole.
-                local persistentId, editorId, elementId =
-                    elementIdentities(element)
-                claim(element, persistentId)
-                claim(element, editorId)
-                claim(element, elementId)
-            end
-        end
-    end
-    return found
 end
 
 --- Does this entry answer to what was typed?
@@ -664,14 +598,112 @@ local function readableName(entry)
             return name
         end
     end
-    if engineGetModelNameFromID then
+    -- `engineGetModelNameFromID` reads `CModelNames`, which holds the object
+    -- table and the vehicle names for 400-610 -- and no peds at all. Asked
+    -- about a ped skin it answers `false` and logs `Expected valid model ID`,
+    -- which is what filled the client log with a warning per ped per snapshot
+    -- and left every ped reading as "Unnamed Map Entity". Asked about a
+    -- vehicle it answers, so vehicles keep this as their second chance.
+    if mapEntity.type ~= "ped" and engineGetModelNameFromID then
         local name = engineGetModelNameFromID(model)
         if type(name) == "string" and name ~= "" then
             return name
         end
     end
+    -- A ped is named by its skin, because MTA has no name for one: there is no
+    -- ped table in `CModelNames` and no API that answers for a skin at all. The
+    -- number is at least the thing itself, and it tells two peds apart.
+    if mapEntity.type == "ped" then
+        return ANKIGTA.Locale.format("f7.entity.pedSkin", model)
+    end
     return ANKIGTA.Locale.text("f7.entity.unnamed")
 end
+
+--- Draw the Activation Zone of every row that asks for it, while F7 is open.
+--
+-- `showRadius` had no drawing behind it at all. It only told the Next Card
+-- Indicator to pulse its own column where a zone happened to coincide, so a
+-- zone was visible for the one card the scheduler had chosen next, in one
+-- indicator mode, and never otherwise -- which is why turning the setting on
+-- appeared to do nothing.
+--
+-- A ring on the ground, at the radius the entity carries, because that is what
+-- the zone *is*: how close you must stand. Drawn from the panel's own snapshot
+-- and only while the panel is open, so it costs nothing when F7 is shut.
+local ZONE_SEGMENTS = 24
+local ZONE_COLOR = {90, 200, 255, 170}
+
+--- Elements already found for the zones being drawn, kept between frames.
+--
+-- `runtimeElement` walks every object, vehicle, ped and marker on the client
+-- and asks the editor about each one. That is a per-click cost where the rest
+-- of this file uses it; doing it per zone per frame is a world scan sixty
+-- times a second. An element does not change identity between snapshots, and
+-- one that was destroyed fails `isElement` and is looked up again.
+local zoneElements = {}
+
+local function zoneElement(mapId, entityId)
+    local key = mapId .. "\0" .. entityId
+    local remembered = zoneElements[key]
+    if remembered ~= nil and isElement(remembered) then
+        return remembered
+    end
+    local element = runtimeElement(mapId, entityId, false)
+    zoneElements[key] = isElement(element) and element or false
+    return zoneElements[key]
+end
+
+local function zonePosition(entry)
+    local element = zoneElement(
+        entry.mapEntity.mapId, entry.mapEntity.entityId
+    )
+    if isElement(element) then
+        return getElementPosition(element)
+    end
+    local authored = type(entry.mapEntity.authored) == "table"
+        and entry.mapEntity.authored or {}
+    local position = type(authored.position) == "table" and authored.position or {}
+    return tonumber(position.x), tonumber(position.y), tonumber(position.z)
+end
+
+local function drawActivationZone(x, y, z, radius)
+    local previousX, previousY = x + radius, y
+    for step = 1, ZONE_SEGMENTS do
+        local angle = step * 2 * math.pi / ZONE_SEGMENTS
+        local nextX = x + radius * math.cos(angle)
+        local nextY = y + radius * math.sin(angle)
+        dxDrawLine3D(
+            previousX, previousY, z,
+            nextX, nextY, z,
+            tocolor(ZONE_COLOR[1], ZONE_COLOR[2], ZONE_COLOR[3], ZONE_COLOR[4]),
+            2
+        )
+        previousX, previousY = nextX, nextY
+    end
+end
+
+local function renderActivationZones()
+    if type(lastSnapshot) ~= "table" then
+        return
+    end
+    for _, entry in ipairs(lastSnapshot.entities or {}) do
+        local metadata = type(entry.metadata) == "table" and entry.metadata or {}
+        local key = entry.mapEntity.mapId .. "\0" .. entry.mapEntity.entityId
+        -- The standing answer applies whether or not F7 is open; the look the
+        -- player asked for lasts as long as the panel they asked it in.
+        if metadata.showRadius == true
+            or (isPanelOpen() and drawNowZones[key] == true)
+        then
+            local x, y, z = zonePosition(entry)
+            local radius = tonumber(metadata.radius) or 3
+            if x and y and z then
+                drawActivationZone(x, y, z, radius)
+            end
+        end
+    end
+end
+
+addEventHandler("onClientRender", root, renderActivationZones)
 
 --- Where the Map Entity stands, in the language people use for the world.
 -- The persistent identity remains on the row for actions, but is not its
@@ -696,10 +728,6 @@ local function entityRows(snapshot)
     dropFilterHiding(snapshot)
     selectionArrivedFromOutside = false
     local rows = {}
-    -- What an entity that says nothing of its own gets, read once rather than
-    -- per row: it is the same answer for every one of them, and this runs over
-    -- the whole list on every state push.
-    local settingsCoronaColour = currentValue("coronaColour") or false
     for _, entry in ipairs(snapshot and snapshot.entities or {}) do
         local mapEntity = entry.mapEntity
         table.insert(rows, {
@@ -712,17 +740,13 @@ local function entityRows(snapshot)
             linkState = entry.link.state,
             guidanceKey = entry.link.guidanceKey or false,
             radius = tonumber(entry.metadata and entry.metadata.radius) or 3,
-            showCorona = entry.metadata
-                and entry.metadata.showCorona == true or false,
-            -- `false` where the entity says nothing of its own, which the page
-            -- shows as an empty field and the world draws from Settings.
-            coronaColour = entry.metadata
-                and entry.metadata.coronaColour or false,
-            coronaOpacity = entry.metadata
-                and entry.metadata.coronaOpacity or false,
-            -- What the empty field means, so the swatch can show the colour
-            -- the corona will really be rather than nothing at all.
-            settingsCoronaColour = settingsCoronaColour,
+            -- The store still calls this `show_radius`; it is the standing
+            -- answer, and the panel names it for what it does.
+            showAlways = entry.metadata
+                and entry.metadata.showRadius == true or false,
+            drawNow = drawNowZones[
+                entry.mapEntity.mapId .. "\0" .. entry.mapEntity.entityId
+            ] == true,
             -- What is on the row now, so the replace confirmation can name
             -- what it is about to throw away rather than saying "unknown".
             linkedCard = type(entry.link.cardIdentity) == "table"
@@ -806,7 +830,9 @@ local function cardRows(snapshot, f7Snapshot)
             collectionUuid = tostring(identity.collectionUuid or ""),
             deck = tostring(deck.name or ""),
             state = tostring(card.state or ""),
-            question = tostring(card.question or ""),
+            -- What Anki lists the note by. A row headed by a card id names
+            -- nothing the player chose it for.
+            label = tostring(card.sortField or ""),
             linkedTo = card.linkedTo or false,
             linked = linkedMapName ~= false,
             linkedMapName = linkedMapName,
@@ -856,9 +882,22 @@ local function deckNames(snapshot)
     return names
 end
 
---- The whole string table, for a page that holds keys rather than words.
 local function localeTable()
-    return ANKIGTA.Locale and ANKIGTA.Locale.strings or {}
+    local strings = ANKIGTA.Locale and ANKIGTA.Locale.strings
+    if not strings then
+        return {}
+    end
+    local active = strings[ANKIGTA.Locale.language] or {}
+    local merged = {}
+    -- English underneath, so a key the active language lacks still renders as
+    -- words rather than as its own name.
+    for key, value in pairs(strings.en or {}) do
+        merged[key] = value
+    end
+    for key, value in pairs(active) do
+        merged[key] = value
+    end
+    return merged
 end
 
 --- What the top bar says about studying.
@@ -892,6 +931,7 @@ local function push()
     end
     local state = {
         section = section(),
+        language = ANKIGTA.Locale and ANKIGTA.Locale.language or "en",
         locale = localeTable(),
         connection = {
             state = lastStatus and lastStatus.state or "disconnected",
@@ -971,14 +1011,53 @@ if ANKIGTA.Layout then
     })
 end
 
+--- How much wider the panel is while the card editor is out, as a share of
+--- its own width.
+--
+-- The editor slides out beside the two lists rather than taking a third of the
+-- room from them. Fitting a third column inside a window sized for two is what
+-- left every column cramped: the lists did not ask to be narrower because
+-- somebody opened an editor.
+local EDITOR_WIDTH_SHARE = 0.34
+
 local function panelRect()
+    local x, y, width, height
     if ANKIGTA.Layout then
-        return ANKIGTA.Layout.rect("panel")
+        x, y, width, height = ANKIGTA.Layout.rect("panel")
+    else
+        local screenWidth, screenHeight = guiGetScreenSize()
+        width = math.min(screenWidth - 40, 1180)
+        height = math.min(screenHeight - 40, 700)
+        x = (screenWidth - width) / 2
+        y = (screenHeight - height) / 2
     end
-    local screenWidth, screenHeight = guiGetScreenSize()
-    local width = math.min(screenWidth - 40, 1180)
-    local height = math.min(screenHeight - 40, 700)
-    return (screenWidth - width) / 2, (screenHeight - height) / 2, width, height
+    if not editorOpen then
+        return x, y, width, height
+    end
+    -- Grown from the width already in force, so UI Scale and any clamp the
+    -- layout applied are carried rather than recomputed.
+    local screenWidth = guiGetScreenSize()
+    width = math.min(width * (1 + EDITOR_WIDTH_SHARE), screenWidth)
+    -- Widening at a fixed left edge would push the right edge off screen for a
+    -- panel already sitting near it.
+    if x + width > screenWidth then
+        x = math.max(0, screenWidth - width)
+    end
+    return x, y, width, height
+end
+
+--- Give the panel the size its current shape asks for.
+--
+-- `CGUIWebBrowser_Impl::SetSize` resizes the underlying web view as well as the
+-- CEGUI element, so the page is re-laid out at the new width rather than
+-- stretched.
+local function resizePanel()
+    if not isPanelOpen() then
+        return
+    end
+    local x, y, width, height = panelRect()
+    guiSetPosition(guiBrowser, x, y, false)
+    guiSetSize(guiBrowser, width, height, false)
 end
 
 local function openPanel()
@@ -1296,20 +1375,24 @@ function actions.teleport()
     )
 end
 
---- How close the player must stand to *this* entity, and how it is marked.
+--- How close the player must stand to *this* entity, and whether it is drawn.
 --
--- Properties of the thing rather than of the player, which is why they live on
--- the row and not in Settings. Only a row the store holds has them: an offer
--- has nothing to write them on yet.
---
--- Every field is optional and each is passed on exactly as the page sent it.
--- The three answers are not the same: absent means the player did not touch it,
--- `false` means they emptied it and the entity follows Settings again, and a
--- value means they set one. Coercing `false` to `nil` here is how "clear this"
--- would silently become "leave it alone".
+-- A property of the thing rather than of the player, which is why it lives on
+-- the row and not in Settings. Offered for an offer too: the server takes the
+-- entity in when it is first written to, so naming a thing or saying how close
+-- you must stand to it no longer waits for a card to be chosen.
 function actions.setEntityRadius(payload)
     local entry = selectedEntry()
-    if not entry or entry.adoptable == true then
+    if not entry then
+        return
+    end
+    -- `Draw it` is a look rather than a decision about the entity, so it never
+    -- leaves this client and never outlives the panel it was asked in.
+    if payload.drawNow ~= nil then
+        drawNowZones[
+            entry.mapEntity.mapId .. "\0" .. entry.mapEntity.entityId
+        ] = payload.drawNow == true or nil
+        push()
         return
     end
     triggerServerEvent(
@@ -1319,9 +1402,7 @@ function actions.setEntityRadius(payload)
         entry.mapEntity.entityId,
         {
             radius = tonumber(payload.radius),
-            showCorona = payload.showCorona,
-            coronaColour = payload.coronaColour,
-            coronaOpacity = payload.coronaOpacity,
+            showRadius = payload.showAlways,
         }
     )
 end
@@ -1396,7 +1477,7 @@ end
 
 function actions.setEntityName(payload)
     local entry = selectedEntry()
-    if not entry or entry.adoptable == true or type(payload.name) ~= "string" then
+    if not entry or type(payload.name) ~= "string" then
         return
     end
     triggerServerEvent(
@@ -1430,6 +1511,20 @@ function actions.copyDecision(payload)
             decision
         )
     end
+end
+
+--- The page has slid the card editor out, or put it away.
+--
+-- The page cannot resize its own window, so it says which shape it is in and
+-- this gives it the room. Held on this side too, so that reopening F7 starts
+-- from the panel's own width rather than from whatever the page last did.
+function actions.editorVisible(payload)
+    local open = payload.open == true
+    if open == editorOpen then
+        return
+    end
+    editorOpen = open
+    resizePanel()
 end
 
 function actions.searchCards(payload)
@@ -1668,6 +1763,18 @@ addEventHandler(F7_SNAPSHOT_EVENT, resourceRoot, function(snapshot)
         return
     end
     lastSnapshot = snapshot
+    zoneElements = {}
+    -- Cards without being asked for. Opening the picker *is* the question, and
+    -- an empty list behind a button reads as "your collection has nothing" --
+    -- which is also why the deck list was missing: the companion sends it with
+    -- a search page, so until one had run there were no decks to choose from.
+    if not searchIssued
+        and type(snapshot.cardPicker) == "table"
+        and snapshot.cardPicker.enabled == true
+    then
+        searchIssued = true
+        actions.searchCards({})
+    end
     local arrivedAt = getTickCount()
     push()
     local server = type(snapshot.diagnostics) == "table"
@@ -1862,47 +1969,25 @@ local function scheduleEntityRefresh()
     end, 100, 1)
 end
 
---- Would the Map Entity list ever have a row for this element?
---
--- A marker is one of the types a card can hang on, so a marker appearing is
--- normally a reason to re-read the list. ANKIGTA's own coronas are markers
--- too, and they appear and disappear as the player walks around and as they
--- change a colour -- each one asking the server to rebuild the whole snapshot,
--- which produces the next snapshot, which moves a corona. The marks say which
--- elements are theirs so that loop cannot start.
-local function couldBeARow(element)
-    if not PANEL_ENTITY_TYPE[getElementType(element)] then
-        return false
-    end
-    if ANKIGTA.ZoneMarks and ANKIGTA.ZoneMarks.owns(element) then
-        return false
-    end
-    return true
-end
-
 addEventHandler("onClientElementCreate", root, function()
-    if couldBeARow(source) then
+    if PANEL_ENTITY_TYPE[getElementType(source)] then
         scheduleEntityRefresh()
     end
 end)
 
 addEventHandler("onClientElementDestroy", root, function()
-    if couldBeARow(source) then
+    if PANEL_ENTITY_TYPE[getElementType(source)] then
         scheduleEntityRefresh()
     end
 end)
 
 addEventHandler("onClientElementDataChange", root, function()
-    if couldBeARow(source) then
+    if PANEL_ENTITY_TYPE[getElementType(source)] then
         scheduleEntityRefresh()
     end
 end)
 
 local function refreshRuntimeAvailability()
-    -- A corona streaming in is ANKIGTA drawing, not the world changing.
-    if ANKIGTA.ZoneMarks and ANKIGTA.ZoneMarks.owns(source) then
-        return
-    end
     if authorized and isPanelOpen() then
         push()
     end
@@ -1916,15 +2001,12 @@ addEventHandler(AUTHORIZATION_EVENT, resourceRoot, function(value)
     authorized = value == true
     if not authorized then
         closePanel()
-        return
     end
-    -- Asked for once on the way in, not only when F7 opens. A corona is worn
-    -- by the entity whether or not anyone is looking at the list, and the
-    -- snapshot is where the client learns which entities wear one; without
-    -- this, they would appear the first time the panel was opened and a player
-    -- who never opened it would see none.
-    triggerServerEvent(F7_REQUEST_EVENT, resourceRoot)
 end)
+
+if ANKIGTA.Locale then
+    ANKIGTA.Locale.onChange(push)
+end
 
 addEventHandler("onClientResourceStart", resourceRoot, function()
     triggerServerEvent(AUTHORIZATION_REQUEST_EVENT, resourceRoot)
@@ -1932,44 +2014,9 @@ end)
 
 addEventHandler("onClientResourceStop", resourceRoot, closePanel)
 
---- Which Map Entity the player has selected, if any.
---
--- The panel owns the selection -- the page is a view -- so whatever draws on
--- the world asks here rather than being told, and there is no second copy to
--- disagree with this one. It outlives the panel being closed, which is what
--- lets `Draw radius` keep drawing the zone the player was just setting up.
-local function panelSelection()
-    return selectedMapId or false, selectedEntityId or false
-end
-
---- Every Map Entity in the last snapshot, and how it asks to be marked.
---
--- Off the snapshot rather than off `entityRows`, because that one applies the
--- filter the player typed: a row hidden from a list is still a thing standing
--- in the world, and hiding it must not put its corona out.
-local function panelMarkable()
-    local marks = {}
-    for _, entry in ipairs(lastSnapshot and lastSnapshot.entities or {}) do
-        local mapEntity = entry.mapEntity
-        local metadata = entry.metadata or {}
-        marks[#marks + 1] = {
-            mapId = mapEntity.mapId,
-            entityId = mapEntity.entityId,
-            radius = tonumber(metadata.radius) or 3,
-            showCorona = metadata.showCorona == true,
-            coronaColour = metadata.coronaColour or false,
-            coronaOpacity = tonumber(metadata.coronaOpacity) or false,
-        }
-    end
-    return marks
-end
-
 ANKIGTA.Panel = {
     isOpen = isPanelOpen,
     close = closePanel,
     rows = entityRows,
     matching = panelMatching,
-    selection = panelSelection,
-    markable = panelMarkable,
-    runtimeElements = runtimeElementsFor,
 }

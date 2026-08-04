@@ -619,8 +619,8 @@ def test_a_blocked_navigation_is_reported_as_a_warning(client: MtaSandbox) -> No
 
     assert state(client).externalPage is False
     # This fixture loads Review Mode without the string table, so the warning
-    # comes back as the key it stores. That it reads as a sentence is
-    # `tests/test_localization.py`'s job.
+    # comes back as the key it stores. That it reads as a sentence in both
+    # languages is `tests/test_localization.py`'s job.
     assert state(client).warning == "review.navigationBlocked"
 
 
@@ -842,48 +842,51 @@ def test_a_browser_failure_restores_protection(client: MtaSandbox) -> None:
     assert client.damage_proof["player"] is False
 
 
-def test_review_labels_come_from_the_string_table() -> None:
-    """Ticket 27: no user-facing string is hard-coded at its call site."""
+def test_review_labels_come_from_the_locale_in_both_languages() -> None:
+    """Ticket 27: no user-facing string is hard-coded in one language."""
+    for language, expected_reveal, expected_applied in (
+        ("en", "Show answer", "Rating applied"),
+        ("ru", "Показать ответ", "Оценка принята"),
+    ):
+        sandbox = MtaSandbox()
+        try:
+            sandbox.load("shared/locale.lua")
+            load_review_mode(sandbox)
+            sandbox.eval("function(l) ANKIGTA.Locale.setLanguage(l) end")(language)
+
+            open_card(sandbox)
+            reveal(sandbox)
+            render(sandbox)
+            click(sandbox, *rating_centre(sandbox, "good"))
+            result(sandbox, "applied")
+
+            assert sandbox.eval(
+                'ANKIGTA.Locale.text("review.showAnswer")'
+            ) == expected_reveal
+            assert sandbox.eval(
+                'ANKIGTA.Locale.text("review.applied")'
+            ) == expected_applied
+        finally:
+            sandbox.close()
+
+
+def test_switching_language_needs_no_resource_restart() -> None:
     sandbox = MtaSandbox()
     try:
         sandbox.load("shared/locale.lua")
         load_review_mode(sandbox)
-
         open_card(sandbox)
         reveal(sandbox)
-        render(sandbox)
-        click(sandbox, *rating_centre(sandbox, "good"))
-        result(sandbox, "applied")
 
-        assert sandbox.eval(
-            'ANKIGTA.Locale.text("review.showAnswer")'
-        ) == "Show answer"
-        assert sandbox.eval(
-            'ANKIGTA.Locale.text("review.applied")'
-        ) == "Rating applied"
-    finally:
-        sandbox.close()
-
-
-def test_a_warning_is_the_sentence_the_table_holds_for_its_outcome() -> None:
-    """What is held is the outcome, and the words for it are the table's.
-
-    That the words follow a table edited after the warning arrived — which is
-    what proves nothing was frozen at event time — is
-    `tests/test_localization.py`'s job; this one only asks that the sentence be
-    the table's rather than one this module wrote.
-    """
-    sandbox = MtaSandbox()
-    try:
-        sandbox.load("shared/locale.lua")
-        load_review_mode(sandbox)
-        open_card(sandbox)
-        reveal(sandbox)
+        sandbox.eval('function() ANKIGTA.Locale.setLanguage("ru") end')()
         result(sandbox, "outcome_unknown")
+        russian = state(sandbox).warning
 
-        assert state(sandbox).warning == sandbox.eval(
-            'ANKIGTA.Locale.text("review.outcomeUnknown")'
-        )
-        assert "unknown" in state(sandbox).warning.lower()
+        sandbox.eval('function() ANKIGTA.Locale.setLanguage("en") end')()
+        result(sandbox, "outcome_unknown")
+        english = state(sandbox).warning
+
+        assert "неизвест" in russian.lower()
+        assert "unknown" in english.lower()
     finally:
         sandbox.close()

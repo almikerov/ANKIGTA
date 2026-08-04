@@ -61,6 +61,7 @@ def start_client(
     *,
     width: float = 1920,
     height: float = 1080,
+    language: str = "en",
 ) -> MtaSandbox:
     """The whole client side, started the way MTA starts it."""
     sandbox = MtaSandbox()
@@ -84,6 +85,7 @@ def start_client(
         end
         """
     )()
+    sandbox.eval("function(l) ANKIGTA.Locale.setLanguage(l) end")(language)
     return sandbox
 
 
@@ -418,7 +420,7 @@ def test_a_value_typed_by_hand_is_taken_at_two_decimal_places(
     assert scale(client) == 1.23
 
 
-def test_a_refused_value_typed_by_hand_says_why_under_the_row(
+def test_a_refused_value_typed_by_hand_says_why_in_the_players_language(
     client: MtaSandbox,
 ) -> None:
     """Shown under the row it refused, not in the chat log.
@@ -426,6 +428,7 @@ def test_a_refused_value_typed_by_hand_says_why_under_the_row(
     A reason that scrolls away with the next chat line is a reason the player
     can miss; the row keeps it next to the value that caused it.
     """
+    client.eval("function(l) ANKIGTA.Locale.setLanguage(l) end")("ru")
     client.commands["ankigta-ui"][0]()
     page_ready(client)
     set_setting(client, "uiScale", 9)

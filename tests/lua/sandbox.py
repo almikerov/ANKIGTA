@@ -419,6 +419,13 @@ class MtaSandbox:
         self._cursor_wanted_here = False
         self._cursor_requests = 0
         self.camera_target: Any = None
+        #: What `CModelNames` holds. `InitializeMaps` loads the object table
+        #: *and* the vehicle names for 400-610; peds are absent from it
+        #: entirely, which is the difference that matters here.
+        self.model_names: dict[int, str] = {1337: "gate_model", 411: "Infernus"}
+        #: Warnings MTA's script debugging would have logged. A stub that
+        #: answered silently would hide the call that produced them.
+        self.script_warnings: list[str] = []
         self.camera_matrix: tuple[float, ...] = (0.0, 0.0, 10.0, 0.0, 0.0, 0.0)
         self.camera_interior = 0
         self.radio_channel = 0
@@ -449,12 +456,8 @@ class MtaSandbox:
         self.blips: list[Any] = []
         #: Every control the resource created, in creation order.
         self.widgets: list[Widget] = []
-        #: What `getLocalization()` reports, as MTA's `{code, name}`. ANKIGTA
-        #: ships in English and asks nobody what Windows is set to, so this is
-        #: here to catch a caller rather than to serve one.
-        self.localization = {"code": "ru-RU", "name": "Russian"}
-        #: How many times a script asked for it.
-        self.localization_reads = 0
+        #: What `getLocalization()` reports, as MTA's `{code, name}`.
+        self.localization = {"code": "en-US", "name": "English"}
         #: Every string handed to `dxDrawText`, in draw order.
         self.drawn_text: list[str] = []
         #: Every script Lua asked the panel page to run, in order.
@@ -471,26 +474,10 @@ class MtaSandbox:
         self.drawn_text_boxes: list[dict[str, Any]] = []
         self.drawn_rectangles: list[dict[str, float]] = []
         self.drawn_images: list[dict[str, float]] = []
-        #: Every `dxDrawLine3D`, in draw order. What is drawn into the world
-        #: has no control to read back, so this is the only way a test can see
-        #: an outline or a zone at all.
+        #: Segments handed to `dxDrawLine3D`. A world ring is drawn as many of
+        #: these, so a test can ask whether one was drawn and how wide it is
+        #: rather than whether a function was reached.
         self.drawn_lines_3d: list[dict[str, float]] = []
-        #: Markers the resource created, and what each was attached to.
-        self.markers: list[Any] = []
-        self.attachments: list[tuple[Any, Any]] = []
-        #: What `getElementBoundingBox` reports for an element that does not
-        #: carry one of its own, as MTA's six numbers.
-        self.bounding_box: tuple[float, float, float, float, float, float] = (
-            -1.0,
-            -1.0,
-            -1.0,
-            1.0,
-            1.0,
-            1.0,
-        )
-        #: Set where the model has no bounding box to give, which MTA reports
-        #: as a plain `false` rather than as six zeroes.
-        self.bounding_box_fails = False
         #: What `guiGetScreenSize()` reports. Tests move it to run the same
         #: layout at 1280x720, 1920x1080 and 3840x2160.
         self.screen_width = 1920.0
@@ -754,15 +741,8 @@ class MtaSandbox:
                 self._elements.discard(id(value))
                 return True
             if lua_type(value) == "table" and value["__element"] is True:
-                index = value["__widget"]
-                if index is None:
-                    # MTA raises this *before* the element goes, so `source` is
-                    # still a valid element inside the handler -- which is the
-                    # window a resource destroying its own elements has to
-                    # recognize them in. A CEGUI control is not a world element
-                    # and raises no such event.
-                    self.trigger("onClientElementDestroy", value)
                 value["__destroyed"] = True
+                index = value["__widget"]
                 if index is not None:
                     self._destroy_widget(int(index))
                 return True
@@ -1134,16 +1114,10 @@ class MtaSandbox:
             return args[index + 1] if len(args) > index + 1 else None
 
         def edf_is_representation(*args: Any) -> bool:
-            """`edf.lua`: `return getElementData(elem, "edf:rep")`.
-
-            The real marker, not a field of this double's own invention. It is
-            ordinary synced element data, which is why the client can read it
-            without asking `edf` anything -- and a double that hid it behind an
-            export made a server-only call look answerable from either side.
-            """
             element = export_argument(args, 0)
             return (
-                lua_type(element) == "table" and element["edf:rep"] is True
+                lua_type(element) == "table"
+                and element["__edf_representation"] is True
             )
 
         def edf_set_element_property(*args: Any) -> bool:
@@ -1480,6 +1454,28 @@ class MtaSandbox:
             self.chat.append(str(message)) or True
         )
 
+        # --- model names -----------------------------------------------------
+        def engine_get_model_name_from_id(model: Any = None, *_rest: Any) -> Any:
+            # `CLuaEngineDefs::EngineGetModelNameFromID` looks the id up in
+            # `CModelNames` and, finding nothing, answers `false` *and* logs
+            # "Expected valid model ID" rather than raising. A double that
+            # answered `false` quietly would hide the caller that asked about a
+            # ped -- which is the defect this exists to catch.
+            try:
+                key = int(model)
+            except (TypeError, ValueError):
+                key = None
+            name = self.model_names.get(key) if key is not None else None
+            if not name:
+                self.script_warnings.append(
+                    "Bad usage @ 'engineGetModelNameFromID' "
+                    "[Expected valid model ID at argument 1]"
+                )
+                return False
+            return name
+
+        g.engineGetModelNameFromID = engine_get_model_name_from_id
+
         # --- camera, radio ---------------------------------------------------
         g.getCameraTarget = lambda *_args: self.camera_target
         g.setCameraTarget = lambda target, *_rest: (
@@ -1570,11 +1566,7 @@ class MtaSandbox:
             return True
 
         g.dxDrawImage = dx_draw_image
-        def get_localization() -> Any:
-            self.localization_reads += 1
-            return self.lua.table_from(self.localization)
-
-        g.getLocalization = get_localization
+        g.getLocalization = lambda: self.lua.table_from(self.localization)
         self._install_gui_globals(g)
         g.tocolor = lambda r=0, gr=0, b=0, a=255: (
             (int(a) << 24) | (int(r) << 16) | (int(gr) << 8) | int(b)
@@ -1787,96 +1779,25 @@ class MtaSandbox:
         g.dxDrawMaterialLine3D = lambda *_a, **_k: True
 
         def dx_draw_line_3d(
-            start_x: float,
-            start_y: float,
-            start_z: float,
-            end_x: float,
-            end_y: float,
-            end_z: float,
-            colour: Any = 0xFFFFFFFF,
-            *_rest: Any,
+            start_x: Any = 0, start_y: Any = 0, start_z: Any = 0,
+            end_x: Any = 0, end_y: Any = 0, end_z: Any = 0,
+            color: Any = None, width: Any = 1, *_rest: Any,
         ) -> bool:
+            # `dxDrawLine3D(startX, startY, startZ, endX, endY, endZ, colour,
+            # width, postGUI)` -- the colour and the width are the two things a
+            # test would ask about a line it cannot see, so a double that threw
+            # them away could answer only "something was drawn".
             self.drawn_lines_3d.append(
                 {
-                    "startX": float(start_x),
-                    "startY": float(start_y),
-                    "startZ": float(start_z),
-                    "endX": float(end_x),
-                    "endY": float(end_y),
-                    "endZ": float(end_z),
-                    "colour": int(colour),
+                    "startX": float(start_x), "startY": float(start_y),
+                    "startZ": float(start_z), "endX": float(end_x),
+                    "endY": float(end_y), "endZ": float(end_z),
+                    "color": color, "width": float(width),
                 }
             )
             return True
 
         g.dxDrawLine3D = dx_draw_line_3d
-
-        def get_element_bounding_box(element: Any = None) -> Any:
-            if self.bounding_box_fails:
-                # MTA returns a single `false` where the model has no box,
-                # never six zeroes -- a caller that unpacks six numbers gets
-                # one boolean and five nils.
-                return False
-            if lua_type(element) == "table" and element["__boundingBox"]:
-                box = element["__boundingBox"]
-                return tuple(float(box[index]) for index in range(1, 7))
-            return self.bounding_box
-
-        g.getElementBoundingBox = get_element_bounding_box
-
-        def create_marker(
-            x: float,
-            y: float,
-            z: float,
-            kind: str = "default",
-            size: float = 4.0,
-            red: float = 0,
-            green: float = 0,
-            blue: float = 255,
-            alpha: float = 255,
-            *_rest: Any,
-        ) -> Any:
-            marker = self.lua.table_from(
-                {
-                    "__element": True,
-                    "type": "marker",
-                    "x": float(x),
-                    "y": float(y),
-                    "z": float(z),
-                    "markerType": str(kind),
-                    "size": float(size),
-                    "red": int(red),
-                    "green": int(green),
-                    "blue": int(blue),
-                    "alpha": int(alpha),
-                    "interior": 0,
-                    "dimension": 0,
-                }
-            )
-            self.markers.append(marker)
-            # A marker is a world element like any other: it answers
-            # `getElementsByType("marker")`, which is exactly why the panel has
-            # to be able to tell ANKIGTA's own coronas from a Map Entity.
-            self.world_elements.append(marker)
-            self._elements.add(id(marker))
-            # MTA fires this for a client-created element, and the panel
-            # listens for it -- which is why the panel has to recognize a
-            # corona as its own rather than as the world changing.
-            self.trigger("onClientElementCreate", marker)
-            return marker
-
-        g.createMarker = create_marker
-
-        def attach_elements(
-            element: Any, target: Any, *_offsets: Any
-        ) -> bool:
-            if lua_type(element) != "table" or lua_type(target) != "table":
-                return False
-            self.attachments.append((element, target))
-            element["__attachedTo"] = target
-            return True
-
-        g.attachElements = attach_elements
         g.setBrowserVolume = set_browser_volume
         g.setWorldSoundEnabled = set_world_sound_enabled
         g.focusBrowser = lambda _browser=None: True
@@ -2034,6 +1955,14 @@ class MtaSandbox:
             if widget is None:
                 return False
             widget.width, widget.height = float(width), float(height)
+            # `CGUIWebBrowser_Impl::SetSize` resizes the underlying web view as
+            # well as the CEGUI element, so a page is re-laid out at the new
+            # width rather than stretched. A double that moved only the widget
+            # would let a test agree that the panel grew while the page inside
+            # it had not been told anything.
+            if lua_type(handle) == "table" and handle["__browser"]:
+                handle["__browser"]["width"] = float(width)
+                handle["__browser"]["height"] = float(height)
             self._dispatch_gui_event("onClientGUISize", handle)
             return True
 

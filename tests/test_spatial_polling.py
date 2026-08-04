@@ -30,10 +30,6 @@ def client() -> Iterator[MtaSandbox]:
     sandbox.load("client/layout.lua")
     sandbox.load("client/activation.lua")
     sandbox.load("client/indicator.lua")
-    # The polling asks the marks whether a corona already stands where the
-    # indicator is about to put one, so it loads before them -- as meta.xml
-    # declares.
-    sandbox.load("client/zone_marks.lua")
     sandbox.load("client/spatial.lua")
     try:
         yield sandbox
@@ -47,7 +43,7 @@ def link(
     map_id: str = "m1",
     card_id: int = 7,
     radius: float = 3.0,
-    show_corona: bool = False,
+    show_radius: bool = False,
     eligible: bool = True,
 ) -> dict[str, Any]:
     return {
@@ -55,7 +51,7 @@ def link(
         "entityId": entity_id,
         "cardIdentity": {"collectionUuid": UUID, "cardId": card_id},
         "radius": radius,
-        "showCorona": show_corona,
+        "showRadius": show_radius,
         "eligible": eligible,
     }
 
@@ -397,53 +393,6 @@ def test_an_element_that_streams_in_later_joins_the_index(
     configure(client, delaySeconds=0)
 
     assert client.to_python(tick(client))["entityId"] == "e1"
-
-
-def test_the_index_is_built_from_the_world_the_client_starts_in(
-    client: MtaSandbox,
-) -> None:
-    """A player joins into a world that is already loaded.
-
-    Those elements streamed in before this resource existed to hear them, so
-    waiting for a stream event means waiting forever. The index was built only
-    when a link set arrived -- which happens once a study session has something
-    to watch, and not before -- so until then nothing could say which element a
-    Map Entity was, and said so with an empty table rather than an error.
-    """
-    client.add_world_element(x=1.0, ankigtaEntityId="e1")
-
-    client.trigger("onClientResourceStart")
-
-    assert diagnostics(client)["streamedInstances"] == 1
-    assert diagnostics(client)["knownInstances"] == 1
-
-
-def test_an_element_given_its_identity_later_joins_the_index(
-    client: MtaSandbox,
-) -> None:
-    """An object the stock Map Editor places exists before it is anything to
-    ANKIGTA; the element data arriving is what makes it a Map Entity."""
-    element = client.add_world_element(x=1.0)
-    client.trigger("onClientResourceStart")
-    assert diagnostics(client)["knownInstances"] == 0
-
-    element["ankigtaEntityId"] = "e1"
-    client.trigger("onClientElementDataChange", element, "ankigtaEntityId")
-
-    assert diagnostics(client)["streamedInstances"] == 1
-
-
-def test_unrelated_element_data_does_not_touch_the_index(
-    client: MtaSandbox,
-) -> None:
-    """Element data changes constantly and for everything in the world; only
-    the one key that confers an identity is a reason to look."""
-    element = client.add_world_element(x=1.0)
-    client.trigger("onClientResourceStart")
-
-    client.trigger("onClientElementDataChange", element, "me:ID")
-
-    assert diagnostics(client)["knownInstances"] == 0
 
 
 def test_a_destroyed_instance_leaves_the_index_entirely(

@@ -50,6 +50,42 @@ LISTEN_BACKLOG = MAX_IN_FLIGHT_READS
 ServerRequest = socket | tuple[bytes, socket]
 
 
+def _card_id_or_none(value: object) -> int | None:
+    """A positive Anki card id, however the client had to spell it.
+
+    MTA writes a Lua number to JSON as a float once it is large enough, and
+    every real Anki card id is: `1784032937016` leaves the panel and arrives
+    here as `1784032937016.0`. Read as `int` alone, that is not a card id at
+    all -- which refuses every card in a real collection.
+
+    `None` rather than a sentinel `0`. A `0` handed to `AnkiCardIdentity`
+    raises a plain `ValueError`, which is not one of the errors the request
+    handler catches: it escaped `do_POST`, closed the connection with no
+    response, and MTA could report only `protocol_error` -- a card that could
+    not be read, with nothing anywhere saying why.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, float):
+        if not value.is_integer():
+            return None
+        value = int(value)
+    if not isinstance(value, int) or value <= 0:
+        return None
+    return value
+
+
+def _requested_card_id(value: object) -> int:
+    """The card id a Card Picker request names, or a refusal saying so."""
+    card_id = _card_id_or_none(value)
+    if card_id is None:
+        raise CardPickerError(
+            "invalid_anki_card_identity",
+            "cardId must be a positive whole number",
+        )
+    return card_id
+
+
 def _parse_identities(request: object) -> list[AnkiCardIdentity]:
     if not isinstance(request, dict):
         raise SessionError("invalid_session_request", "request body must be an object")
@@ -67,14 +103,8 @@ def _parse_identities(request: object) -> list[AnkiCardIdentity]:
                 "cardIdentities entries must be objects",
             )
         collection_uuid = raw.get("collectionUuid")
-        card_id = raw.get("cardId")
-        if (
-            not isinstance(collection_uuid, str)
-            or not collection_uuid
-            or not isinstance(card_id, int)
-            or isinstance(card_id, bool)
-            or card_id <= 0
-        ):
+        card_id = _card_id_or_none(raw.get("cardId"))
+        if not isinstance(collection_uuid, str) or not collection_uuid or card_id is None:
             raise SessionError(
                 "invalid_session_request",
                 "cardIdentities entries must contain collectionUuid and positive cardId",
@@ -94,14 +124,8 @@ def _parse_identity(request: object) -> AnkiCardIdentity:
             "cardIdentity must be an object",
         )
     collection_uuid = raw.get("collectionUuid")
-    card_id = raw.get("cardId")
-    if (
-        not isinstance(collection_uuid, str)
-        or not collection_uuid
-        or not isinstance(card_id, int)
-        or isinstance(card_id, bool)
-        or card_id <= 0
-    ):
+    card_id = _card_id_or_none(raw.get("cardId"))
+    if not isinstance(collection_uuid, str) or not collection_uuid or card_id is None:
         raise SessionError(
             "invalid_session_request",
             "cardIdentity must contain collectionUuid and positive cardId",
@@ -323,10 +347,7 @@ class HealthServer:
                             note_editor.update(
                                 AnkiCardIdentity(
                                     str(request.get("collectionUuid", "")),
-                                    request.get("cardId")
-                                    if isinstance(request.get("cardId"), int)
-                                    and not isinstance(request.get("cardId"), bool)
-                                    else 0,
+                                    _requested_card_id(request.get("cardId")),
                                 ),
                                 fields=_requested_fields(request.get("fields")),
                                 tags=_requested_tags(request.get("tags")),
@@ -422,18 +443,17 @@ class HealthServer:
                                 card = card_picker.read_identity(
                                     AnkiCardIdentity(
                                         raw_collection_uuid,
-                                        raw_card_id
-                                        if isinstance(raw_card_id, int)
-                                        and not isinstance(raw_card_id, bool)
-                                        else 0,
-                                    )
+                                        _requested_card_id(raw_card_id),
+                                    ),
+                                    # The inspector is the one caller that
+                                    # wants the note; a link refresh asks the
+                                    # same question of every stored card and
+                                    # must not pay for fields nobody reads.
+                                    with_note=True,
                                 )
                             else:
                                 card = card_picker.read(
-                                    raw_card_id
-                                    if isinstance(raw_card_id, int)
-                                    and not isinstance(raw_card_id, bool)
-                                    else 0
+                                    _requested_card_id(raw_card_id)
                                 )
                             status, response = card_read_response(
                                 request_id,

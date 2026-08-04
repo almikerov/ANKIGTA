@@ -6,13 +6,15 @@ ANKIGTA.ConnectionWarning = ANKIGTA.ConnectionWarning or {
 }
 
 -- Every status line lives in the shared string table, read at the moment the
--- status arrives: this module used to carry a string table of its own, which
--- meant a wording fixed everywhere else was still wrong here.
+-- status arrives: this module used to carry its own two-language table and its
+-- own locale detection, which meant switching the language setting moved the
+-- rest of the interface and left the connection messages behind.
 local STATUS_KEY_PREFIX = "connection.status."
 
 local function has(key)
     local strings = ANKIGTA.Locale and ANKIGTA.Locale.strings
-    return strings ~= nil and strings[key] ~= nil
+    local english = strings and strings.en
+    return english ~= nil and english[key] ~= nil
 end
 
 local function text(key, ...)

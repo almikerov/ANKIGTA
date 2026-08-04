@@ -29,6 +29,7 @@ def f7() -> Iterator[MtaSandbox]:
     sandbox.load("shared/entity_types.lua")
     sandbox.load("client/layout.lua")
     sandbox.load("client/panel.lua")
+    sandbox.eval('function() ANKIGTA.Locale.setLanguage("en") end')()
     try:
         yield sandbox
     finally:
@@ -56,7 +57,7 @@ def entry(
                 "name": name,
                 "entityTag": entity_tag,
                 "radius": 3,
-                "showCorona": False,
+                "showRadius": False,
             },
             "authored": {
                 "position": {"x": 0, "y": 0, "z": 0},
@@ -69,7 +70,7 @@ def entry(
             "name": name,
             "entityTag": entity_tag,
             "radius": 3,
-            "showCorona": False,
+            "showRadius": False,
         },
         "link": {"state": state},
     }

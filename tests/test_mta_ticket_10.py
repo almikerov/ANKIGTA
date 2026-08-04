@@ -87,7 +87,7 @@ def test_f7_exposes_missing_metadata_and_relink_actions() -> None:
     assert "relinkEntity" in main
     assert "Entity missing" in main
     assert "entityTag" in main
-    assert "showCorona" in main
+    assert "showRadius" in main
     assert "RELINK_ENTITY_REQUEST_EVENT" in main
     assert 'relink_entity' in main
     assert "RELINK_ENTITY_REQUEST_EVENT" in client

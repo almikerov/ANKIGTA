@@ -233,7 +233,7 @@ def test_the_candidate_set_carries_identities_and_never_coordinates(
         "entityId": "e1",
         "cardIdentity": {"collectionUuid": UUID, "cardId": 11},
         "radius": 7.5,
-        "showCorona": True,
+        "showRadius": True,
         "eligible": True,
     }
 

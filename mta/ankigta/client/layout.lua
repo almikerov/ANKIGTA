@@ -326,8 +326,7 @@ end
 --- Be told when the scale changed.
 --
 -- A window writes its control geometry once, when it is built, so it cannot
--- notice a new scale on its own: without being told, "the scale applies at
--- once" would mean "at once, but close every window first".
+-- notice a new scale on its own -- the same reason `Locale.onChange` exists.
 function Layout.onChange(callback)
     if type(callback) == "function" then
         table.insert(Layout.listeners, callback)

@@ -256,6 +256,14 @@ addEventHandler(AUTHORIZATION_EVENT, resourceRoot, function(value)
     end
 end)
 
+if ANKIGTA.Locale then
+    ANKIGTA.Locale.onChange(function()
+        if isElement(window) then
+            render()
+        end
+    end)
+end
+
 addEventHandler("onClientResourceStart", resourceRoot, function()
     triggerServerEvent(RECOVERY_REQUEST_EVENT, resourceRoot)
 end)

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from html import unescape
 from enum import StrEnum
 from time import time
 from typing import Protocol
@@ -60,6 +62,32 @@ SEARCH_REJECTED_ERROR = "SearchError"
 MAX_SEARCH_REJECTION_LENGTH = 240
 
 
+#: Anki creates this deck in every collection and hides it from its own deck
+#: list once it is empty. Offering it as a filter that matches nothing is
+#: offering a choice that cannot work.
+DEFAULT_DECK_NAME = "Default"
+
+#: How much of the sort field a row carries. A row in a game panel is one line;
+#: a field holding an essay is not a label.
+MAX_SORT_FIELD_LENGTH = 120
+
+_MEDIA_TAG = re.compile(r"\[(?:sound|anki)(?::[^\]]*)?\]")
+_MARKUP = re.compile(r"<[^>]*>")
+
+
+def _one_line(value: str) -> str:
+    """A note field as a line of a list, rather than as the HTML it is stored
+    as.
+
+    Anki stores a field as markup, and a row that reads `<div>hello</div>` or
+    `[sound:hello.mp3]` is showing storage rather than the card.
+    """
+    text = _MEDIA_TAG.sub(" ", value)
+    text = _MARKUP.sub(" ", text)
+    text = unescape(text).replace(" ", " ")
+    return " ".join(text.split())[:MAX_SORT_FIELD_LENGTH]
+
+
 def _is_row_id(value: object) -> bool:
     """Is this an Anki row id, rather than something that merely looks like one?
 
@@ -103,6 +131,10 @@ class CardState(StrEnum):
 class NoteLike(Protocol):
     id: int
     tags: Sequence[str]
+    #: The note's field values, in the order its note type declares them.
+    fields: Sequence[str]
+
+    def note_type(self) -> dict[str, object] | None: ...
 
     def keys(self) -> Sequence[str]: ...
 
@@ -142,6 +174,10 @@ class CardView:
     state: CardState
     due: int
     tags: tuple[str, ...]
+    #: What Anki lists this note by -- the field its note type nominates as the
+    #: sort field. Carried on every row, because the note it comes from is
+    #: already loaded for the tags beside it.
+    sort_field: str = ""
     #: The note behind the card, for the one card being inspected. Empty on a
     #: search page: reading every field of every card to draw a list would pay
     #: for a whole page what only one card is ever looked at.
@@ -243,12 +279,7 @@ class CardPickerService:
             total=len(matched),
             query=normalized_query,
             deck_filter=normalized_deck,
-            decks=tuple(
-                DeckView(deck_id=deck_id, name=name)
-                # By name, not by id: the name is what is read, and Anki's `::`
-                # nesting sorts into a tree correctly as plain text.
-                for deck_id, name in sorted(names.items(), key=lambda p: p[1])
-            ),
+            decks=self._offered_decks(collection, names),
             scope=normalized_scope,
         )
 
@@ -279,7 +310,20 @@ class CardPickerService:
         self.read_identity(identity)
         return True
 
-    def read_identity(self, identity: AnkiCardIdentity) -> CardView:
+    def read_identity(
+        self,
+        identity: AnkiCardIdentity,
+        *,
+        with_note: bool = False,
+    ) -> CardView:
+        """One card named by its full identity, optionally with its note.
+
+        The note is off by default because the caller that reads every stored
+        link asks this same question of every card it holds, and reading the
+        fields of all of them to refresh a state nobody is looking at is what
+        the page-sized reads elsewhere in this file exist to avoid. The
+        inspector, which is looking at exactly one card, asks for it.
+        """
         if not isinstance(identity, AnkiCardIdentity):
             raise CardPickerError(
                 "invalid_anki_card_identity",
@@ -303,7 +347,7 @@ class CardPickerService:
                 "card_missing",
                 "card is missing from the bound collection",
             )
-        return self._view(collection, collection_uuid, card)
+        return self._view(collection, collection_uuid, card, with_note=with_note)
 
     def _bound_collection(self) -> tuple[str, CollectionLike]:
         observation = self._identity_provider()
@@ -465,6 +509,93 @@ class CardPickerService:
                 )
         return tuple(result)
 
+    def _offered_decks(
+        self,
+        collection: CollectionLike,
+        names: dict[int, str],
+    ) -> tuple[DeckView, ...]:
+        """The decks worth offering as a filter.
+
+        Sorted by name, not by id: the name is what is read, and Anki's `::`
+        nesting sorts into a tree correctly as plain text.
+
+        Anki creates a deck called `Default` in every collection and hides it
+        from its own deck list once it holds nothing and nothing lives under
+        it. Offering it here is offering a filter that returns an empty list --
+        a choice that can only disappoint, and one nobody made.
+        """
+        offered = sorted(names.items(), key=lambda pair: pair[1])
+        if not self._default_deck_is_used(collection, names):
+            offered = [pair for pair in offered if pair[1] != DEFAULT_DECK_NAME]
+        return tuple(
+            DeckView(deck_id=deck_id, name=name) for deck_id, name in offered
+        )
+
+    @staticmethod
+    def _default_deck_is_used(
+        collection: CollectionLike,
+        names: dict[int, str],
+    ) -> bool:
+        """Does Anki's own `Default` deck hold anything, or carry anything?
+
+        Kept rather than hidden whenever the answer cannot be had: hiding a
+        deck that has cards in it loses the player a filter they need, while
+        showing an empty one merely wastes a line.
+        """
+        prefix = DEFAULT_DECK_NAME + "::"
+        if any(name.startswith(prefix) for name in names.values()):
+            return True
+        try:
+            return bool(collection.find_cards(f'deck:"{DEFAULT_DECK_NAME}"'))
+        except Exception:
+            return True
+
+    @staticmethod
+    def _sort_field(note: NoteLike) -> str:
+        """What Anki lists this note by.
+
+        Which field that is belongs to the note type, as `sortf`, so a
+        collection that sorts by Reading rather than by Expression lists the
+        same way here as it does in Anki's own browser.
+
+        Free, unlike the full field read beside it: the note was already loaded
+        to name the card's tags, so this is one more value off an object that
+        is already in hand. A build that spells a note differently leaves the
+        row without a label rather than guessing at one -- a row showing its
+        card id is recoverable, one showing the wrong field is not.
+        """
+        try:
+            fields = list(note.fields)
+        except Exception:
+            return ""
+        if not fields:
+            return ""
+        index = 0
+        try:
+            note_type = note.note_type()
+            if isinstance(note_type, dict):
+                nominated = note_type.get("sortf", 0)
+                if isinstance(nominated, (int, str)):
+                    index = int(nominated)
+        except Exception:
+            index = 0
+        if not 0 <= index < len(fields):
+            index = 0
+        # The nominated field first, then the first one that has words in it.
+        # A note whose sort field is empty -- or holds only an image or a
+        # `[sound:]` tag -- would otherwise be labelled by its card id, which
+        # names nothing anybody chose the card for. ADR 0029 settled the same
+        # question the same way for the Text Label.
+        order = [index] + [other for other in range(len(fields)) if other != index]
+        for candidate in order:
+            try:
+                text = _one_line(str(fields[candidate]))
+            except Exception:
+                return ""
+            if text:
+                return text
+        return ""
+
     @staticmethod
     def _note_fields(note: NoteLike) -> tuple[int, tuple[NoteField, ...]]:
         """The note's own fields, in the order its note type declares them.
@@ -530,6 +661,7 @@ class CardPickerService:
             state=self._state(queue, due),
             due=due,
             tags=tags,
+            sort_field=self._sort_field(note),
             note_id=note_id,
             fields=fields,
         )

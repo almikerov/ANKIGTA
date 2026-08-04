@@ -537,8 +537,6 @@ SERVER_VALUES = {
     "maxActivationSpeedKmh": 45,
     "reviewMode": "allow_all",
     "includeInStudy": False,
-    "coronaColour": "#ff8800",
-    "coronaOpacity": 0.25,
 }
 
 
@@ -645,8 +643,6 @@ def test_a_snapshot_carries_every_answerable_setting_and_no_secret(
         "maxActivationSpeedKmh",
         "reviewMode",
         "includeInStudy",
-        "coronaColour",
-        "coronaOpacity",
         "connectionPort",
     } == keys
     assert "connectionToken" not in keys
@@ -744,6 +740,7 @@ def test_a_client_setting_is_written_applied_and_persisted(
         ("indicatorMode", "sphere_only", "settings.error.not_a_choice"),
         ("uiScale", 10, "settings.error.out_of_range"),
         ("closeAfterRating", "yes", "settings.error.not_a_boolean"),
+        ("language", "de", "settings.error.not_a_choice"),
         ("nothingLikeThis", 1, "settings.error.unknown"),
     ],
 )
@@ -772,13 +769,13 @@ def test_the_client_may_not_write_a_setting_the_server_owns(
 
 CLIENT_VALUES = {
     "indicatorMode": "sphere_and_minimap",
-    "drawRadius": True,
     "reviewProtection": False,
     "disablePlayerControls": False,
     "closeAfterRating": False,
     "cardAudioEnabled": False,
     "muteGameWorld": True,
     "uiScale": 1.25,
+    "language": "ru",
     # Normalized coordinates, which is what the schema accepts: a fraction of
     # the screen describes the same corner at every resolution.
     "uiPlacement": {"f7": {"x": 0.25, "y": 0.4}},
@@ -814,6 +811,7 @@ def test_every_setting_the_client_owns_survives_a_restart_and_is_reapplied(
         for key, value in written.items():
             assert plain(client_get(restarted, key)) == value, key
         assert restarted.eval("ANKIGTA.Indicator.mode") == "sphere_and_minimap"
+        assert restarted.eval("ANKIGTA.Locale.language") == "ru"
         assert restarted.eval("function() return reviewModeState() end")()[
             "cardAudioEnabled"
         ] is False

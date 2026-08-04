@@ -7,8 +7,8 @@
 </head>
 <!--
   Every readable string carries a `data-i18n` key and is filled from the table
-  Lua sends. No sentence is written here: the page ships with the key visible,
-  and the first state replaces it.
+  Lua sends. Nothing here is written in one language: the page ships with the
+  key visible, and the first state replaces it.
 -->
 <body>
 <div class="shell">
@@ -52,7 +52,7 @@
   </section>
 
   <section class="section entities" id="section-entities" hidden>
-    <div class="workspace">
+    <div class="workspace" id="workspace">
 
       <div class="column">
         <div class="column-head">
@@ -83,23 +83,12 @@
                    step="0.5" />
           </label>
           <label class="inline check">
-            <input type="checkbox" id="entity-show-corona" />
-            <span data-i18n="f7.showCorona"></span>
+            <input type="checkbox" id="entity-draw-now" />
+            <span data-i18n="f7.showRadius"></span>
           </label>
-          <!-- Both empty by default, and empty is not "no colour" but "the one
-               Settings says": an entity that was never given a look of its own
-               follows the setting when the setting changes. -->
-          <label class="inline">
-            <span data-i18n="f7.coronaColour"></span>
-            <input type="text" id="entity-corona-colour"
-                   data-i18n-placeholder="f7.coronaFollowsSettings" />
-            <span class="swatch" id="entity-corona-swatch"></span>
-          </label>
-          <label class="inline">
-            <span data-i18n="f7.coronaOpacity"></span>
-            <input type="number" id="entity-corona-opacity" min="0" max="1"
-                   step="0.05"
-                   data-i18n-placeholder="f7.coronaFollowsSettings" />
+          <label class="inline check">
+            <input type="checkbox" id="entity-draw-always" />
+            <span data-i18n="f7.drawAlways"></span>
           </label>
         </div>
 
@@ -121,38 +110,53 @@
         <!-- The expression goes to Anki as written, so the field says so
              rather than inviting a phrase. The switch beside the deck is the
              one Anki's own browser has: it changes what a row below is. -->
+        <!-- The deck list is drawn in the page, not as a native <select>.
+             MTA blits CEF's popup surface only while it fits inside the
+             browser rectangle and drops it whole otherwise (CWebView.cpp), so
+             a native dropdown disappears exactly when it grows — which is to
+             say, as soon as a collection has enough decks to need one. -->
         <form class="search" id="search">
           <input type="text" id="search-query"
                  data-i18n-placeholder="cardPicker.queryHint" />
-          <select id="deck"></select>
-          <select id="scope">
-            <option value="cards" data-i18n="cardPicker.scope.cards"></option>
-            <option value="notes" data-i18n="cardPicker.scope.notes"></option>
-          </select>
+          <div class="picklist">
+            <button type="button" id="deck" aria-haspopup="listbox"
+                    aria-expanded="false"></button>
+            <div class="picklist-menu" id="deck-menu" role="listbox" hidden></div>
+          </div>
+          <button type="button" id="scope" class="toggle"></button>
           <button type="submit" class="primary" data-i18n="cardPicker.search"></button>
         </form>
         <div class="rows" id="cards" role="list"></div>
-        <div class="inspector" id="inspector" hidden>
-          <div class="inspector-head">
-            <h3 data-i18n="inspector.title"></h3>
-            <span class="hint" id="inspector-state"></span>
-          </div>
-          <div class="inspector-fields" id="inspector-fields"></div>
-          <label class="inspector-tags">
-            <span data-i18n="inspector.tags"></span>
-            <input type="text" id="inspector-tags"
-                   data-i18n-placeholder="inspector.tagsHint" />
-          </label>
-          <div class="inspector-actions">
-            <span class="field-error" id="inspector-error" role="alert"></span>
-            <button type="button" id="save-note" class="primary"
-                    data-i18n="inspector.save"></button>
-          </div>
-        </div>
 
+        <!-- What the list does with the chosen card: link it, replace a link
+             with it, or open the editor beside the list. Saving an edit
+             belongs to the editor and lives there. -->
         <div class="column-actions">
           <button type="button" id="link" class="primary" data-i18n="cardPicker.link"></button>
           <button type="button" id="replace" data-i18n="f7.replaceCard"></button>
+          <button type="button" id="toggle-inspector" aria-expanded="false"
+                  data-i18n="inspector.open"></button>
+        </div>
+      </div>
+
+      <!-- The editor is its own column rather than a block inside the card
+           list, and it is drawn only while it is open: a form permanently
+           taking a third of the panel is a form taking it from the list. -->
+      <div class="column inspector" id="inspector" hidden>
+        <div class="inspector-head">
+          <h3 data-i18n="inspector.title"></h3>
+          <span class="hint" id="inspector-state"></span>
+        </div>
+        <div class="inspector-fields" id="inspector-fields"></div>
+        <label class="inspector-tags">
+          <span data-i18n="inspector.tags"></span>
+          <input type="text" id="inspector-tags"
+                 data-i18n-placeholder="inspector.tagsHint" />
+        </label>
+        <span class="field-error" id="inspector-error" role="alert"></span>
+        <div class="column-actions">
+          <button type="button" id="save-note" class="primary"
+                  data-i18n="inspector.save"></button>
         </div>
       </div>
 

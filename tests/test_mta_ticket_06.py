@@ -321,14 +321,21 @@ def test_pending_guidance_is_honest_after_failed_read_back() -> None:
     assert "guidanceKey = entry.link.guidanceKey" in client
 
     # The guidance is a key now, so honesty is a property of what it resolves
-    # to: it has to name the stock Save and the recheck action, not offer a
-    # vague "try again".
+    # to. Both languages have to name the stock Save and the recheck action,
+    # not a vague "try again".
     sandbox = MtaSandbox()
     try:
         sandbox.load("shared/locale.lua")
-        guidance = sandbox.eval('ANKIGTA.Locale.text("guidance.retrySave")')
-        for phrase in ("stock Save", "Check again"):
-            assert phrase in guidance, guidance
+        for language, expected in (
+            ("en", ("stock Save", "Check again")),
+            ("ru", ("stock Save", "Проверить ещё раз")),
+        ):
+            sandbox.eval("function(l) ANKIGTA.Locale.setLanguage(l) end")(language)
+            guidance = sandbox.eval(
+                'ANKIGTA.Locale.text("guidance.retrySave")'
+            )
+            for phrase in expected:
+                assert phrase in guidance, (language, guidance)
     finally:
         sandbox.close()
 
