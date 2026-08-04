@@ -450,15 +450,39 @@ def test_a_corona_is_not_a_map_entity_the_panel_must_re_read(
     next snapshot, which moves a corona."""
     open_panel(world)
     snapshot(world, [entry(showCorona=True)])
-    refresh(world)
+    # Counted before the corona exists: MTA raises `onClientElementCreate` from
+    # inside `createMarker`, so the panel is asked whether the element is ours
+    # in the moment between the marker existing and this module having anything
+    # to write down. Counting afterwards would pass whatever happened.
     before = len(world.recorder.timers)
 
-    owned = world.eval("function(m) return ANKIGTA.ZoneMarks.owns(m) end")(
+    refresh(world)
+
+    assert len(world.markers) == 1
+    assert world.eval("function(m) return ANKIGTA.ZoneMarks.owns(m) end")(
         world.markers[0]
+    ) is True
+    assert len(world.recorder.timers) == before, (
+        "creating a corona scheduled a re-read of the Map Entity list"
     )
 
-    assert owned is True
-    # Creating it fired `onClientElementCreate`, and no refresh was scheduled.
+
+def test_taking_a_corona_away_is_not_a_map_entity_leaving_either(
+    world: MtaSandbox,
+) -> None:
+    """The same window, on the way out: the panel is asked from inside
+    `destroyElement`, so a marker disowned a statement too early reads to it as
+    a Map Entity vanishing from the world."""
+    open_panel(world)
+    snapshot(world, [entry(showCorona=True)])
+    refresh(world)
+    marker = world.markers[0]
+    before = len(world.recorder.timers)
+
+    snapshot(world, [entry(showCorona=False)])
+    refresh(world)
+
+    assert marker["__destroyed"] is True
     assert len(world.recorder.timers) == before
 
 

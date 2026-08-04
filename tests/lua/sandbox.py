@@ -750,8 +750,15 @@ class MtaSandbox:
                 self._elements.discard(id(value))
                 return True
             if lua_type(value) == "table" and value["__element"] is True:
-                value["__destroyed"] = True
                 index = value["__widget"]
+                if index is None:
+                    # MTA raises this *before* the element goes, so `source` is
+                    # still a valid element inside the handler -- which is the
+                    # window a resource destroying its own elements has to
+                    # recognize them in. A CEGUI control is not a world element
+                    # and raises no such event.
+                    self.trigger("onClientElementDestroy", value)
+                value["__destroyed"] = True
                 if index is not None:
                     self._destroy_widget(int(index))
                 return True

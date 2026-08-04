@@ -156,12 +156,26 @@ function ZoneMarks.showsCorona(mapId, entityId)
     return ZoneMarks.coronas[markKey(mapId, entityId)] ~= nil
 end
 
+--- True while this module is in the middle of creating a marker.
+--
+-- MTA raises `onClientElementCreate` from inside `createMarker`, so the panel
+-- asks whether the new element is ours *before* `createMarker` has returned the
+-- element there is to write down. Recording ownership afterwards is therefore
+-- always too late, and the flag is what answers during that one window. It is
+-- honest to answer yes to anything then: nothing else in this client creates an
+-- element between those two statements.
+local creating = false
+
 --- Is this element one of ours?
 --
 -- A corona is a marker, and a marker is one of the types a card can hang on,
 -- so without this the panel would treat every corona appearing as a Map Entity
--- appearing and re-read the whole list because of its own drawing.
+-- appearing and re-read the whole list because of its own drawing -- which
+-- produces the next snapshot, which is what decides where the coronas go.
 function ZoneMarks.owns(element)
+    if creating then
+        return true
+    end
     return element ~= nil and ZoneMarks.owned[element] == true
 end
 
@@ -284,11 +298,17 @@ local function destroyCorona(key)
     if not existing then
         return
     end
+    -- Out of the plan first, so the `onClientElementDestroy` this raises finds
+    -- nothing left to destroy and cannot recurse.
     ZoneMarks.coronas[key] = nil
-    ZoneMarks.owned[existing.marker] = nil
     if isElement(existing.marker) then
         destroyElement(existing.marker)
     end
+    -- Disowned last, for the same reason `creating` exists: the panel asks
+    -- whether the vanishing element was ours from inside `destroyElement`, and
+    -- a marker forgotten a statement earlier reads to it as a Map Entity
+    -- leaving the world.
+    ZoneMarks.owned[existing.marker] = nil
 end
 
 --- Bring the coronas in the world into line with the plan.
@@ -331,9 +351,11 @@ local function reconcileCoronas(planned)
                     channels(corona.colour, corona.opacity)
                 -- Sized by the zone it stands for, so a corona is a thing the
                 -- player can judge the radius by rather than a fixed dot.
+                creating = true
                 local marker = createMarker(
                     x, y, z, "corona", corona.radius, red, green, blue, alpha
                 )
+                creating = false
                 if isElement(marker) then
                     setElementInterior(marker, getElementInterior(element) or 0)
                     setElementDimension(marker, getElementDimension(element) or 0)
