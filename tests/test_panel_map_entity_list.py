@@ -617,6 +617,51 @@ def test_adopting_an_editor_row_uses_the_editable_copy_not_the_play_test_copy(
     assert row[0] == 99
 
 
+def test_naming_something_the_list_only_offered_takes_it_in(
+    server: MtaSandbox,
+) -> None:
+    """A Map Entity does not need a card in order to exist.
+
+    Adoption used to happen only on the way to a link, so naming an object --
+    or saying how close you must stand to it -- could not be done until a card
+    had been chosen. The glossary has always had it the other way round: a
+    Spatial Link is a link *between* a Map Entity and one card, so the entity
+    is what the link is made of.
+    """
+    # A running map, plus one thing standing in it that carries no ANKIGTA
+    # identity at all -- which is what an offer is.
+    known = install_resource_world(
+        server, current_resource="current-map", duplicate_entity_id="already-here"
+    )
+    offered = server.add_world_element(entity_id="lamp-3", map_id="lamp-3")
+    offered["__parent"] = known["__parent"]
+    player = server.add_study_player()
+    player["x"], player["y"], player["z"] = 0, 0, 0
+
+    server.trigger(
+        "ankigta:updateEntityMetadata",
+        server.lua.globals().resourceRoot,
+        "current-map",
+        "lamp-3",
+        server.lua.table_from({"name": "The lamp", "radius": 7.5}),
+        client=player,
+    )
+
+    row = server.connection.raw.execute(
+        "SELECT name, radius FROM map_entity_metadata WHERE entity_id = ?",
+        ("lamp-3",),
+    ).fetchone()
+    assert row is not None, "the offer was not taken into the store"
+    assert row[0] == "The lamp"
+    assert row[1] == 7.5
+
+    # And with no Spatial Link, because none was asked for.
+    links = server.connection.raw.execute(
+        "SELECT COUNT(*) FROM spatial_links WHERE entity_id = ?", ("lamp-3",)
+    ).fetchone()
+    assert links[0] == 0
+
+
 def test_a_panel_row_describes_position_and_location_not_identity(
     panel_client: MtaSandbox,
 ) -> None:

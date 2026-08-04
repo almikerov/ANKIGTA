@@ -1720,6 +1720,41 @@ local function elementByAdoptionName(name, player)
     return nil
 end
 
+--- Take something standing in the world into the store, with no card involved.
+--
+-- Adoption used to happen only on the way to a link, which made a Map Entity a
+-- thing that could not exist without an Anki Card. The glossary has always said
+-- the opposite: a Spatial Link is a link *between* a Map Entity and one card,
+-- so the entity is what the link is made of rather than something the link
+-- brings into being. Naming an object, or saying how close you have to stand
+-- to it, is not a statement about any card -- and until now neither could be
+-- made until a card had been chosen.
+local function adoptOffer(player, entityElement)
+    local target, reason = validatePickEntity(player, entityElement, "pick")
+    if not target then
+        return false, reason
+    end
+    if not target.adoptable then
+        return false, "entity_already_adopted"
+    end
+    local record, recordError = adoptionRecord(
+        entityElement,
+        currentMapContext(player)
+    )
+    if not record then
+        return false, recordError
+    end
+    local row, adoptError = ANKIGTA.Store.adoptMapEntity(record)
+    if not row then
+        return false, adoptError
+    end
+    -- Remembered on the element so the next pick resolves without the walk,
+    -- and so a second Link on the same object is recognised as a replacement
+    -- rather than adopting it twice.
+    setElementData(entityElement, "ankigtaEntityId", record.entityId)
+    return record
+end
+
 addEvent(ADOPT_ENTITY_REQUEST_EVENT, true)
 addEventHandler(ADOPT_ENTITY_REQUEST_EVENT, resourceRoot, function(
     entityElement,
@@ -1736,28 +1771,10 @@ addEventHandler(ADOPT_ENTITY_REQUEST_EVENT, resourceRoot, function(
             return failAdoption(client, "entity_no_longer_in_the_world")
         end
     end
-    local target, reason = validatePickEntity(client, entityElement, "pick")
-    if not target then
-        return failAdoption(client, reason)
-    end
-    if not target.adoptable then
-        return failAdoption(client, "entity_already_adopted")
-    end
-    local record, recordError = adoptionRecord(
-        entityElement,
-        currentMapContext(client)
-    )
+    local record, adoptError = adoptOffer(client, entityElement)
     if not record then
-        return failAdoption(client, recordError)
-    end
-    local row, adoptError = ANKIGTA.Store.adoptMapEntity(record)
-    if not row then
         return failAdoption(client, adoptError)
     end
-    -- Remembered on the element so the next pick resolves without the walk,
-    -- and so a second Link on the same object is recognised as a replacement
-    -- rather than adopting it twice.
-    setElementData(entityElement, "ankigtaEntityId", record.entityId)
 
     local linked, linkError = linkCardToEntity(
         client,
@@ -1800,6 +1817,24 @@ addEventHandler(ENTITY_METADATA_REQUEST_EVENT, resourceRoot, function(
         return
     end
     local row, readError = ANKIGTA.Store.getMapEntity(mapId, entityId)
+    if not row then
+        -- Nothing stored under that identity means this is still an offer, and
+        -- editing one is exactly what takes it in. Adoption renames it to its
+        -- persistent identity, so everything after this uses that one.
+        local element = elementByAdoptionName(entityId, client)
+        if element then
+            local record, adoptError = adoptOffer(client, element)
+            if not record then
+                triggerClientEvent(
+                    client, PENDING_NOTICE_EVENT, resourceRoot,
+                    "notice.entityUpdateFailed", adoptError
+                )
+                return
+            end
+            mapId, entityId = record.mapId, record.entityId
+            row = ANKIGTA.Store.getMapEntity(mapId, entityId)
+        end
+    end
     if not row then
         triggerClientEvent(
             client, PENDING_NOTICE_EVENT, resourceRoot,

@@ -1236,11 +1236,12 @@ end
 --- How close the player must stand to *this* entity, and whether it is drawn.
 --
 -- A property of the thing rather than of the player, which is why it lives on
--- the row and not in Settings. Only a row the store holds has one: an offer
--- has nothing to write it on yet.
+-- the row and not in Settings. Offered for an offer too: the server takes the
+-- entity in when it is first written to, so naming a thing or saying how close
+-- you must stand to it no longer waits for a card to be chosen.
 function actions.setEntityRadius(payload)
     local entry = selectedEntry()
-    if not entry or entry.adoptable == true then
+    if not entry then
         return
     end
     triggerServerEvent(
@@ -1325,7 +1326,7 @@ end
 
 function actions.setEntityName(payload)
     local entry = selectedEntry()
-    if not entry or entry.adoptable == true or type(payload.name) ~= "string" then
+    if not entry or type(payload.name) ~= "string" then
         return
     end
     triggerServerEvent(

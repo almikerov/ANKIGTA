@@ -601,10 +601,12 @@
     document.getElementById("copy-decision").hidden =
       !entity || !entity.copyCollision;
 
-    /* Only a row the store holds has an Activation Zone: an offer has nothing
-     * to write one on yet. */
+    /* Offered for every selected row, including one the list is only offering:
+     * writing to it is what takes it into the store. A form that appears only
+     * after a card has been linked makes naming a thing a statement about a
+     * card. */
     var settings = document.getElementById("entity-settings");
-    settings.hidden = !entity || entity.adoptable === true;
+    settings.hidden = !entity;
     if (!settings.hidden) {
       document.getElementById("entity-name").value = entity.name || "";
       document.getElementById("entity-radius").value = entity.radius;
