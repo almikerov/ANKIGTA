@@ -176,17 +176,37 @@ local function takeCursor()
     showCursor(true)
 end
 
+--- Does this still carry the player, so that pointing the camera back at it
+--- points the camera back at them?
+--
+-- `getCameraTarget()` answers with the *vehicle* while the player is riding
+-- one, because that is what the camera follows. Handing that element back
+-- later is right only while they are still in it: get out in between, and the
+-- camera stays on an empty car, watching it from wherever it was parked. The
+-- player is then left with no way to see themselves at all -- which is the
+-- camera not coming back rather than coming back wrong.
+local function stillCarriesPlayer(element)
+    return element == localPlayer
+        or element == getPedOccupiedVehicle(localPlayer)
+end
+
 local function restoreFocusedCamera()
     if not focusedCamera then
         return
     end
     setCameraInterior(focusedCamera.interior or 0)
-    if isElement(focusedCamera.target) then
-        setCameraTarget(focusedCamera.target)
-    elseif type(focusedCamera.matrix) == "table"
+    local target = focusedCamera.target
+    if isElement(target) and stillCarriesPlayer(target) then
+        setCameraTarget(target)
+    elseif not target
+        and type(focusedCamera.matrix) == "table"
         and #focusedCamera.matrix >= 6
     then
+        -- No target when it was taken means somebody had the camera in a fixed
+        -- position; that is theirs to have back.
         setCameraMatrix(unpack(focusedCamera.matrix))
+    else
+        setCameraTarget(localPlayer)
     end
     focusedCamera = nil
 end

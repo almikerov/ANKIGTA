@@ -227,7 +227,7 @@ label {
 /* The editor takes a column of its own only while it is slid out, so the two
    lists have the whole panel the rest of the time. */
 .workspace.editing {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.9fr);
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 1.2fr);
 }
 .column {
   min-width: 0;
@@ -532,6 +532,14 @@ label {
 .inspector-head .hint { color: var(--muted); font-size: 11px; }
 .inspector-fields { display: flex; flex-direction: column; gap: var(--space-2); }
 .inspector-field { gap: var(--space-1); }
+/* The fields grow into the column rather than sitting at the two rows they
+   had when this was a strip inside the card list. */
+.inspector-fields { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.inspector-field { flex: 0 0 auto; }
+.inspector-field textarea {
+  min-height: 5.5em;
+  resize: vertical;
+}
 .inspector-field textarea {
   font: inherit;
   width: 100%;

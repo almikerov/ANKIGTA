@@ -760,6 +760,58 @@ def test_focusing_a_row_points_the_camera_without_moving_the_player(
     assert panel_client.camera_interior == 7
 
 
+def test_the_camera_comes_back_to_the_player_who_left_the_car(
+    panel_client: MtaSandbox,
+) -> None:
+    """`getCameraTarget()` answers with the vehicle while the player rides one.
+
+    Handing that element back afterwards is right only while they are still in
+    it. Get out in between and the camera stays on an empty car, watching it
+    from wherever it is parked -- the player left with no way to see themselves
+    at all.
+    """
+    push_client_snapshot(panel_client, entities=[panel_entry(available=False)])
+    car = panel_client.add_world_element(kind="vehicle")
+    panel_client.occupied_vehicle = car
+    panel_client.camera_target = car
+
+    panel_action(
+        panel_client,
+        "focusEntity",
+        {"mapId": "current-map-id", "entityId": "gate-17"},
+    )
+    # They get out while the camera is away.
+    panel_client.occupied_vehicle = False
+    panel_action(panel_client, "close")
+
+    same = panel_client.eval("function(c) return getCameraTarget() == c end")
+    assert same(car) is False
+    assert panel_client.eval(
+        "function() return getCameraTarget() == localPlayer end"
+    )() is True
+
+
+def test_the_camera_goes_back_to_the_car_they_are_still_sitting_in(
+    panel_client: MtaSandbox,
+) -> None:
+    """Coming back wrong is not better than coming back."""
+    push_client_snapshot(panel_client, entities=[panel_entry(available=False)])
+    car = panel_client.add_world_element(kind="vehicle")
+    panel_client.occupied_vehicle = car
+    panel_client.camera_target = car
+
+    panel_action(
+        panel_client,
+        "focusEntity",
+        {"mapId": "current-map-id", "entityId": "gate-17"},
+    )
+    panel_action(panel_client, "close")
+
+    assert panel_client.eval(
+        "function(c) return getCameraTarget() == c end"
+    )(car) is True
+
+
 def test_focusing_a_distant_row_uses_its_authored_position_without_streaming(
     panel_client: MtaSandbox,
 ) -> None:
