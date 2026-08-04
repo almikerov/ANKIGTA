@@ -60,6 +60,15 @@ SEARCH_REJECTED_ERROR = "SearchError"
 MAX_SEARCH_REJECTION_LENGTH = 240
 
 
+def _is_row_id(value: object) -> bool:
+    """Is this an Anki row id, rather than something that merely looks like one?
+
+    `bool` is a subclass of `int`, so `True` passes an `isinstance(x, int)`
+    check and then reads as card 1.
+    """
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
 class CardPickerError(ValueError):
     """A safe, user-visible Card Picker failure."""
 
@@ -340,7 +349,12 @@ class CardPickerService:
         read -- or, worse, as an empty collection -- sends them looking for
         cards that were never searched for.
         """
-        if type(error).__name__ != SEARCH_REJECTED_ERROR:
+        # The whole ancestry, not just the class: a build that raises a
+        # subclass of `SearchError` is still Anki refusing the expression.
+        if not any(
+            ancestor.__name__ == SEARCH_REJECTED_ERROR
+            for ancestor in type(error).__mro__
+        ):
             return CardPickerError(
                 "card_search_failed",
                 "Anki rejected the card search",
@@ -365,10 +379,18 @@ class CardPickerService:
 
     @staticmethod
     def _build_query(query: str, deck_filter: str | None) -> str:
+        """The deck filter and the written expression, as one Anki search.
+
+        The expression is bracketed. Anki binds an implicit `and` tighter than
+        `or`, so `deck:"Spanish" tag:verb or tag:noun` reads as
+        `(deck:Spanish and tag:verb) or tag:noun` -- the deck filter applies to
+        the left half only, and the search returns cards from every deck while
+        the picker still says which deck it was filtered to.
+        """
         if deck_filter is None:
             return query
         escaped = deck_filter.replace("\\", "\\\\").replace('"', '\\"')
-        return f'deck:"{escaped}"' + (f" {query}" if query else "")
+        return f'deck:"{escaped}"' + (f" ({query})" if query else "")
 
     @staticmethod
     def _matched_ids(raw_ids: Sequence[int]) -> list[int]:
@@ -381,15 +403,7 @@ class CardPickerService:
         page — the whole of that threshold's budget spent on rows nobody asked
         to see.
         """
-        return sorted(
-            {
-                matched_id
-                for matched_id in raw_ids
-                if isinstance(matched_id, int)
-                and not isinstance(matched_id, bool)
-                and matched_id > 0
-            }
-        )
+        return sorted({m for m in raw_ids if _is_row_id(m)})
 
     @staticmethod
     def _first_card_of_each(
@@ -417,11 +431,7 @@ class CardPickerService:
                     "Anki rejected a note's card list",
                 ) from error
             for card_id in card_ids:
-                if (
-                    isinstance(card_id, int)
-                    and not isinstance(card_id, bool)
-                    and card_id > 0
-                ):
+                if _is_row_id(card_id):
                     first_cards.append(card_id)
                     break
         return first_cards

@@ -27,7 +27,7 @@ import pytest
 from tests.lua import MtaSandbox
 from tests.lua import shipped_schemas
 from tests.lua.shipped_schemas import (
-    CURRENT_SCHEMA_VERSION,
+    MIGRATED_SCHEMA_FLOOR,
     SHIPPED_VERSIONS,
     rows,
 )
@@ -76,7 +76,7 @@ def test_every_shipped_version_migrates_to_the_current_schema(
 ) -> None:
     sandbox = migrated(workspace, version)
     try:
-        assert status(sandbox)["schemaVersion"] == CURRENT_SCHEMA_VERSION
+        assert status(sandbox)["schemaVersion"] >= MIGRATED_SCHEMA_FLOOR
     finally:
         sandbox.close()
 
@@ -290,7 +290,7 @@ def test_migrating_is_idempotent_across_a_restart(
         before = database.read_bytes()
 
         assert opened(sandbox) is True
-        assert status(sandbox)["schemaVersion"] == CURRENT_SCHEMA_VERSION
+        assert status(sandbox)["schemaVersion"] >= MIGRATED_SCHEMA_FLOOR
         call(sandbox, "function() return ANKIGTA.Store.close() end")
 
         assert database.read_bytes() == before

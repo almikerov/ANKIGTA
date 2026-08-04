@@ -380,6 +380,39 @@ def test_the_per_map_study_setting_is_a_row_per_map(client: MtaSandbox) -> None:
     assert update.args[2] == "m1"
 
 
+def test_a_refused_map_marks_its_own_row_and_no_other(client: MtaSandbox) -> None:
+    """The reason belongs to the map that earned it.
+
+    Rejections are held per setting, and the per-map rows all carry the same
+    setting name -- so one refused map put a red border and an error line on
+    every map in the list.
+    """
+    open_panel(client)
+    settings_snapshot(
+        client,
+        [
+            {"mapId": "m1", "mapName": "maps/study.map", "includeInStudy": True},
+            {"mapId": "m2", "mapName": "maps/second.map", "includeInStudy": True},
+        ],
+    )
+
+    call(
+        client,
+        """
+        function()
+            triggerEvent(
+                "ankigta:settingRejected", resourceRoot,
+                "includeInStudy", "settings.error.not_saved", "m2"
+            )
+        end
+        """,
+    )
+
+    _heading, first, second = rows_for(client, "includeInStudy")
+    assert first["error"] is False
+    assert second["error"] == "settings.error.not_saved"
+
+
 def test_with_no_map_loaded_the_study_setting_says_so(client: MtaSandbox) -> None:
     """Rather than an empty space where a switch used to be."""
     open_panel(client)

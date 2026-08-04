@@ -32,7 +32,6 @@ renames `map_entities` can cascade a metadata row into nothing.
 
 from __future__ import annotations
 
-import re
 import sqlite3
 from pathlib import Path
 
@@ -43,28 +42,15 @@ MAP_SHA = "A" * 64
 #: Every shape a released ANKIGTA could have left on disk.
 SHIPPED_VERSIONS = ("v1", "v2", "v3legacy", "v3", "v4", "v5", "v6")
 
-_STORE_LUA = Path(__file__).resolve().parents[2] / "mta" / "ankigta" / "server" / "store.lua"
-
-
-def _current_schema_version() -> int:
-    """The version the resource itself says it writes.
-
-    Read out of `store.lua` rather than repeated here. Four test files assert
-    against this number, and a copy in each is four places to forget when a
-    migration lands -- which is exactly how a green suite can sit on top of a
-    database nobody migrated.
-    """
-    match = re.search(
-        r"^local CURRENT_SCHEMA_VERSION = (\d+)$",
-        _STORE_LUA.read_text(encoding="utf-8"),
-        re.MULTILINE,
-    )
-    if match is None:
-        raise AssertionError("store.lua no longer declares CURRENT_SCHEMA_VERSION")
-    return int(match.group(1))
-
-
-CURRENT_SCHEMA_VERSION = _current_schema_version()
+#: The lowest version a database may be on once the store has opened it.
+#:
+#: A floor, never the current value (`docs/agents/lua-testing.md`). Reading the
+#: number out of `store.lua` would put both sides of every assertion on the
+#: same line of source, so a version bumped with no migration behind it would
+#: still pass. `Store.open()` returning true is the strong claim -- it refuses
+#: any database not at exactly the current version -- and this guards the
+#: direction: raise it in the ticket whose migration raises the schema.
+MIGRATED_SCHEMA_FLOOR = 6
 
 
 _MAPS = """

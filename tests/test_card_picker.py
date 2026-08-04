@@ -111,7 +111,7 @@ def test_search_uses_only_bound_collection_and_preserves_initial_deck_filter() -
 
     result = service.search(query="front:hello", deck_filter="Languages", page=0, page_size=2)
 
-    assert collection.queries == ['deck:"Languages" front:hello']
+    assert collection.queries == ['deck:"Languages" (front:hello)']
     assert result.total == 3
     assert [card.identity.card_id for card in result.cards] == [2, 4]
     assert result.cards[0].identity.collection_uuid == BOUND_UUID
@@ -148,6 +148,32 @@ def test_a_written_anki_expression_reaches_anki_unchanged() -> None:
     service.search(query="deck:Spanish tag:verb -is:suspended")
 
     assert collection.queries == ["deck:Spanish tag:verb -is:suspended"]
+
+
+def test_the_deck_filter_survives_an_or_in_the_expression() -> None:
+    """Anki binds an implicit `and` tighter than `or`.
+
+    Unbracketed, `deck:"Spanish" tag:verb or tag:noun` reads as
+    `(deck:Spanish and tag:verb) or tag:noun`: the deck filter covers the left
+    half only, so the search returns cards from every deck while the picker
+    still shows Spanish as the deck it was filtered to.
+    """
+    collection = FakeCollection()
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+
+    service.search(query="tag:verb or tag:noun", deck_filter="Languages")
+
+    assert collection.queries == ['deck:"Languages" (tag:verb or tag:noun)']
+
+
+def test_an_empty_expression_adds_no_empty_group() -> None:
+    """`deck:"Languages" ()` is a search Anki refuses."""
+    collection = FakeCollection()
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+
+    service.search(deck_filter="Languages")
+
+    assert collection.queries == ['deck:"Languages"']
 
 
 class SearchError(Exception):

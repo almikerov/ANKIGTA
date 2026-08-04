@@ -195,5 +195,55 @@ def test_a_search_of_every_deck_reaches_the_panel_with_its_scope(
     assert server.to_python(snapshots[-1].args[0])["scope"] == "notes"
 
 
+def test_a_search_that_answers_retires_the_complaint_about_searching(
+    server: MtaSandbox,
+) -> None:
+    """Placed here because the two halves belong together.
+
+    Nothing else in the panel dismisses a notice, so a refusal would sit over
+    the correct rows the player got by fixing exactly what it complained about.
+    """
+    client = MtaSandbox()
+    try:
+        for script in ("shared/settings.lua", "shared/locale.lua",
+                       "shared/entity_types.lua", "client/layout.lua",
+                       "client/settings_store.lua", "client/panel.lua"):
+            client.load(script)
+        client.trigger("onClientResourceStart")
+        client.eval(
+            'function() triggerEvent("ankigta:setAuthorized", resourceRoot, true) end'
+        )()
+        for handler in client.bound_keys.get(("F7", "down"), []):
+            handler()
+        client.eval(
+            """
+            function()
+                triggerEvent("ankigta:panelAction", resourceRoot, "ready", "{}")
+                triggerEvent(
+                    "ankigta:pendingMapSaveNotice", resourceRoot,
+                    "notice.cardPickerRejected", "Invalid search"
+                )
+            end
+            """
+        )()
+        assert client.pushed_panel_state()["notice"]["key"] == (
+            "notice.cardPickerRejected"
+        )
+
+        client.eval(
+            """
+            function()
+                triggerEvent("ankigta:cardPickerSnapshot", resourceRoot, {
+                    enabled = true, cards = {},
+                })
+            end
+            """
+        )()
+
+        assert client.pushed_panel_state()["notice"] is False
+    finally:
+        client.close()
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))

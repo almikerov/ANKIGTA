@@ -1278,7 +1278,10 @@ addEventHandler(SETTINGS_UPDATE_EVENT, resourceRoot, function(key, value, mapId)
             SETTINGS_REJECTED_EVENT,
             resourceRoot,
             key,
-            reason
+            reason,
+            -- Which map the refusal was about, where it was about one: the
+            -- panel puts the reason on that map's row and not on every map's.
+            mapId
         )
         return
     end
