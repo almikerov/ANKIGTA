@@ -1831,12 +1831,16 @@ addEventHandler(ENTITY_METADATA_REQUEST_EVENT, resourceRoot, function(
         if sent == nil or sent == false then
             return sent
         end
-        local normalized = ANKIGTA.Settings.normalize(key, sent)
-        local valid, reason = ANKIGTA.Settings.validate(key, normalized)
+        -- Validated before it is normalized, which is the order every other
+        -- caller uses. Normalizing first hands whatever arrived over the wire
+        -- straight to the rule's own conversion: `coronaColour` lowercases,
+        -- and lowercasing a boolean is an error rather than a rejection, so a
+        -- client sending `true` took the handler down instead of being told no.
+        local valid, reason = ANKIGTA.Settings.validate(key, sent)
         if not valid then
             return nil, reason
         end
-        return normalized
+        return ANKIGTA.Settings.normalize(key, sent)
     end
 
     local sentRadius, radiusRefused = proposed(metadata.radius, "activationRadius")

@@ -421,6 +421,45 @@ def test_an_unchanged_corona_is_left_alone(world: MtaSandbox) -> None:
     assert len(world.markers) == 1
 
 
+def test_two_maps_that_share_an_entity_id_get_their_own_element(
+    world: MtaSandbox,
+) -> None:
+    """The stock Map Editor names what it places `object (1)` upwards, counting
+    from one per map, so two loaded maps collide on their first object. Keyed on
+    the id alone, one map's corona hangs on the other map's element -- and the
+    map the player is standing in gets whichever of the two was walked last."""
+    world.add_world_element(
+        "object",
+        x=500.0,
+        y=600.0,
+        z=700.0,
+        ankigtaEntityId="object (1)",
+        ankigtaMapId="m2",
+    )
+    world.add_world_element(
+        "object",
+        x=10.0,
+        y=20.0,
+        z=30.0,
+        ankigtaEntityId="object (1)",
+        ankigtaMapId="m1",
+    )
+    here = json.loads(json.dumps(ENTRY))
+    here["mapEntity"]["entityId"] = "object (1)"
+    here["metadata"]["showCorona"] = True
+    there = json.loads(json.dumps(here))
+    there["mapEntity"]["mapId"] = "m2"
+    snapshot(world, [here, there])
+
+    refresh(world)
+
+    assert len(world.attachments) == 2
+    attached_to = sorted(
+        target["ankigtaMapId"] for _marker, target in world.attachments
+    )
+    assert attached_to == ["m1", "m2"]
+
+
 def test_a_corona_destroyed_by_something_else_is_put_back(
     world: MtaSandbox,
 ) -> None:
@@ -610,6 +649,12 @@ def test_the_marks_have_something_to_draw_before_f7_is_ever_opened(
     assert len(asked) == 1
     assert world.eval("function() return ANKIGTA.Panel.isOpen() end")() is False
 
+    # And the corona really arrives, not merely the request that would carry it.
+    snapshot(world, [entry(showCorona=True)])
+    refresh(world)
+
+    assert len(world.markers) == 1
+
 
 # --- what the entity remembers ----------------------------------------------
 
@@ -729,6 +774,93 @@ def test_undo_puts_back_the_look_the_entity_had(store: MtaSandbox) -> None:
         "showCorona": False,
         "coronaColour": "#ff8800",
         "coronaOpacity": 0.25,
+    }
+
+
+# --- what the server accepts -------------------------------------------------
+
+
+@pytest.fixture
+def server(tmp_path: Any) -> Iterator[MtaSandbox]:
+    """The whole server side, so a metadata update travels the real path."""
+    sandbox = MtaSandbox(database_path=str(tmp_path / "ankigta.sqlite"))
+    for script in (
+        "shared/settings.lua",
+        "shared/locale.lua",
+        "shared/entity_types.lua",
+        "server/connection_config.lua",
+        "server/companion.lua",
+        "server/backup.lua",
+        "server/store.lua",
+        "server/settings_store.lua",
+        "server/map_identity.lua",
+        "server/teleport.lua",
+        "server/statistics.lua",
+        "server/main.lua",
+    ):
+        sandbox.load(script)
+    sandbox.eval("function() ANKIGTA.Store.seedTracerFixtures = true end")()
+    sandbox.trigger("onResourceStart")
+    try:
+        yield sandbox
+    finally:
+        sandbox.close()
+
+
+def update_metadata(sandbox: MtaSandbox, player: Any, **fields: Any) -> None:
+    map_id, entity_id = a_map_entity(sandbox)
+    sandbox.trigger(
+        "ankigta:updateEntityMetadata",
+        sandbox.eval("resourceRoot"),
+        map_id,
+        entity_id,
+        to_lua(sandbox, fields),
+        client=player,
+    )
+
+
+def test_a_colour_that_is_not_a_string_is_refused_not_a_crash(
+    server: MtaSandbox,
+) -> None:
+    """Normalizing before validating handed whatever arrived over the wire to
+    the rule's own conversion, and lowercasing a boolean is an error rather
+    than a rejection -- so this took the handler down instead of saying no."""
+    player = server.add_study_player()
+    map_id, entity_id = a_map_entity(server)
+
+    update_metadata(server, player, coronaColour=True)
+
+    notices = [
+        event
+        for event in server.recorder.client_events
+        if event.name == "ankigta:pendingMapSaveNotice"
+    ]
+    assert notices, "the client was told nothing at all"
+    assert notices[-1].args[0] == "notice.entityUpdateFailed"
+    assert read_metadata(server, map_id, entity_id)["coronaColour"] is False
+
+
+def test_setting_one_field_leaves_the_others_alone(server: MtaSandbox) -> None:
+    """The page sends only what the player touched, and the store replaces the
+    whole row -- so the merge is the only thing standing between changing a
+    colour and wiping the name beside it."""
+    player = server.add_study_player()
+    map_id, entity_id = a_map_entity(server)
+    update_metadata(
+        server, player, name="North gate", radius=7.5, coronaColour="#ff8800"
+    )
+
+    update_metadata(server, player, showCorona=True)
+
+    row = server.eval("function(m, e) return ANKIGTA.Store.getMapEntity(m, e) end")(
+        map_id, entity_id
+    )
+    assert row["entity_name"] == "North gate"
+    assert row["radius"] == 7.5
+    assert read_metadata(server, map_id, entity_id) == {
+        "showCorona": True,
+        "coronaColour": "#ff8800",
+        "coronaOpacity": False,
     }
 
 

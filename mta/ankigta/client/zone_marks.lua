@@ -229,12 +229,17 @@ local function look()
             }
         end
     end
+    -- Keyed by the pair the server knows a Map Entity by, which is the key the
+    -- resolver answers in. Two loaded maps collide on entity id alone -- the
+    -- stock Map Editor counts `object (1)` upwards per map -- so an id on its
+    -- own would hang one map's corona on the other map's element.
     local elements = panel().runtimeElements(wanted)
     local resolved = {}
     for _, mark in ipairs(marks) do
-        local element = elements[mark.entityId]
+        local key = markKey(mark.mapId, mark.entityId)
+        local element = elements[key]
         if element ~= nil and isElement(element) then
-            resolved[markKey(mark.mapId, mark.entityId)] = element
+            resolved[key] = element
             mark.present = true
         else
             mark.present = false
@@ -432,19 +437,29 @@ end
 -- Three great circles rather than a ring on the ground: the zone is a distance
 -- in three dimensions, and a ring says nothing about the entity two storeys
 -- above the one being set up.
+-- Deliberately not the corona's colour. The two are separate ways of looking
+-- and are on screen together; driving the wireframe from `Corona colour` would
+-- make one setting quietly govern the other mark as well, and a player tuning
+-- their coronas would find the zone they were sizing had changed with them.
+local ZONE_COLOUR = OUTLINE_COLOUR
+
 local function drawZone(element, radius)
     local x, y, z = getElementPosition(element)
     if type(x) ~= "number" then
         return
     end
-    local red, green, blue = schema().colourChannels(
-        ZoneMarks.settings.coronaColour
-    )
-    if red == nil then
-        red, green, blue = OUTLINE_COLOUR[1], OUTLINE_COLOUR[2], OUTLINE_COLOUR[3]
-    end
     for _, plane in ipairs({"xy", "xz", "yz"}) do
-        circle(x, y, z, radius, plane, red, green, blue, ZONE_ALPHA)
+        circle(
+            x,
+            y,
+            z,
+            radius,
+            plane,
+            ZONE_COLOUR[1],
+            ZONE_COLOUR[2],
+            ZONE_COLOUR[3],
+            ZONE_ALPHA
+        )
     end
 end
 

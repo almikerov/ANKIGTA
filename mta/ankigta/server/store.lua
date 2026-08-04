@@ -206,6 +206,22 @@ function Store.coronaOf(row)
     return coronaColourOf(row), coronaOpacityOf(row)
 end
 
+--- Whether this metadata wants a corona, whichever version wrote it down.
+--
+-- Change History is persisted as JSON, so a row journalled before the flag was
+-- renamed still says `showRadius` -- and it is exactly the rows that predate an
+-- upgrade that Undo exists to put back. Reading only the current name would
+-- turn every such undo into "and also switch the corona off".
+--
+-- The old name is read only where the new one is absent, so a row that carries
+-- both cannot have the stale half win.
+local function wantsCorona(metadata)
+    if metadata.showCorona ~= nil then
+        return metadata.showCorona == true
+    end
+    return metadata.showRadius == true
+end
+
 --- The values `METADATA_INSERT` binds, for one metadata table.
 local function metadataValues(mapId, entityId, metadata)
     metadata = metadata or {}
@@ -217,7 +233,7 @@ local function metadataValues(mapId, entityId, metadata)
         tostring(metadata.name or ""),
         tostring(metadata.entityTag or ""),
         tonumber(metadata.radius) or 3,
-        metadata.showCorona == true and 1 or 0,
+        wantsCorona(metadata) and 1 or 0,
         type(colour) == "string" and colour or "",
         opacity or CORONA_FOLLOWS_SETTING,
         metadata.presenceState or "identified",

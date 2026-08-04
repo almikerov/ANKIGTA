@@ -434,20 +434,31 @@ local function isEditorRepresentation(element)
     return ok and answer == true
 end
 
+--- Every identity an element answers to, in the order they are trusted.
+--
+-- Three of them, because an element answers to different ones depending on who
+-- put it there: the persistent one ANKIGTA wrote, the one the stock Map Editor
+-- keeps while the map is open in it, and the one the `.map` file gave it.
+--
+-- Read here and nowhere else. Both callers below need the same three, and two
+-- copies of "what identifies an element" is two places for a fourth to be
+-- added to only one of.
+local function elementIdentities(element)
+    return getElementData(element, "ankigtaEntityId"),
+        getElementData(element, "me:ID"),
+        getElementID(element)
+end
+
 --- Does this element stand for the Map Entity named by `mapId`/`entityId`?
 --
--- Three identities, because an element answers to different ones depending on
--- who put it there: the persistent one ANKIGTA wrote, the one the stock Map
--- Editor keeps while the map is open in it, and the one the `.map` file gave
--- it. The editor's own representation of an object is excluded -- it carries
--- the same identity as the object it represents, so without this every entity
--- is found twice while the editor is running.
+-- The editor's own representation of an object is excluded -- it carries the
+-- same identity as the object it represents, so without this every entity is
+-- found twice while the editor is running.
 local function elementStandsFor(element, mapId, entityId)
-    local persistentId = getElementData(element, "ankigtaEntityId")
-    local editorId = getElementData(element, "me:ID")
+    local persistentId, editorId, elementId = elementIdentities(element)
     local elementMapId = getElementData(element, "ankigtaMapId")
     return (persistentId == entityId or editorId == entityId
-            or getElementID(element) == entityId)
+            or elementId == entityId)
         and (not elementMapId or elementMapId == mapId)
         and not isEditorRepresentation(element)
 end
@@ -472,61 +483,75 @@ local function runtimeElement(mapId, entityId, streamedOnly)
     return unstreamed
 end
 
+--- A Map Entity named by the pair the server knows it by.
+--
+-- Never by entity id alone. The stock Map Editor names what it places `object
+-- (1)`, `object (2)` and so on, counting from one per map -- so two loaded maps
+-- collide on their first object, and an index keyed on the id alone quietly
+-- files one map's element under the other map's row.
+local function panelEntityKey(mapId, entityId)
+    return tostring(mapId) .. "/" .. tostring(entityId)
+end
+
 --- The streamed Runtime Instance of each of several Map Entity, at once.
 --
--- One walk of the world for the whole set, keyed the way the caller asked. The
--- world holds thousands of elements and `runtimeElement` walks all of them per
+-- One walk of the world for the whole set, keyed by `panelEntityKey`. The world
+-- holds thousands of elements and `runtimeElement` walks all of them per
 -- identity; what draws marks on the world asks about every entity that shows
 -- one, and doing that a walk at a time is the world once per mark.
 --
 -- Streamed only: a mark is drawn on a thing that is here, and an entity whose
 -- Runtime Instance is not streamed has nothing to draw one on.
---- Which of the identities this element answers to is one somebody asked for.
---
--- Asked one at a time rather than gathered into a list and walked: an element
--- carries only some of these, `getElementData` answers `false` for the ones it
--- does not, and `ipairs` over a table with a hole in it stops at the hole --
--- never reaching the identity that would have matched.
-local function wantedIdentity(element, wanted)
-    local persistentId = getElementData(element, "ankigtaEntityId")
-    if wanted[persistentId] then
-        return persistentId
-    end
-    local editorId = getElementData(element, "me:ID")
-    if wanted[editorId] then
-        return editorId
-    end
-    local elementId = getElementID(element)
-    if wanted[elementId] then
-        return elementId
-    end
-    return false
-end
-
 local function runtimeElementsFor(keys)
     local wanted, found = {}, {}
+    local any = false
     for _, key in ipairs(keys or {}) do
-        wanted[key.entityId] = key.mapId
+        -- A list per id, because the same id in two maps is two Map Entity and
+        -- both of them may be asked for at once.
+        local sought = wanted[key.entityId]
+        if sought == nil then
+            sought = {}
+            wanted[key.entityId] = sought
+        end
+        sought[#sought + 1] = key.mapId
+        any = true
     end
-    if next(wanted) == nil then
+    if not any then
         return found
     end
+    --- Record this element against every Map Entity that asked for this id.
+    --
+    -- `isEditorRepresentation` lives inside `elementStandsFor` and is an export
+    -- call into another resource, so it is reached only for an id somebody
+    -- asked about -- never for the thousands in the world that nobody did.
+    local function claim(element, entityId)
+        if not entityId then
+            return
+        end
+        for _, mapId in ipairs(wanted[entityId] or {}) do
+            local key = panelEntityKey(mapId, entityId)
+            if found[key] == nil
+                and elementStandsFor(element, mapId, entityId)
+            then
+                found[key] = element
+            end
+        end
+    end
+
     for _, kind in ipairs(PANEL_ENTITY_TYPES) do
         for _, element in ipairs(getElementsByType(kind)) do
-            -- An element is looked up by each identity it might answer to
-            -- rather than compared against every wanted key in turn: the world
-            -- holds thousands of elements, and a scan per key inside a scan of
-            -- the world is the product of the two.
-            local entityId = isElementStreamedIn(element)
-                and wantedIdentity(element, wanted)
-            -- `isEditorRepresentation` lives inside `elementStandsFor` and is
-            -- an export call into another resource, so it is reached only for
-            -- an element whose identity already matched something wanted.
-            if entityId
-                and found[entityId] == nil
-                and elementStandsFor(element, wanted[entityId], entityId)
-            then
-                found[entityId] = element
+            if isElementStreamedIn(element) then
+                -- Looked up by each identity the element answers to rather
+                -- than compared against every wanted key in turn: the world
+                -- holds thousands of elements, and a scan per key inside a
+                -- scan of the world is the product of the two. Each is passed
+                -- separately because an element carries only some of them, and
+                -- a list with a hole in it ends at the hole.
+                local persistentId, editorId, elementId =
+                    elementIdentities(element)
+                claim(element, persistentId)
+                claim(element, editorId)
+                claim(element, elementId)
             end
         end
     end
@@ -1845,7 +1870,7 @@ local function scheduleEntityRefresh()
     end, 100, 1)
 end
 
---- Is this element something the list would ever have a row for?
+--- Would the Map Entity list ever have a row for this element?
 --
 -- A marker is one of the types a card can hang on, so a marker appearing is
 -- normally a reason to re-read the list. ANKIGTA's own coronas are markers
@@ -1853,7 +1878,7 @@ end
 -- change a colour -- each one asking the server to rebuild the whole snapshot,
 -- which produces the next snapshot, which moves a corona. The marks say which
 -- elements are theirs so that loop cannot start.
-local function ownRow(element)
+local function couldBeARow(element)
     if not PANEL_ENTITY_TYPE[getElementType(element)] then
         return false
     end
@@ -1864,19 +1889,19 @@ local function ownRow(element)
 end
 
 addEventHandler("onClientElementCreate", root, function()
-    if ownRow(source) then
+    if couldBeARow(source) then
         scheduleEntityRefresh()
     end
 end)
 
 addEventHandler("onClientElementDestroy", root, function()
-    if ownRow(source) then
+    if couldBeARow(source) then
         scheduleEntityRefresh()
     end
 end)
 
 addEventHandler("onClientElementDataChange", root, function()
-    if ownRow(source) then
+    if couldBeARow(source) then
         scheduleEntityRefresh()
     end
 end)

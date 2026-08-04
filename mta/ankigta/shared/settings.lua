@@ -419,6 +419,13 @@ function Settings.normalize(key, value)
         return tonumber(value)
     end
     if definition and definition.rule.kind == "colour" then
+        if type(value) ~= "string" then
+            -- Normalizing is meant to run on a value `validate` has already
+            -- accepted, and this is what happens when a caller has the two the
+            -- other way round: `string.lower` on anything else is an error,
+            -- which reaches the caller as a dead handler rather than as a no.
+            return value
+        end
         -- One case, so the same colour chosen in a colour picker and typed by
         -- hand is one stored value rather than two that compare unequal.
         return string.lower(value)
