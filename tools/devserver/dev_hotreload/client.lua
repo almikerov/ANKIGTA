@@ -48,8 +48,7 @@ local TEXT = {
         startup = "Startup",
         toggleStartup = "Toggle startup",
         startupOn = "yes",
-        startupViaHotReload = "yes (HR)",
-        startupOff = "—",
+        startupOff = "no",
         startupIsServers = "mtaserver.conf already starts %s; the Hot Reload flag adds nothing",
         close = "Close",
         start = "Start",
@@ -98,8 +97,7 @@ local TEXT = {
         startup = "Автозапуск",
         toggleStartup = "Переключить автозапуск",
         startupOn = "да",
-        startupViaHotReload = "да (HR)",
-        startupOff = "—",
+        startupOff = "нет",
         startupIsServers = "%s и так стартует из mtaserver.conf; флаг Hot Reload ничего не добавит",
         close = "Закрыть",
         start = "Запустить",
@@ -358,17 +356,17 @@ local function populateChanges()
         guiGridListSetItemText(UI.changes, row, 1, tostring(change.file), false, false)
         guiGridListSetItemText(UI.changes, row, 2, formatCount(change), false, false)
         if change.status == "added" then
-            guiGridListSetItemColor(UI.changes, row, 1, 120, 220, 140)
+            guiGridListSetItemColor(UI.changes, row, 1, 80, 210, 110)
         elseif change.status == "removed" then
-            guiGridListSetItemColor(UI.changes, row, 1, 230, 130, 130)
+            guiGridListSetItemColor(UI.changes, row, 1, 220, 80, 80)
         end
         -- Green when the file only grew, red when it only shrank, plain when
         -- both moved: the colour is about direction, not about importance.
         if type(change.added) == "number" and type(change.removed) == "number" then
             if change.added > 0 and change.removed == 0 then
-                guiGridListSetItemColor(UI.changes, row, 2, 120, 220, 140)
+                guiGridListSetItemColor(UI.changes, row, 2, 80, 210, 110)
             elseif change.removed > 0 and change.added == 0 then
-                guiGridListSetItemColor(UI.changes, row, 2, 230, 130, 130)
+                guiGridListSetItemColor(UI.changes, row, 2, 220, 80, 80)
             end
         end
     end
@@ -390,17 +388,16 @@ local function populateCatalog(payload)
             guiGridListSetItemText(UI.grid, row, 1, tostring(item.name), false, false)
             guiGridListSetItemText(UI.grid, row, 2, tostring(item.state), false, false)
             guiGridListSetItemText(UI.grid, row, 3, localizedMode(item.hotReload), false, false)
-            -- The server's own list first, because that is the real answer and
-            -- the one a resource has with or without Hot Reload. `(HR)` marks
-            -- the other case: mtaserver.conf does not start it, Hot Reload
-            -- does, and the two must not read the same.
-            local startupText = text("startupOff")
-            if item.serverStartup then
-                startupText = text("startupOn")
-            elseif item.startup then
-                startupText = text("startupViaHotReload")
-            end
-            guiGridListSetItemText(UI.grid, row, 4, startupText, false, false)
+            -- One question, one answer: will this start on boot. Whether the
+            -- server's own config does it or Hot Reload does is not what the
+            -- column is asking, and only matters when the flag is toggled --
+            -- which is where it gets said.
+            local willStart = item.serverStartup == true or item.startup == true
+            guiGridListSetItemText(
+                UI.grid, row, 4,
+                willStart and text("startupOn") or text("startupOff"),
+                false, false
+            )
             guiGridListSetItemData(UI.grid, row, 1, item.name)
             guiGridListSetItemData(UI.grid, row, 3, item.hotReload)
             guiGridListSetItemData(UI.grid, row, 4, item.startup == true)
@@ -408,13 +405,11 @@ local function populateCatalog(payload)
             -- there are four columns, and a hidden one would exist only to
             -- carry this.
             serverStartupByName[item.name] = item.serverStartup == true
-            if item.serverStartup then
+            if willStart then
                 guiGridListSetItemColor(UI.grid, row, 4, 120, 190, 255)
-            elseif item.startup then
-                guiGridListSetItemColor(UI.grid, row, 4, 190, 170, 120)
             end
             if item.state == "running" then
-                guiGridListSetItemColor(UI.grid, row, 2, 120, 210, 140)
+                guiGridListSetItemColor(UI.grid, row, 2, 120, 190, 255)
             end
             if item.hotReload == "allowed" then
                 guiGridListSetItemColor(UI.grid, row, 3, 80, 210, 110)

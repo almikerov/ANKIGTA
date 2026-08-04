@@ -107,30 +107,26 @@ everything at once.
 **Startup** is per resource and independent of Hot Reload: a resource can be
 started at boot without being watched, and watched without being started.
 
-The column reports the **real** state, which every resource has whether or not
-Hot Reload is installed:
+The column answers one question — will this resource start on boot — as `yes`
+or `no`. That includes the state every resource has whether or not Hot Reload
+is installed: the server's own list, read with
+`getServerConfigSetting("resource")` fresh each time the catalog is built, so
+it cannot drift from the file.
 
-| Shown | Means |
-| --- | --- |
-| `yes` | `mtaserver.conf` starts it — the server's own answer |
-| `yes (HR)` | the config does *not* start it; Hot Reload does |
-| `—` | nothing starts it |
-
-The server's own list is read with `getServerConfigSetting("resource")`, fresh
-each time the catalog is built, so it cannot drift from the file.
-
-The two are kept apart because only one of them is ours. MTA exposes no
+Underneath there are two ways a resource gets to `yes`, and only one of them is
+ours to change. MTA exposes no
 `setServerConfigSetting`, and the server's `SetSetting` accepts only a short
 list of scalar settings that `<resource>` is not among — so `mtaserver.conf`
 cannot be written from a running server at all. Hot Reload's own flag starts
 the resource shortly after Hot Reload itself starts, which reaches the same
 end, and that is the flag the **Toggle startup** button switches. Pressed on a
 resource the config already starts, it explains that rather than pretending to
-change anything.
+change anything — which is the one place the distinction needs to surface, and
+the reason the column itself does not carry it.
 
 This column used to show only Hot Reload's flag under the plain heading
 "Startup", which read as the server's answer and was not: two dozen resources
-MTA genuinely autostarts were displayed as `—`.
+MTA genuinely autostarts were displayed as not starting.
 
 Both also work from the console:
 
