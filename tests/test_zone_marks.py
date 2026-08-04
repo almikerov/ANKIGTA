@@ -421,6 +421,22 @@ def test_an_unchanged_corona_is_left_alone(world: MtaSandbox) -> None:
     assert len(world.markers) == 1
 
 
+def test_a_corona_destroyed_by_something_else_is_put_back(
+    world: MtaSandbox,
+) -> None:
+    """The record of it still matches the plan, and a matching record is one
+    this never replaces -- so the entity would go unmarked for as long as
+    nothing about it changed."""
+    snapshot(world, [entry(showCorona=True)])
+    refresh(world)
+    world.eval("function(m) destroyElement(m) end")(world.markers[0])
+
+    refresh(world)
+
+    assert len(world.markers) == 2
+    assert world.markers[1]["__destroyed"] is not True
+
+
 def test_turning_show_corona_off_takes_the_corona_away(world: MtaSandbox) -> None:
     snapshot(world, [entry(showCorona=True)])
     refresh(world)

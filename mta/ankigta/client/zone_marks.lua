@@ -285,9 +285,15 @@ local function channels(colour, opacity)
     return red or 0, green or 0, blue or 0, math.floor(alpha * 255 + 0.5)
 end
 
---- Does this corona already look the way the plan says it should?
+--- Is this corona already the one the plan asks for, and still in the world?
+--
+-- `isElement` first, because everything after it is about a marker that exists.
+-- A marker destroyed by something other than this module still leaves its
+-- record here, and a record that matches the plan is one this never replaces --
+-- so the entity would go unmarked for as long as nothing about it changed.
 local function unchanged(existing, wanted)
-    return existing.radius == wanted.radius
+    return isElement(existing.marker)
+        and existing.radius == wanted.radius
         and existing.colour == wanted.colour
         and existing.opacity == wanted.opacity
         and existing.element == wanted.element
@@ -332,6 +338,7 @@ local function reconcileCoronas(planned)
             }
             local existing = ZoneMarks.coronas[key]
             if existing and unchanged(existing, wanted) then
+                -- Nothing to rebuild.
                 -- Attached, so it is already wherever the thing has got to.
                 -- Which world it is in does not come with the attachment
                 -- though: an entity moved into another interior or dimension
