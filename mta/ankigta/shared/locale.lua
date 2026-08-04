@@ -208,6 +208,9 @@ Locale.strings = {
         ["f7.entity.pedSkin"] = "Ped skin %d",
         ["f7.radius"] = "Radius (m)",
         ["f7.showRadius"] = "Draw it",
+        -- The standing answer, kept on the entity: the world shows it
+        -- whether or not F7 is open.
+        ["f7.drawAlways"] = "Draw always",
         ["f7.replaceTitle"] = "Replace the linked card?",
         ["f7.replaceWarning"] = "The current link is discarded. The card"
             .. " itself is not touched.",
@@ -508,6 +511,7 @@ Locale.strings = {
         ["f7.entity.pedSkin"] = "Скин педа %d",
         ["f7.radius"] = "Радиус (м)",
         ["f7.showRadius"] = "Показывать",
+        ["f7.drawAlways"] = "Показывать всегда",
         ["f7.replaceTitle"] = "Заменить привязанную карточку?",
         ["f7.replaceWarning"] = "Текущая связь будет отброшена. Саму карточку"
             .. " это не трогает.",

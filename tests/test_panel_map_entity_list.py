@@ -694,19 +694,52 @@ def test_a_zone_that_asks_to_be_shown_is_drawn_at_its_own_radius(
     assert {segment["width"] for segment in ring} == {2.0}
 
 
-def test_no_zone_is_drawn_while_the_panel_is_shut(
+def test_draw_always_outlives_the_panel_and_draw_it_does_not(
     panel_client: MtaSandbox,
 ) -> None:
-    """It is the panel's snapshot, and costs nothing when F7 is closed."""
-    shown = panel_entry()
-    shown["metadata"]["showRadius"] = True
-    push_client_snapshot(panel_client, entities=[shown])
-    panel_client.eval("function() togglePanel() end")()
-    panel_client.drawn_lines_3d.clear()
+    """Two answers, and only one of them is about the entity.
+
+    `Draw it` is a look the player asked for in this opening of F7, so it goes
+    when F7 does. `Draw always` is what the entity itself says, and the world
+    shows it whether or not the panel is open.
+    """
+    standing = panel_entry(entity_id="gate-18")
+    standing["metadata"]["showRadius"] = True
+    glance = panel_entry()
+    glance["metadata"]["showRadius"] = False
+    push_client_snapshot(panel_client, entities=[standing, glance])
+    panel_action(
+        panel_client, "select", {"mapId": "current-map-id", "entityId": "gate-17"}
+    )
+    panel_action(panel_client, "setEntityRadius", {"drawNow": True})
 
     panel_client.trigger("onClientRender")
+    assert len(panel_client.drawn_lines_3d) == 48, "both zones while F7 is open"
 
-    assert panel_client.drawn_lines_3d == []
+    # Closing F7 drops the look and keeps the standing answer.
+    panel_client.eval("function() togglePanel() end")()
+    panel_client.drawn_lines_3d.clear()
+    panel_client.trigger("onClientRender")
+
+    assert len(panel_client.drawn_lines_3d) == 24
+
+
+def test_a_look_is_never_written_to_the_entity(
+    panel_client: MtaSandbox,
+) -> None:
+    """`Draw it` is not a decision about the thing, so nothing is stored."""
+    push_client_snapshot(panel_client, entities=[panel_entry()])
+    panel_action(
+        panel_client, "select", {"mapId": "current-map-id", "entityId": "gate-17"}
+    )
+
+    panel_action(panel_client, "setEntityRadius", {"drawNow": True})
+
+    assert [
+        event
+        for event in panel_client.recorder.server_events
+        if event.name == "ankigta:updateEntityMetadata"
+    ] == []
 
 
 def test_a_panel_row_describes_position_and_location_not_identity(

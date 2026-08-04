@@ -581,10 +581,20 @@ class CardPickerService:
             index = 0
         if not 0 <= index < len(fields):
             index = 0
-        try:
-            return _one_line(str(fields[index]))
-        except Exception:
-            return ""
+        # The nominated field first, then the first one that has words in it.
+        # A note whose sort field is empty -- or holds only an image or a
+        # `[sound:]` tag -- would otherwise be labelled by its card id, which
+        # names nothing anybody chose the card for. ADR 0029 settled the same
+        # question the same way for the Text Label.
+        order = [index] + [other for other in range(len(fields)) if other != index]
+        for candidate in order:
+            try:
+                text = _one_line(str(fields[candidate]))
+            except Exception:
+                return ""
+            if text:
+                return text
+        return ""
 
     @staticmethod
     def _note_fields(note: NoteLike) -> tuple[int, tuple[NoteField, ...]]:

@@ -197,6 +197,30 @@ def test_a_sort_field_is_a_line_of_text_not_the_markup_it_is_stored_as() -> None
     assert service.search().cards[0].sort_field == "hello there"
 
 
+def test_an_empty_sort_field_falls_through_to_one_with_words() -> None:
+    """The owner's own collection sorts on a field many of its notes leave
+    empty.
+
+    Labelling those rows by card id names nothing anybody chose the card for,
+    and a field holding only an image or a `[sound:]` tag has no words once the
+    markup is gone. ADR 0029 settled the same question the same way for the
+    Text Label.
+    """
+    collection = FakeCollection()
+    collection.cards[2].note_fields = ["", "accepted"]
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+
+    assert service.search().cards[0].sort_field == "accepted"
+
+    # A field with nothing but media in it has no words either.
+    collection.cards[2].note_fields = ["[sound:hi.mp3]", "<img src=x>", "here"]
+    assert service.search().cards[0].sort_field == "here"
+
+    # And a note with nothing anywhere is left to the row to handle.
+    collection.cards[2].note_fields = ["", ""]
+    assert service.search().cards[0].sort_field == ""
+
+
 def test_ankis_own_empty_default_deck_is_not_offered_as_a_filter() -> None:
     """Anki makes it in every collection and hides it once it is empty.
 

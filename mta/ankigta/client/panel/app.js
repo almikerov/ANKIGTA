@@ -610,8 +610,10 @@
     if (!settings.hidden) {
       document.getElementById("entity-name").value = entity.name || "";
       document.getElementById("entity-radius").value = entity.radius;
-      document.getElementById("entity-show-radius").checked =
-        entity.showRadius === true;
+      document.getElementById("entity-draw-now").checked =
+        entity.drawNow === true;
+      document.getElementById("entity-draw-always").checked =
+        entity.showAlways === true;
     }
 
     renderInspector(state);
@@ -694,9 +696,17 @@
       name: document.getElementById("entity-name").value
     });
   });
-  document.getElementById("entity-show-radius").addEventListener("change", function () {
+  /* Two answers, not one. "Draw it" is a look that lasts as long as this
+   * opening of F7; "Draw always" is what the entity itself says, and the world
+   * shows it whether or not the panel is open. */
+  document.getElementById("entity-draw-now").addEventListener("change", function () {
     send("setEntityRadius", {
-      showRadius: document.getElementById("entity-show-radius").checked
+      drawNow: document.getElementById("entity-draw-now").checked
+    });
+  });
+  document.getElementById("entity-draw-always").addEventListener("change", function () {
+    send("setEntityRadius", {
+      showAlways: document.getElementById("entity-draw-always").checked
     });
   });
 
