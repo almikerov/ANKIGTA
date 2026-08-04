@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
 
 
 class ConfigError(ValueError):
@@ -85,21 +84,6 @@ def _required_number(value: Any, field: str, *, minimum: float) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value < minimum:
         raise ConfigError(f"'{field}' must be a number greater than or equal to {minimum}")
     return float(value)
-
-
-def _validate_base_url(raw_url: str) -> str:
-    parsed = urlsplit(raw_url.rstrip("/"))
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise ConfigError("'mta.base_url' must be an absolute http:// or https:// URL")
-    if parsed.username or parsed.password or parsed.query or parsed.fragment:
-        raise ConfigError("'mta.base_url' must not contain credentials, a query, or a fragment")
-    if parsed.path not in {"", "/"}:
-        raise ConfigError("'mta.base_url' must not contain a path")
-    try:
-        _ = parsed.port
-    except ValueError as exc:
-        raise ConfigError("'mta.base_url' contains an invalid port") from exc
-    return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
 
 
 def load_config(config_path: str | os.PathLike[str]) -> AppConfig:
