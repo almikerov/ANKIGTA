@@ -1,9 +1,7 @@
 {
   "mta": {
-    "base_url": "http://127.0.0.1:22005",
-    "username": "hotreload",
-    "password": "CHANGE_ME",
     "hotreload_resource": "dev_hotreload",
+    "resource_dir": "",
     "timeout_seconds": 5
   },
   "watch": {

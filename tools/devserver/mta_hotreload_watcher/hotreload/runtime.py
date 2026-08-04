@@ -10,7 +10,7 @@ from typing import Any
 from .config import AppConfig, ResourceConfig
 from .debounce import DebounceManager
 from .discovery import discover_resource_paths
-from .http_client import HotReloadHTTPError, MTAHttpClient
+from .file_client import HotReloadChannelError, HotReloadClient
 from .path_rules import is_ignored, is_watched_path, relative_path
 from .validation import validate_changed_files
 
@@ -66,7 +66,7 @@ class ReloadProcessor:
         log("Sending reload request...", resource.name)
         try:
             result = self.client.reload(resource.name)
-        except HotReloadHTTPError as exc:
+        except HotReloadChannelError as exc:
             log(f"Reload request failed: {exc}", resource.name)
             return False
 
@@ -121,7 +121,7 @@ def create_event_handler(resource: ResourceConfig, debouncer: DebounceManager, i
 class WatcherApplication:
     def __init__(self, config: AppConfig) -> None:
         self.config = config
-        self.client = MTAHttpClient(config.mta)
+        self.client = HotReloadClient(config.mta)
         self.processor = ReloadProcessor(config, self.client)
         self.debouncer = DebounceManager(config.watch.debounce_ms / 1000.0, self.processor)
         self._observer: Any = None
@@ -162,7 +162,7 @@ class WatcherApplication:
             result = self.client.check()
             allowed_raw = result.payload.get("allowedResources", [])
             if not isinstance(allowed_raw, list):
-                raise HotReloadHTTPError("INVALID_RESPONSE", "Endpoint returned an invalid allowedResources list")
+                raise HotReloadChannelError("INVALID_RESPONSE", "Endpoint returned an invalid allowedResources list")
             allowed = frozenset(str(name) for name in allowed_raw)
             explicit_names = {resource.name for resource in self.config.watch.resources}
             needs_discovery = allowed != self._last_allowed or bool(self._unresolved)
@@ -189,7 +189,7 @@ class WatcherApplication:
             if self._last_sync_error is not None:
                 log("Connection to the MTA resource manager restored")
             self._last_sync_error = None
-        except HotReloadHTTPError as exc:
+        except HotReloadChannelError as exc:
             message = str(exc)
             if message != self._last_sync_error:
                 log(f"MTA selection sync unavailable: {message}; watching will continue")

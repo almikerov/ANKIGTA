@@ -66,7 +66,6 @@ local TEXT = {
         changesNone = "No change reported yet",
         changesIn = "%s — %d file(s)",
         changeFile = "File",
-        changeCount = "Change",
         openKeyButton = "Open key: %s",
         pressKey = "Press the new key — Escape cancels",
         keySaved = "Panel now opens on %s",
@@ -115,7 +114,6 @@ local TEXT = {
         changesNone = "Изменений пока не было",
         changesIn = "%s — файлов: %d",
         changeFile = "Файл",
-        changeCount = "Изменение",
         openKeyButton = "Клавиша: %s",
         pressKey = "Нажмите новую клавишу — Escape отменяет",
         keySaved = "Панель теперь открывается на %s",
@@ -324,12 +322,19 @@ end
 
 -- --- the change report -------------------------------------------------------
 
---- `+12 -3`, or a plain word where the file was too large to have been kept.
-local function formatCount(change)
+--- The two halves of a count, each for its own column.
+--
+-- Split rather than written as one `+12 -3` string because a grid cell takes a
+-- single colour: in one cell the green would have to cover the removals too,
+-- or -- as it did -- appear only on the rare file where nothing was removed,
+-- which read as arbitrary. Two columns are always coloured and need no rule.
+--
+-- `?` in both where the file was too large to have kept its previous content.
+local function formatCounts(change)
     if type(change.added) == "number" and type(change.removed) == "number" then
-        return ("+%d -%d"):format(change.added, change.removed)
+        return ("+%d"):format(change.added), ("-%d"):format(change.removed)
     end
-    return "?"
+    return "?", "?"
 end
 
 local function populateChanges()
@@ -353,21 +358,20 @@ local function populateChanges()
     end
     for _, change in ipairs(lastChange.changes) do
         local row = guiGridListAddRow(UI.changes)
+        local added, removed = formatCounts(change)
         guiGridListSetItemText(UI.changes, row, 1, tostring(change.file), false, false)
-        guiGridListSetItemText(UI.changes, row, 2, formatCount(change), false, false)
+        guiGridListSetItemText(UI.changes, row, 2, added, false, false)
+        guiGridListSetItemText(UI.changes, row, 3, removed, false, false)
         if change.status == "added" then
             guiGridListSetItemColor(UI.changes, row, 1, 80, 210, 110)
         elseif change.status == "removed" then
             guiGridListSetItemColor(UI.changes, row, 1, 220, 80, 80)
         end
-        -- Green when the file only grew, red when it only shrank, plain when
-        -- both moved: the colour is about direction, not about importance.
-        if type(change.added) == "number" and type(change.removed) == "number" then
-            if change.added > 0 and change.removed == 0 then
-                guiGridListSetItemColor(UI.changes, row, 2, 80, 210, 110)
-            elseif change.removed > 0 and change.added == 0 then
-                guiGridListSetItemColor(UI.changes, row, 2, 220, 80, 80)
-            end
+        -- Unconditional: a column that means "added" is green whatever the
+        -- number, so nothing has to be inferred from which row got a colour.
+        if type(change.added) == "number" then
+            guiGridListSetItemColor(UI.changes, row, 2, 80, 210, 110)
+            guiGridListSetItemColor(UI.changes, row, 3, 220, 80, 80)
         end
     end
 end
@@ -568,8 +572,9 @@ createInterface = function()
     UI.changes = guiCreateGridList(
         12, changesTop, width - 24, changesBottom - changesTop, false, UI.window
     )
-    guiGridListAddColumn(UI.changes, text("changeFile"), 0.72)
-    guiGridListAddColumn(UI.changes, text("changeCount"), 0.22)
+    guiGridListAddColumn(UI.changes, text("changeFile"), 0.66)
+    guiGridListAddColumn(UI.changes, "+", 0.12)
+    guiGridListAddColumn(UI.changes, "-", 0.12)
     guiGridListSetSortingEnabled(UI.changes, false)
 
     UI.status = guiCreateLabel(16, statusRow, width - 32, 20, text("initial"), false, UI.window)
@@ -724,8 +729,9 @@ addEventHandler("dev_hotreload:changed", resourceRoot, function(payload)
             outputChatBox(("  ... %d more"):format(#payload.changes - CHAT_CHANGE_LIMIT), 150, 150, 150)
             break
         end
+        local added, removed = formatCounts(change)
         outputChatBox(
-            ("  %s  %s"):format(tostring(change.file), formatCount(change)),
+            ("  %s  %s %s"):format(tostring(change.file), added, removed),
             170, 200, 230
         )
     end

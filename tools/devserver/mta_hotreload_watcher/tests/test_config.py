@@ -14,6 +14,7 @@ class ConfigTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         (self.root / "resource_one").mkdir()
         (self.root / "resource_two").mkdir()
+        (self.root / "dev_hotreload").mkdir()
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -21,10 +22,8 @@ class ConfigTests(unittest.TestCase):
     def valid_data(self) -> dict:
         return {
             "mta": {
-                "base_url": "http://127.0.0.1:22005",
-                "username": "hotreload",
-                "password": "secret",
                 "hotreload_resource": "dev_hotreload",
+                "resource_dir": str(self.root / "dev_hotreload"),
                 "timeout_seconds": 5,
             },
             "watch": {
@@ -49,15 +48,31 @@ class ConfigTests(unittest.TestCase):
 
     def test_valid_configuration(self) -> None:
         config = load_config(self.write(self.valid_data()))
-        self.assertEqual(config.mta.base_url, "http://127.0.0.1:22005")
+        self.assertEqual(config.mta.resource_dir.name, "dev_hotreload")
         self.assertEqual(config.watch.resources[0].name, "one")
         self.assertEqual(config.watch.resources[0].path.name, "resource_one")
 
     def test_missing_required_configuration(self) -> None:
         data = self.valid_data()
-        del data["mta"]["username"]
-        with self.assertRaisesRegex(ConfigError, "mta.username"):
+        del data["mta"]["hotreload_resource"]
+        with self.assertRaisesRegex(ConfigError, "mta.hotreload_resource"):
             load_config(self.write(data))
+
+    def test_a_leftover_password_is_refused_by_name(self) -> None:
+        # Silently ignoring it would leave the secret sitting on disk while
+        # everything looked migrated. The error is the thing that gets it
+        # deleted.
+        data = self.valid_data()
+        data["mta"]["password"] = "secret"
+        with self.assertRaisesRegex(ConfigError, "mta.password"):
+            load_config(self.write(data))
+
+    def test_resource_dir_defaults_to_beside_the_watched_resources(self) -> None:
+        data = self.valid_data()
+        del data["mta"]["resource_dir"]
+        data["watch"]["resources_root"] = str(self.root)
+        config = load_config(self.write(data))
+        self.assertEqual(config.mta.resource_dir.name, "dev_hotreload")
 
     def test_missing_file_is_actionable(self) -> None:
         with self.assertRaisesRegex(ConfigError, "Copy config.example.json"):

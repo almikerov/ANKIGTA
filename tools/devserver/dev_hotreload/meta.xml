@@ -1,12 +1,27 @@
 <meta>
-    <info author="Codex" name="MTA Development Hot Reload" version="1.1.0" type="script" />
+    <info
+        author="almikerov"
+        name="MTA Development Hot Reload"
+        version="2.0.0"
+        type="script"
+        description="DEVELOPMENT ONLY. Reloads a resource when its files change, with an in-game panel to manage, start and stop resources and a report of what moved."
+    />
+    <!-- Self-contained on purpose: no neighbouring resource has to be present
+         for this to start, no MTA account has to exist, and no port has to be
+         agreed on. Download it, drop it in `resources/`, start it. -->
 
     <script src="config.lua" type="server" />
     <script src="server.lua" type="server" />
+    <script src="channel.lua" type="server" />
     <script src="client.lua" type="client" cache="false" />
 
-    <export function="reloadResourceByName" type="server" http="true" />
-    <export function="getHotReloadStatus" type="server" http="true" />
+    <!-- Kept as exports so a neighbouring resource may call them if it wants
+         to; `http="true"` is deliberately gone. Reaching these over HTTP meant
+         an MTA account, an account meant a password, and that password lived
+         in a watcher config file in plain text. `channel.lua` is the way in
+         now, and it needs no secret at all. -->
+    <export function="reloadResourceByName" type="server" />
+    <export function="getHotReloadStatus" type="server" />
 
     <min_mta_version server="1.6.0" />
 

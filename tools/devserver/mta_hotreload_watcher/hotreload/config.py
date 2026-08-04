@@ -14,9 +14,14 @@ class ConfigError(ValueError):
 
 @dataclass(frozen=True)
 class MTAConfig:
-    base_url: str
-    username: str
-    password: str = field(repr=False)
+    """Where dev_hotreload lives and how long to wait for it to answer.
+
+    No URL, no account, no password. The watcher reaches the resource by
+    writing into its folder, which it can already do -- watching that folder is
+    the job. A secret that does not exist beats a secret stored correctly.
+    """
+
+    resource_dir: Path
     hotreload_resource: str
     timeout_seconds: float
 
@@ -118,9 +123,17 @@ def load_config(config_path: str | os.PathLike[str]) -> AppConfig:
     watch_raw = _mapping(root.get("watch"), "watch")
     validation_raw = _mapping(root.get("validation"), "validation")
 
-    base_url = _validate_base_url(_required_string(mta_raw.get("base_url"), "mta.base_url"))
-    username = _required_string(mta_raw.get("username"), "mta.username")
-    password = _required_string(mta_raw.get("password"), "mta.password")
+    for retired, why in (
+        ("base_url", "there is no HTTP endpoint any more"),
+        ("username", "the channel needs no MTA account"),
+        ("password", "the channel needs no password -- delete this line"),
+    ):
+        if retired in mta_raw:
+            raise ConfigError(
+                f"'mta.{retired}' is no longer used: {why}. "
+                "See config.example.json; the watcher now writes into the "
+                "dev_hotreload resource folder instead of calling it over HTTP."
+            )
     hotreload_resource = _required_string(
         mta_raw.get("hotreload_resource"), "mta.hotreload_resource"
     )
@@ -217,11 +230,31 @@ def load_config(config_path: str | os.PathLike[str]) -> AppConfig:
             raise ConfigError(f"Configured Lua compiler does not exist: {compiler_path}")
         lua_compiler = compiler_path
 
+    # Where to write. Named outright if the config says so; otherwise the
+    # obvious place, beside the resources being watched. Checked here rather
+    # than at the first reload, so a wrong path is a startup error with a name
+    # on it instead of a timeout later.
+    resource_dir_raw = mta_raw.get("resource_dir", "")
+    if not isinstance(resource_dir_raw, str):
+        raise ConfigError("'mta.resource_dir' must be a string")
+    if resource_dir_raw.strip():
+        resource_dir = Path(resource_dir_raw.strip()).expanduser()
+        if not resource_dir.is_absolute():
+            resource_dir = config_dir / resource_dir
+    elif resources_root is not None:
+        resource_dir = resources_root / hotreload_resource
+    else:
+        raise ConfigError(
+            "Set 'mta.resource_dir' to the dev_hotreload folder, or set "
+            "'watch.resources_root' so it can be found beside the watched resources"
+        )
+    resource_dir = Path(normalize_windows_path(resource_dir))
+    if not resource_dir.is_dir():
+        raise ConfigError(f"dev_hotreload resource folder does not exist: {resource_dir}")
+
     return AppConfig(
         mta=MTAConfig(
-            base_url=base_url,
-            username=username,
-            password=password,
+            resource_dir=resource_dir,
             hotreload_resource=hotreload_resource,
             timeout_seconds=timeout_seconds,
         ),

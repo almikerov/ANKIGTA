@@ -6,7 +6,7 @@ from pathlib import Path
 
 from hotreload.config import AppConfig, ConfigError, ResourceConfig, load_config
 from hotreload.discovery import discover_resource_paths
-from hotreload.http_client import HotReloadHTTPError, MTAHttpClient
+from hotreload.file_client import HotReloadChannelError, HotReloadClient
 from hotreload.runtime import (
     ReloadProcessor,
     WatcherApplication,
@@ -49,8 +49,8 @@ def resolve_resources_from_mta(
 
 def list_resources(config: AppConfig) -> int:
     try:
-        resources, problems = resolve_resources_from_mta(config, MTAHttpClient(config.mta))
-    except HotReloadHTTPError as exc:
+        resources, problems = resolve_resources_from_mta(config, HotReloadClient(config.mta))
+    except HotReloadChannelError as exc:
         log(f"Cannot read the current MTA UI selection: {exc}")
         return 2
     print("Configured MTA resource mappings:")
@@ -69,8 +69,8 @@ def check_connection(config: AppConfig) -> int:
         log(f"Folder is available: {resource.path}", resource.name)
     log("Checking MTA authentication and Hot Reload endpoint (no resource will be restarted)...")
     try:
-        result = MTAHttpClient(config.mta).check()
-    except HotReloadHTTPError as exc:
+        result = HotReloadClient(config.mta).check()
+    except HotReloadChannelError as exc:
         log(f"Connection check failed: {exc}")
         return 2
 
@@ -95,8 +95,8 @@ def check_connection(config: AppConfig) -> int:
 
 def manual_reload(config: AppConfig, resource_name: str) -> int:
     try:
-        resources, problems = resolve_resources_from_mta(config, MTAHttpClient(config.mta))
-    except HotReloadHTTPError as exc:
+        resources, problems = resolve_resources_from_mta(config, HotReloadClient(config.mta))
+    except HotReloadChannelError as exc:
         log(f"Cannot read the current MTA UI selection: {exc}")
         return 2
     for problem in problems:
@@ -108,7 +108,7 @@ def manual_reload(config: AppConfig, resource_name: str) -> int:
         return 2
     candidates = collect_validation_candidates(resource)
     log(f"Manual reload requested; validating {len(candidates)} Lua/XML candidate(s)", resource.name)
-    processor = ReloadProcessor(config, MTAHttpClient(config.mta))
+    processor = ReloadProcessor(config, HotReloadClient(config.mta))
     return 0 if processor.process(resource, candidates) else 2
 
 

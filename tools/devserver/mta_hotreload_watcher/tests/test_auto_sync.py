@@ -10,7 +10,7 @@ from hotreload.config import (
     ValidationConfig,
     WatchConfig,
 )
-from hotreload.http_client import EndpointResult
+from hotreload.file_client import EndpointResult
 from hotreload.runtime import WatcherApplication
 
 
@@ -44,7 +44,7 @@ class AutoSyncTests(unittest.TestCase):
             resource.mkdir(parents=True)
             (resource / "meta.xml").write_text("<meta />", encoding="utf-8")
             config = AppConfig(
-                mta=MTAConfig("http://127.0.0.1:22005", "user", "secret", "dev_hotreload", 1),
+                mta=MTAConfig(Path("."), "dev_hotreload", 1),
                 watch=WatchConfig(100, True, (), root, True, 3),
                 validation=ValidationConfig(True, None, True, True),
                 source_path=root / "config.json",

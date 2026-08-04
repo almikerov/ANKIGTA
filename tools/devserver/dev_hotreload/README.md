@@ -1,9 +1,14 @@
 # dev_hotreload
 
-This is the MTA-side component of the local development Hot Reload system. It exposes two authenticated Resource Web Access functions:
+Reload a resource the moment its files change, and manage resources from inside the game instead of from the console.
 
-- `reloadResourceByName(resourceName)` validates an allowlisted name, refreshes only that resource, and restarts or starts it.
-- `getHotReloadStatus()` is a non-mutating connectivity check used by the watcher.
+It stands on its own. No other resource has to be installed, no MTA account has to exist, no port has to be agreed on, and nothing here talks to the network. Download it, drop the folder into `resources/`, start it.
+
+- **Autoupdate** watches the files of the resources you allow and reloads one when it changes.
+- **The panel** (F6 by default) lists every resource MTA knows, with its state, and can start, stop, restart and reload them.
+- **The change report** says which files moved and by how much on every reload.
+- **Discovery** picks up a resource folder dropped in while the server is running.
+- **A file channel** lets anything outside the game ask for a reload — an editor hook, a build script, a file watcher.
 
 Press **F6** in MTA to open the resource manager UI — or whatever key you have chosen; see *Choosing the open key* below. It displays every resource currently detected by MTA, its runtime state, and whether Hot Reload is allowed, ignored, or permanently blocked. The interface starts in English. Use the **Language / Язык** drop-down at the top to select English or Русский; the choice is saved locally for the next MTA session.
 
@@ -24,11 +29,11 @@ Stopping needs one ACL right the earlier version never asked for. A right added 
 Every reload reports which files moved and by how much, as `+added -removed` lines:
 
 ```text
-INFO: [dev_hotreload]   ankigta: client/panel.lua  +67 -0
-INFO: [dev_hotreload]   ankigta: meta.xml  +1 -1
+INFO: [dev_hotreload]   my_resource: client/panel.lua  +67 -0
+INFO: [dev_hotreload]   my_resource: meta.xml  +1 -1
 ```
 
-The same report appears in the panel under **Last change** and, briefly, in chat. It is reported on *every* reload path, not just the file watch, so a reload driven by the watcher over HTTP, by the panel, or by the console says the same thing.
+The same report appears in the panel under **Last change** and, briefly, in chat. It is reported on *every* reload path, not just the file watch, so a reload driven through the file channel, by the panel, or by the console says the same thing.
 
 How it is counted: lines are compared as multisets, not by position. Editing a line therefore reads as `+1 -1` rather than `0`, and a line merely moved counts as neither. This reports how much moved — it is not a patch. A file appearing or disappearing is marked `(added)` / `(removed)`. A file too large to have kept its previous content reports `?` rather than `+0 -0`, because "changed by an unknown amount" and "changed by nothing" must not print the same.
 
@@ -72,16 +77,34 @@ hotreload discover
 
 The command is ACL-restricted. The server console can use it directly; an in-game administrator needs the `command.hotreload` right. Protected administrative and web-management resources can never be enabled.
 
-Install this directory anywhere under `mods/deathmatch/resources`, then use the server console:
+## Installing
+
+Put this directory anywhere under `mods/deathmatch/resources`, then, in the server console:
 
 ```text
 refresh
 start dev_hotreload
-aclrequest list dev_hotreload
 aclrequest allow dev_hotreload all
 ```
 
-The ACL request grants `refreshResources`, `restartResource`, `startResource` and `stopResource`. The HTTP account separately needs `resource.dev_hotreload.http`; see the watcher README for a least-privilege ACL example.
+That grants the four rights in `meta.xml`: `refreshResources`, `restartResource`, `startResource`, `stopResource`, plus `general.ModifyOtherObjects`, which is what MTA gates reading another resource's files on — how the file watch notices a change. Nothing else is needed, and no account is involved.
+
+Run `aclrequest allow` again after updating this resource: rights added to `meta.xml` after your last grant are not covered by it, and the first symptom is Stop reporting that MTA refused.
+
+## Driving it from outside
+
+Anything that can write a file in this folder can ask for a reload. Write one request line into `command.txt`; it runs within a quarter of a second and one JSON object per request is appended to `result.txt`.
+
+```text
+status
+reload {"resource": "my_resource", "requestId": "abc"}
+```
+
+`requestId` is echoed back, so an answer can be matched to the request that earned it rather than to whatever arrived next. The command file is emptied before the requests in it run, so a request that restarts something is not found again on the way back up.
+
+This used to be an HTTP endpoint behind an MTA account. The account needed a password, and every caller had to keep that password somewhere — in practice, in plain text. A `.gitignore` keeps a secret out of a publication, not off a disk. There is no secret here to keep, and no listener either, so nothing about this resource can be reached from the network at all.
+
+The two exported functions, `reloadResourceByName(name)` and `getHotReloadStatus()`, remain available to other resources through `exports` for anyone who prefers to call them directly.
 
 This resource is for localhost development only. Stop it outside development:
 

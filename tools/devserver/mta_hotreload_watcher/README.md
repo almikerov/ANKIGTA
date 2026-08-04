@@ -19,10 +19,9 @@ The watcher and `dev_hotreload` are separate processes/resources. Neither writes
 - MTA:SA server 1.6
 - Windows and Python 3.11 or newer
 - The Python `watchdog` package
-- MTA's built-in HTTP server enabled on localhost
 - Optional: a Lua 5.1-compatible `luac` executable
 
-The HTTP port must be read from your own `mtaserver.conf` (`<httpport>`). It is **not guaranteed to be 22005**. Keep `<httpserver>1</httpserver>` enabled during development.
+No MTA account, HTTP port or password is involved. The watcher reaches `dev_hotreload` by writing a request file into its folder — a folder this process can already reach, because watching the resources directory is its whole job.
 
 ## 1. Install the MTA resource
 
@@ -55,28 +54,15 @@ The request contains only these rights:
 
 It does not require membership in the full Admin group.
 
-## 2. Create a dedicated HTTP account
+## 2. Nothing to authenticate
 
-Create a strong, development-only account in the MTA server console:
+There is no step here any more, and that is the point.
 
-```text
-addaccount hotreload USE_A_STRONG_UNIQUE_PASSWORD
-```
+This watcher used to call `dev_hotreload` over MTA's HTTP interface, which meant an MTA account, which meant a password — and that password lived in `config.json` in plain text. A `.gitignore` keeps a secret out of a publication, not off a disk.
 
-Grant it only access to this resource's HTTP interface. The easiest safe method is to add a dedicated group and ACL through `webadmin`. If editing `mods/deathmatch/acl.xml` while the server is stopped, the relevant entries are:
+The channel is now a request file inside the resource's own folder. There is no secret to store, no account to create, no ACL right to grant and no port to agree on, and nothing about the resource can be reached from the network at all.
 
-```xml
-<group name="HotReloadHTTPGroup">
-    <acl name="HotReloadHTTPACL" />
-    <object name="user.hotreload" />
-</group>
-
-<acl name="HotReloadHTTPACL">
-    <right name="resource.dev_hotreload.http" access="true" />
-</acl>
-```
-
-If ACL XML was changed while MTA was running, use `reloadacl` after saving. Do not put this account in Admin and do not reuse a primary administrator account.
+If you are upgrading, delete `base_url`, `username` and `password` from your `config.json`. The watcher refuses to start while any of them is still there rather than ignoring them, so that the secret actually gets removed instead of merely going unused.
 
 ## 3. Install the watcher
 
@@ -88,7 +74,7 @@ python -m venv .venv
 Copy-Item config.example.json config.json
 ```
 
-`config.json` is ignored by Git. Put the dedicated account password only there.
+`config.json` is ignored by Git. It holds no secrets now, only paths.
 
 ## 4. Configure automatic resource discovery
 
@@ -97,10 +83,8 @@ Edit `config.json`:
 ```json
 {
   "mta": {
-    "base_url": "http://127.0.0.1:22005",
-    "username": "hotreload",
-    "password": "USE_A_STRONG_UNIQUE_PASSWORD",
     "hotreload_resource": "dev_hotreload",
+    "resource_dir": "",
     "timeout_seconds": 5
   },
   "watch": {
@@ -187,10 +171,10 @@ Git metadata, common IDE settings, Python environments/caches, `node_modules`, `
 
 ## Troubleshooting
 
-- **HTTP 401:** The username/password is wrong or the MTA account does not exist. Update `config.json`; the watcher never prints the password.
-- **HTTP 403:** Add `user.hotreload` to the dedicated ACL group and grant `resource.dev_hotreload.http`. Reload ACL configuration.
-- **HTTP 404:** Confirm the URL uses the actual `<httpport>`, `dev_hotreload` is started, its name matches `hotreload_resource`, and the HTTP exports are present.
-- **Connection refused:** Start MTA, enable its HTTP server, verify the port, and keep the URL on `127.0.0.1`. The watcher retries temporary connection failures with capped backoff and continues watching after a failed batch.
+- **CHANNEL_TIMEOUT:** `dev_hotreload` is not running, or is not the resource at `resource_dir`. Start it and check the path; the watcher retries with capped backoff and keeps watching after a failed batch.
+- **RESOURCE_MISSING:** `resource_dir` does not point at an existing folder. Leave it empty to have it found beside the watched resources.
+- **COMMAND_WRITE_FAILED:** this process cannot write inside the resource folder. Check permissions on `mods/deathmatch/resources/dev_hotreload`.
+- **RESOURCE_NOT_ALLOWED:** the resource is set to ignored in the Hot Reload panel. Allow it there.
 - **ACL permission denied in MTA:** Run `aclrequest list dev_hotreload`, then `aclrequest allow dev_hotreload all`. Confirm all three requested rights show as allowed.
 - **Resource not found:** Confirm the mapping name matches the resource folder's MTA name and it has a valid `meta.xml`. The endpoint performs one non-global discovery refresh for newly created resources.
 - **Resource starts and immediately stops:** Inspect the MTA debug log for a runtime or load error in the target. The independent watcher and endpoint remain alive; fix and save again.
@@ -205,8 +189,8 @@ Git metadata, common IDE settings, Python environments/caches, `node_modules`, `
 
 This system is intended only for local development:
 
-- Use `127.0.0.1`, and restrict the MTA HTTP port to localhost with the firewall.
-- Use a dedicated low-privilege account with a strong password stored only in ignored `config.json`.
+- Nothing here listens on a socket, so there is no port to restrict.
+- There is no account and no password to protect: the channel is a file inside the resource folder.
 - Keep a strict resource allowlist. The endpoint never accepts arbitrary commands, Lua, or paths.
 - Do not expose the MTA web interface publicly and never use the primary Admin account.
 - Stop or disable `dev_hotreload` outside development.
