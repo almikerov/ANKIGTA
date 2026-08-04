@@ -433,7 +433,7 @@ def test_the_editor_list_skips_representations_and_its_deleted_dimension(
         entity_id="representation", map_id="representation", dimension=200
     )
     representation["__parent"] = editor_root
-    representation["__edf_representation"] = True
+    representation["edf:rep"] = True
     deleted = server.add_world_element(
         entity_id="deleted", map_id="deleted", dimension=201
     )
@@ -757,6 +757,49 @@ def test_focusing_a_row_points_the_camera_without_moving_the_player(
 
     assert panel_client.camera_matrix == before_camera
     assert panel_client.camera_interior == 7
+
+
+def test_the_editors_stand_in_for_an_entity_is_not_taken_for_the_entity(
+    panel_client: MtaSandbox,
+) -> None:
+    """While the stock Map Editor is open, each element is in the world twice.
+
+    Its stand-in carries the same identity as the thing it stands for, so
+    without telling them apart every Map Entity is found twice and the panel
+    can act on the copy the player cannot see. `edf` marks its own with the
+    element data `edf:rep`, which is ordinary synced data this side can read --
+    it used to be asked of a server-only export instead, which answered nothing
+    here and left the filter dead.
+    """
+    representation = panel_client.add_world_element(
+        entity_id="gate-17",
+        map_id="gate-17",
+        x=500,
+        y=500,
+        z=500,
+        ankigtaEntityId="gate-17",
+        ankigtaMapId="current-map-id",
+    )
+    representation["edf:rep"] = True
+    panel_client.add_world_element(
+        entity_id="gate-17",
+        map_id="gate-17",
+        x=10.25,
+        y=-20.5,
+        z=3,
+        ankigtaEntityId="gate-17",
+        ankigtaMapId="current-map-id",
+    )
+    push_client_snapshot(panel_client, entities=[panel_entry(available=True)])
+
+    panel_action(
+        panel_client,
+        "focusEntity",
+        {"mapId": "current-map-id", "entityId": "gate-17"},
+    )
+
+    # The one the player can see, not the editor's copy of it.
+    assert panel_client.camera_matrix[3:6] == (10.25, -20.5, 3.0)
 
 
 def test_focusing_a_distant_row_uses_its_authored_position_without_streaming(

@@ -1134,10 +1134,16 @@ class MtaSandbox:
             return args[index + 1] if len(args) > index + 1 else None
 
         def edf_is_representation(*args: Any) -> bool:
+            """`edf.lua`: `return getElementData(elem, "edf:rep")`.
+
+            The real marker, not a field of this double's own invention. It is
+            ordinary synced element data, which is why the client can read it
+            without asking `edf` anything -- and a double that hid it behind an
+            export made a server-only call look answerable from either side.
+            """
             element = export_argument(args, 0)
             return (
-                lua_type(element) == "table"
-                and element["__edf_representation"] is True
+                lua_type(element) == "table" and element["edf:rep"] is True
             )
 
         def edf_set_element_property(*args: Any) -> bool:

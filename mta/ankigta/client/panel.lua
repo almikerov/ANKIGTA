@@ -427,11 +427,17 @@ ANKIGTA.EntityTypes = ANKIGTA.EntityTypes or {
 local PANEL_ENTITY_TYPES = ANKIGTA.EntityTypes.order
 local PANEL_ENTITY_TYPE = ANKIGTA.EntityTypes.supported
 
+--- Is this the stock Map Editor's own stand-in for an element?
+--
+-- Read off the element rather than asked of `edf`. `edfIsRepresentation` is a
+-- server-only export -- `edf.lua` is one line, `getElementData(elem,
+-- "edf:rep")` -- and calling it from here answered nothing while logging an
+-- MTA error per call. Not a raise, so the `pcall` that used to wrap this
+-- reported success and the falsy answer read as "not a representation": the
+-- filter below never fired, and the duplicate row it exists to remove was
+-- never removed. `edf`'s own client half reads the same element data.
 local function isEditorRepresentation(element)
-    local ok, answer = pcall(function()
-        return exports.edf:edfIsRepresentation(element)
-    end)
-    return ok and answer == true
+    return getElementData(element, "edf:rep") == true
 end
 
 --- Every identity an element answers to, in the order they are trusted.
@@ -521,9 +527,9 @@ local function runtimeElementsFor(keys)
     end
     --- Record this element against every Map Entity that asked for this id.
     --
-    -- `isEditorRepresentation` lives inside `elementStandsFor` and is an export
-    -- call into another resource, so it is reached only for an id somebody
-    -- asked about -- never for the thousands in the world that nobody did.
+    -- Narrowed to the ids somebody asked about, never the thousands in the
+    -- world that nobody did: everything `elementStandsFor` does is per
+    -- candidate, and it used to include a call into another resource.
     local function claim(element, entityId)
         if not entityId then
             return
