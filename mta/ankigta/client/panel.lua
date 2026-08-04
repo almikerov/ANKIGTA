@@ -587,11 +587,22 @@ local function readableName(entry)
             return name
         end
     end
-    if engineGetModelNameFromID then
+    -- `engineGetModelNameFromID` reads `CModelNames`, which holds object
+    -- models and nothing else. Asked about a ped skin it answers `false` and
+    -- logs `Expected valid model ID` -- which is what filled the client log
+    -- with a warning per ped per snapshot, drowning anything worth reading in
+    -- it, and left every ped reading as "Unnamed Map Entity".
+    if mapEntity.type == "object" and engineGetModelNameFromID then
         local name = engineGetModelNameFromID(model)
         if type(name) == "string" and name ~= "" then
             return name
         end
+    end
+    -- A ped is named by its skin, because MTA has no name for one: there is no
+    -- ped table in `CModelNames` and no API that answers for a skin at all. The
+    -- number is at least the thing itself, and it tells two peds apart.
+    if mapEntity.type == "ped" then
+        return ANKIGTA.Locale.format("f7.entity.pedSkin", model)
     end
     return ANKIGTA.Locale.text("f7.entity.unnamed")
 end

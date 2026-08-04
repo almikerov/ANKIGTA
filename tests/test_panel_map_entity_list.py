@@ -644,6 +644,27 @@ def test_an_unnamed_row_uses_words_instead_of_its_identifier(
     assert row["entityId"] not in row["name"]
 
 
+def test_a_ped_is_named_by_its_skin_and_never_asked_about_as_an_object(
+    panel_client: MtaSandbox,
+) -> None:
+    """`engineGetModelNameFromID` reads `CModelNames`, which holds objects.
+
+    Asked about a ped skin it answers `false` and logs `Expected valid model
+    ID` -- a warning per ped per snapshot, which both left every ped reading as
+    "Unnamed Map Entity" and buried anything else worth reading in the client
+    log. MTA has no name for a ped skin at all, so the skin is the name.
+    """
+    entry = panel_entry(name="")
+    entry["mapEntity"]["type"] = "ped"
+    entry["mapEntity"]["model"] = 7
+    push_client_snapshot(panel_client, entities=[entry])
+
+    row = panel_client.pushed_panel_state()["entities"][0]
+
+    assert row["name"] == "Ped skin 7"
+    assert panel_client.script_warnings == []
+
+
 def test_a_card_linked_to_another_map_names_that_map(
     panel_client: MtaSandbox,
 ) -> None:

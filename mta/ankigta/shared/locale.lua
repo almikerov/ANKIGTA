@@ -204,6 +204,8 @@ Locale.strings = {
         ["f7.activation"] = "Activation Zone",
         ["f7.name"] = "Name",
         ["f7.entity.unnamed"] = "Unnamed Map Entity",
+        -- MTA has no name for a ped skin, so the skin itself is the name.
+        ["f7.entity.pedSkin"] = "Ped skin %d",
         ["f7.radius"] = "Radius (m)",
         ["f7.showRadius"] = "Draw it",
         ["f7.replaceTitle"] = "Replace the linked card?",
@@ -503,6 +505,7 @@ Locale.strings = {
         ["f7.activation"] = "Зона активации",
         ["f7.name"] = "Имя",
         ["f7.entity.unnamed"] = "Безымянная Map Entity",
+        ["f7.entity.pedSkin"] = "Скин педа %d",
         ["f7.radius"] = "Радиус (м)",
         ["f7.showRadius"] = "Показывать",
         ["f7.replaceTitle"] = "Заменить привязанную карточку?",

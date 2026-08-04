@@ -419,6 +419,12 @@ class MtaSandbox:
         self._cursor_wanted_here = False
         self._cursor_requests = 0
         self.camera_target: Any = None
+        #: What `CModelNames` holds: object models, and nothing else. Peds and
+        #: vehicles are absent from it in MTA, which is the whole point.
+        self.model_names: dict[int, str] = {1337: "gate_model"}
+        #: Warnings MTA's script debugging would have logged. A stub that
+        #: answered silently would hide the call that produced them.
+        self.script_warnings: list[str] = []
         self.camera_matrix: tuple[float, ...] = (0.0, 0.0, 10.0, 0.0, 0.0, 0.0)
         self.camera_interior = 0
         self.radio_channel = 0
@@ -1442,6 +1448,28 @@ class MtaSandbox:
         g.outputChatBox = lambda message, *_rest: (
             self.chat.append(str(message)) or True
         )
+
+        # --- model names -----------------------------------------------------
+        def engine_get_model_name_from_id(model: Any = None, *_rest: Any) -> Any:
+            # `CLuaEngineDefs::EngineGetModelNameFromID` looks the id up in
+            # `CModelNames` and, finding nothing, answers `false` *and* logs
+            # "Expected valid model ID" rather than raising. A double that
+            # answered `false` quietly would hide the caller that asked about a
+            # ped -- which is the defect this exists to catch.
+            try:
+                key = int(model)
+            except (TypeError, ValueError):
+                key = None
+            name = self.model_names.get(key) if key is not None else None
+            if not name:
+                self.script_warnings.append(
+                    "Bad usage @ 'engineGetModelNameFromID' "
+                    "[Expected valid model ID at argument 1]"
+                )
+                return False
+            return name
+
+        g.engineGetModelNameFromID = engine_get_model_name_from_id
 
         # --- camera, radio ---------------------------------------------------
         g.getCameraTarget = lambda *_args: self.camera_target
