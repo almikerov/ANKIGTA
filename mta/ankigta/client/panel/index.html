@@ -124,13 +124,12 @@
         </form>
         <div class="rows" id="cards" role="list"></div>
 
-        <!-- Everything that acts on the chosen card, in one row: linking it,
-             replacing a link with it, saving an edit to it, and opening the
-             editor beside the list. -->
+        <!-- What the list does with the chosen card: link it, replace a link
+             with it, or open the editor beside the list. Saving an edit
+             belongs to the editor and lives there. -->
         <div class="column-actions">
           <button type="button" id="link" class="primary" data-i18n="cardPicker.link"></button>
           <button type="button" id="replace" data-i18n="f7.replaceCard"></button>
-          <button type="button" id="save-note" data-i18n="inspector.save"></button>
           <button type="button" id="toggle-inspector" aria-expanded="false"
                   data-i18n="inspector.open"></button>
         </div>
@@ -151,6 +150,10 @@
                  data-i18n-placeholder="inspector.tagsHint" />
         </label>
         <span class="field-error" id="inspector-error" role="alert"></span>
+        <div class="column-actions">
+          <button type="button" id="save-note" class="primary"
+                  data-i18n="inspector.save"></button>
+        </div>
       </div>
 
     </div>

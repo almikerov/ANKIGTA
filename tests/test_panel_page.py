@@ -309,6 +309,26 @@ def test_saving_is_offered_only_once_something_has_been_changed() -> None:
     assert reverted["saveDisabled"] is True
 
 
+def test_saving_lives_with_the_fields_it_saves() -> None:
+    """Save card is the editor's action, so it sits inside the editor.
+
+    The list keeps what the list does with a card -- link it, replace a link
+    with it, open the editor on it. Read out of the markup because that is
+    where the answer is: which column a control is in is a fact about the page
+    and about nothing else.
+    """
+    html = (PANEL / "index.html").read_text(encoding="utf-8")
+    editor = html.split('id="inspector"', 1)[1]
+    editor = editor.split("</section>", 1)[0]
+    before_editor = html.split('id="inspector"', 1)[0]
+
+    assert 'id="save-note"' in editor
+    assert 'id="save-note"' not in before_editor
+    # And the list's own row keeps the three that act on the list's selection.
+    for control in ('id="link"', 'id="replace"', 'id="toggle-inspector"'):
+        assert control in before_editor
+
+
 def test_the_editor_stays_shut_until_it_is_asked_for() -> None:
     """Selecting a card is not by itself a request to edit it."""
     selected = run_page([{"receive": with_note()}])
