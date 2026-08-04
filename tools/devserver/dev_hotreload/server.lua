@@ -636,6 +636,93 @@ end
 --- Names Autoupdate has been refused, so it stops knocking.
 local blindTo = {}
 
+--- Set once this resource has asked to restart itself, so the request is not
+--- made again on every tick of the second or so it takes to happen.
+local selfRestarting = false
+--- Set once MTA has refused `loadstring`, so the missing right is said once
+--- rather than on every self-check.
+local loadstringRefused = false
+
+--- Do this resource's own Lua files still compile?
+--
+-- Asked before it restarts itself, because the failure mode is not
+-- symmetrical. A typo in somebody else's resource is reported by a tool that
+-- is still running; a typo in this one would take the tool down with it and
+-- leave nothing running to fix it from. Compiling does not execute, so this is
+-- a syntax check and nothing more.
+--
+-- Without `function.loadstring` there is no check to make. That is a reason to
+-- say so and carry on, not a reason to stop reloading: the whole point is not
+-- having to restart this by hand.
+local function ownScriptsCompile()
+    if loadstringRefused or type(loadstring) ~= "function" then
+        return true
+    end
+    local name = getResourceName(getThisResource())
+    for _, relative in ipairs(declaredFiles(name) or {}) do
+        if relative:sub(-4) == ".lua" then
+            local handle = fileOpen(":" .. name .. "/" .. relative, true)
+            if handle then
+                local size = fileGetSize(handle)
+                local content = size > 0 and fileRead(handle, size) or ""
+                fileClose(handle)
+                local chunk, compileError = loadstring(content or "", relative)
+                if not chunk then
+                    if not compileError then
+                        -- Refused, not rejected: no right to compile at all.
+                        loadstringRefused = true
+                        log("Self-reload: no `function.loadstring` right, so this"
+                            .. " resource's own scripts are not syntax-checked"
+                            .. " before it restarts. Run `aclrequest allow "
+                            .. name .. " all` to get the check back.", 2)
+                        return true
+                    end
+                    log(("Self-reload refused: %s does not compile -- %s")
+                        :format(relative, tostring(compileError)), 2)
+                    return false
+                end
+            end
+        end
+    end
+    return true
+end
+
+--- Keep this resource current too.
+--
+-- Its own path rather than the watch loop's: `watchedResources` skips it and
+-- `reloadResourceByName` refuses a blocked name, and both of those are worth
+-- keeping -- being unable to stop the panel from the panel is the point of the
+-- block. So the self-check restarts directly instead of going through either.
+local function pollSelf()
+    if selfRestarting or HOTRELOAD_CONFIG.selfReload == false then
+        return
+    end
+    local name = getResourceName(getThisResource())
+    local current = resourceFingerprint(name)
+    if not current then
+        return
+    end
+    local previous = fingerprints[name]
+    if not previous then
+        fingerprints[name] = current
+        return
+    end
+    if current.digest == previous.digest then
+        return
+    end
+    -- Reports what moved and records it, so a restart outliving a tick, or a
+    -- refusal that repeats, is not read as a second change.
+    noteResourceChanges(name)
+    if not ownScriptsCompile() then
+        return
+    end
+    selfRestarting = true
+    log("Self-reload: own files changed; restarting")
+    -- On a timer rather than here: an answer owed to whatever asked gets
+    -- written first, and a resource does not restart from inside its own poll.
+    setTimer(function() restartResource(getThisResource()) end, 300, 1)
+end
+
 local function pollForChanges()
     for _, name in ipairs(watchedResources()) do
       if not blindTo[name] then
@@ -662,6 +749,7 @@ local function pollForChanges()
         end
       end
     end
+    pollSelf()
     -- Nothing left to watch means the timer is only there to be refused.
     local watching = false
     for _, name in ipairs(watchedResources()) do

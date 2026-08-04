@@ -17,6 +17,11 @@ HOTRELOAD_CONFIG = {
     -- a discovery pass refreshes MTA's whole resource list rather than reading
     -- the files of the few resources being watched.
     discoveryInterval = 10000,
+    -- Whether this resource reloads itself when its own files change. It is
+    -- the one resource the rest of this cannot reload -- it is blocked from
+    -- being managed, so that the panel cannot be used to stop the panel -- and
+    -- without this every edit to it ended in a restart by hand.
+    selfReload = true,
     logPrefix = "[dev_hotreload]",
     -- Resources inside these standard MTA categories are treated as bundled.
     -- Root resources and resources in any other category are treated as custom.

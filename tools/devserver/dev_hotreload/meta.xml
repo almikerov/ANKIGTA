@@ -33,6 +33,10 @@
              never needed. A right added after the first `aclrequest allow`
              is not granted by it: run that again after updating. -->
         <right name="function.stopResource" access="true" />
+        <!-- Not to run anything: this resource compiles its own scripts before
+             restarting itself, so a typo in them is reported by a tool that is
+             still running rather than taking the tool down with it. -->
+        <right name="function.loadstring" access="true" />
         <!-- Autoupdate reads the files of the resources it watches, and
              MTA gates every look inside another resource on this. -->
         <right name="general.ModifyOtherObjects" access="true" />

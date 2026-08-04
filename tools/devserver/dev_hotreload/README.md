@@ -39,6 +39,16 @@ How it is counted: lines are compared as multisets, not by position. Editing a l
 
 The first sight of a resource reports nothing: there is no previous version to compare against, and announcing every file as added the first time anything is watched would be noise rather than news.
 
+## Reloading itself
+
+This resource was the one thing it could not reload. It is blocked from being managed — so that the panel cannot be used to stop the panel — and being blocked also kept it out of the file watch, so every edit to it ended in a restart by hand.
+
+It now watches its own files on the same tick as everyone else's and restarts itself when they change, on its own path rather than through the reload that refuses blocked names. `selfReload` in `config.lua` turns it off.
+
+Before restarting, it compiles its own Lua files and refuses to restart if any of them does not. The failure mode is not symmetrical: a typo in another resource is reported by a tool that is still running, while a typo here would take the tool down with it and leave nothing running to fix it from. Compiling does not execute anything — it is a syntax check.
+
+That check needs `function.loadstring`. Without it the resource says so once and reloads itself unchecked, which is still better than not reloading at all.
+
 ## Choosing the open key
 
 The **Open key** button at the bottom of the panel rebinds it. Press the button, then press the key you want; Escape cancels. The choice is saved next to the language in `@ui_settings.xml` and applies from the next MTA session onwards as well.
