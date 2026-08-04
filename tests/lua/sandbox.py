@@ -467,6 +467,26 @@ class MtaSandbox:
         self.drawn_text_boxes: list[dict[str, Any]] = []
         self.drawn_rectangles: list[dict[str, float]] = []
         self.drawn_images: list[dict[str, float]] = []
+        #: Every `dxDrawLine3D`, in draw order. What is drawn into the world
+        #: has no control to read back, so this is the only way a test can see
+        #: an outline or a zone at all.
+        self.drawn_lines_3d: list[dict[str, float]] = []
+        #: Markers the resource created, and what each was attached to.
+        self.markers: list[Any] = []
+        self.attachments: list[tuple[Any, Any]] = []
+        #: What `getElementBoundingBox` reports for an element that does not
+        #: carry one of its own, as MTA's six numbers.
+        self.bounding_box: tuple[float, float, float, float, float, float] = (
+            -1.0,
+            -1.0,
+            -1.0,
+            1.0,
+            1.0,
+            1.0,
+        )
+        #: Set where the model has no bounding box to give, which MTA reports
+        #: as a plain `false` rather than as six zeroes.
+        self.bounding_box_fails = False
         #: What `guiGetScreenSize()` reports. Tests move it to run the same
         #: layout at 1280x720, 1920x1080 and 3840x2160.
         self.screen_width = 1920.0
@@ -730,8 +750,15 @@ class MtaSandbox:
                 self._elements.discard(id(value))
                 return True
             if lua_type(value) == "table" and value["__element"] is True:
-                value["__destroyed"] = True
                 index = value["__widget"]
+                if index is None:
+                    # MTA raises this *before* the element goes, so `source` is
+                    # still a valid element inside the handler -- which is the
+                    # window a resource destroying its own elements has to
+                    # recognize them in. A CEGUI control is not a world element
+                    # and raises no such event.
+                    self.trigger("onClientElementDestroy", value)
+                value["__destroyed"] = True
                 if index is not None:
                     self._destroy_widget(int(index))
                 return True
@@ -1744,6 +1771,98 @@ class MtaSandbox:
 
         g.createBlip = create_blip
         g.dxDrawMaterialLine3D = lambda *_a, **_k: True
+
+        def dx_draw_line_3d(
+            start_x: float,
+            start_y: float,
+            start_z: float,
+            end_x: float,
+            end_y: float,
+            end_z: float,
+            colour: Any = 0xFFFFFFFF,
+            *_rest: Any,
+        ) -> bool:
+            self.drawn_lines_3d.append(
+                {
+                    "startX": float(start_x),
+                    "startY": float(start_y),
+                    "startZ": float(start_z),
+                    "endX": float(end_x),
+                    "endY": float(end_y),
+                    "endZ": float(end_z),
+                    "colour": int(colour),
+                }
+            )
+            return True
+
+        g.dxDrawLine3D = dx_draw_line_3d
+
+        def get_element_bounding_box(element: Any = None) -> Any:
+            if self.bounding_box_fails:
+                # MTA returns a single `false` where the model has no box,
+                # never six zeroes -- a caller that unpacks six numbers gets
+                # one boolean and five nils.
+                return False
+            if lua_type(element) == "table" and element["__boundingBox"]:
+                box = element["__boundingBox"]
+                return tuple(float(box[index]) for index in range(1, 7))
+            return self.bounding_box
+
+        g.getElementBoundingBox = get_element_bounding_box
+
+        def create_marker(
+            x: float,
+            y: float,
+            z: float,
+            kind: str = "default",
+            size: float = 4.0,
+            red: float = 0,
+            green: float = 0,
+            blue: float = 255,
+            alpha: float = 255,
+            *_rest: Any,
+        ) -> Any:
+            marker = self.lua.table_from(
+                {
+                    "__element": True,
+                    "type": "marker",
+                    "x": float(x),
+                    "y": float(y),
+                    "z": float(z),
+                    "markerType": str(kind),
+                    "size": float(size),
+                    "red": int(red),
+                    "green": int(green),
+                    "blue": int(blue),
+                    "alpha": int(alpha),
+                    "interior": 0,
+                    "dimension": 0,
+                }
+            )
+            self.markers.append(marker)
+            # A marker is a world element like any other: it answers
+            # `getElementsByType("marker")`, which is exactly why the panel has
+            # to be able to tell ANKIGTA's own coronas from a Map Entity.
+            self.world_elements.append(marker)
+            self._elements.add(id(marker))
+            # MTA fires this for a client-created element, and the panel
+            # listens for it -- which is why the panel has to recognize a
+            # corona as its own rather than as the world changing.
+            self.trigger("onClientElementCreate", marker)
+            return marker
+
+        g.createMarker = create_marker
+
+        def attach_elements(
+            element: Any, target: Any, *_offsets: Any
+        ) -> bool:
+            if lua_type(element) != "table" or lua_type(target) != "table":
+                return False
+            self.attachments.append((element, target))
+            element["__attachedTo"] = target
+            return True
+
+        g.attachElements = attach_elements
         g.setBrowserVolume = set_browser_volume
         g.setWorldSoundEnabled = set_world_sound_enabled
         g.focusBrowser = lambda _browser=None: True

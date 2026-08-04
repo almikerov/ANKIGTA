@@ -92,10 +92,17 @@ end
 
 --- Rebuild the runtime index from what the client currently holds.
 --
--- Run when the link set changes rather than per poll: it walks every object,
--- vehicle and ped the client knows about, which is the whole world rather than
--- the part of it that is near. Between rebuilds the stream events keep it
--- current.
+-- Run when the client starts and when the link set changes, rather than per
+-- poll: it walks every object, vehicle and ped the client knows about, which is
+-- the whole world rather than the part of it that is near. Between rebuilds the
+-- element events below keep it current.
+--
+-- Starting is one of those moments, and it was not. The index was built only
+-- from a link set arriving, so until the server sent one -- which it does when
+-- a study session has something to watch, and not before -- an entity standing
+-- in front of the player was in no index at all. Everything that asks "which
+-- element is this Map Entity" got no answer, and got it silently: an empty
+-- index and a world with nothing in it are the same table.
 local function indexWorld()
     local known, streamed = {}, {}
     for _, kind in ipairs(MANAGED_TYPES) do
@@ -134,7 +141,13 @@ local function liveCandidate(link, into)
     into.radius = link.radius
     into.eligible = link.eligible ~= false
     into.present = true
-    into.hasActivationZone = link.showRadius == true
+    -- Whether something already marks this spot, so the Next Card Indicator
+    -- emphasizes that mark rather than putting a second one on top of it. The
+    -- marks are the side that knows, because a corona is created by the entity
+    -- saying so and taken away again by its Runtime Instance going.
+    into.hasActivationZone = ANKIGTA.ZoneMarks.showsCorona(
+        link.mapId, link.entityId
+    )
     into.x = x
     into.y = y
     into.z = z
@@ -324,6 +337,28 @@ addEventHandler(NEXT_CARD_EVENT, resourceRoot, function(_cardIdentity, bearers)
         end
     end
     Spatial.bearers = accepted
+end)
+
+-- Everything the client already holds, before anything has been sent. A player
+-- who has just joined is standing in a loaded world, and the elements in it
+-- fired their stream events before this resource existed to hear them.
+addEventHandler("onClientResourceStart", resourceRoot, indexWorld)
+
+-- An element created after the walk above, which is how a map loading late --
+-- or the stock Map Editor placing an object -- reaches the index. It carries
+-- no identity at the moment it is created, so the data arriving is what says
+-- it belongs here.
+addEventHandler("onClientElementDataChange", root, function(key)
+    if key ~= "ankigtaEntityId" then
+        return
+    end
+    local entityId = managedEntityId(source)
+    if entityId then
+        Spatial.known[entityId] = source
+        if isElementStreamedIn(source) then
+            Spatial.streamed[entityId] = source
+        end
+    end
 end)
 
 -- Streaming keeps the index current between link changes. An element the

@@ -2,10 +2,21 @@ ANKIGTA = ANKIGTA or {}
 
 -- Localization.
 --
--- Russian and English ship as UTF-8 tables. English is the fallback, and a
--- missing Russian string logs a diagnostic rather than showing a blank: a gap
--- in the translation is a bug to fix, not something to hide from whoever could
--- fix it.
+-- Russian and English ship as UTF-8 tables. English is the fallback and is the
+-- complete one: a new string is added to `en` alone, and Russian is no longer
+-- kept up with it.
+--
+-- That was the other way round until ticket 08 began removing Russian. While a
+-- table is on its way out, requiring it to keep pace means every new string is
+-- a two-language change for a translation nobody will read. A missing Russian
+-- string still logs a diagnostic and still falls back to English, so nothing
+-- renders blank.
+--
+-- What has not relaxed is the direction that matters: a key only Russian
+-- defines is a key the fallback cannot answer. It renders as its own name for
+-- every English player, and as words for nobody who would report it. Two tests
+-- hold that line -- `test_english_is_the_complete_table` and
+-- `test_no_language_holds_a_panel_key_english_lacks`.
 --
 -- What is never translated: card text, Map Entity names the user typed, Entity
 -- Tags and Anki Tags. Those are the user's own words, and "translating" them
@@ -69,6 +80,11 @@ Locale.strings = {
         ["settings.muteGameWorld"] = "Mute world while reviewing",
         ["settings.uiScale"] = "UI scale",
         ["settings.language"] = "Language",
+        -- A way of looking, so it says what it does to the view rather than
+        -- what it does to the entity: `Show corona` is the entity's own.
+        ["settings.drawRadius"] = "Draw the selected zone",
+        ["settings.coronaColour"] = "Corona colour",
+        ["settings.coronaOpacity"] = "Corona opacity",
         -- Per map, and about that map's entities rather than about a list of
         -- maps: the old plural read as a global switch over all of them.
         ["settings.includeInStudy"] = "This map's entities take part in study",
@@ -99,6 +115,7 @@ Locale.strings = {
         ["settings.error.not_a_boolean"] = "Choose on or off",
         ["settings.error.not_a_choice"] = "Choose one of the offered options",
         ["settings.error.not_a_string"] = "Enter text",
+        ["settings.error.not_a_colour"] = "Enter a colour as #RRGGBB",
         ["settings.error.not_a_placement"] =
             "Stored window placement is not usable",
         ["settings.error.wrong_authority"] = "This setting is owned elsewhere",
@@ -203,7 +220,15 @@ Locale.strings = {
         ["f7.name"] = "Name",
         ["f7.entity.unnamed"] = "Unnamed Map Entity",
         ["f7.radius"] = "Radius (m)",
-        ["f7.showRadius"] = "Draw it",
+        -- What the flag called `Draw it` became. It never drew anything: it
+        -- only told the Next Card Indicator not to put a second sphere where
+        -- one already was. Now it hangs a corona on the thing, and says so.
+        ["f7.showCorona"] = "Show corona",
+        ["f7.coronaColour"] = "Corona colour",
+        ["f7.coronaOpacity"] = "Corona opacity",
+        -- Two fields with nothing in them mean "whatever Settings says", which
+        -- is not something an empty box conveys on its own.
+        ["f7.coronaFollowsSettings"] = "Empty follows Settings",
         ["f7.replaceTitle"] = "Replace the linked card?",
         ["f7.replaceWarning"] = "The current link is discarded. The card"
             .. " itself is not touched.",
@@ -500,7 +525,6 @@ Locale.strings = {
         ["f7.name"] = "Имя",
         ["f7.entity.unnamed"] = "Безымянная Map Entity",
         ["f7.radius"] = "Радиус (м)",
-        ["f7.showRadius"] = "Показывать",
         ["f7.replaceTitle"] = "Заменить привязанную карточку?",
         ["f7.replaceWarning"] = "Текущая связь будет отброшена. Саму карточку"
             .. " это не трогает.",

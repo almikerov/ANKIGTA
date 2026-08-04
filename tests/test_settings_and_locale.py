@@ -57,6 +57,13 @@ def can_write(sandbox: MtaSandbox, side: str, key: str) -> Any:
         ("maxActivationSpeedKmh", "server"),
         ("reviewMode", "server"),
         ("includeInStudy", "server"),
+        # The defaults behind a value stored on the Map Entity, so they belong
+        # to the side that holds that value -- the same split `activationRadius`
+        # already has against the per-entity radius.
+        ("coronaColour", "server"),
+        ("coronaOpacity", "server"),
+        # A way of looking, not a property of anything looked at.
+        ("drawRadius", "client"),
         ("indicatorMode", "client"),
         ("reviewProtection", "client"),
         ("disablePlayerControls", "client"),
@@ -258,6 +265,9 @@ def test_a_server_setting_can_still_be_excluded_from_history(
         ("activationDelaySeconds", 0),
         ("maxActivationSpeedKmh", 0),
         ("reviewMode", "allow_due"),
+        ("coronaColour", "#3cc8ff"),
+        ("coronaOpacity", 0.5),
+        ("drawRadius", False),
         ("indicatorMode", "none"),
         ("reviewProtection", True),
         ("disablePlayerControls", True),
@@ -400,6 +410,16 @@ def test_the_indicator_modes_match_the_schema(settings: MtaSandbox) -> None:
         ("indicatorMode", "sphere_only", "settings.error.not_a_choice"),
         ("reviewMode", "allow_early", "settings.error.not_a_choice"),
         ("uiScale", 10, "settings.error.out_of_range"),
+        # A browser understands all three; `tocolor` understands none of them,
+        # so a stored value the world cannot be drawn in is refused here.
+        ("coronaColour", "#3cf", "settings.error.not_a_colour"),
+        ("coronaColour", "red", "settings.error.not_a_colour"),
+        ("coronaColour", "#3cc8ffff", "settings.error.not_a_colour"),
+        ("coronaColour", 255, "settings.error.not_a_colour"),
+        ("coronaOpacity", 1.5, "settings.error.out_of_range"),
+        ("coronaOpacity", -0.1, "settings.error.out_of_range"),
+        ("coronaOpacity", 0.123, "settings.error.too_precise"),
+        ("drawRadius", "yes", "settings.error.not_a_boolean"),
     ],
 )
 def test_invalid_input_is_rejected_with_a_reason_never_clamped(
@@ -430,6 +450,11 @@ def test_invalid_input_is_rejected_with_a_reason_never_clamped(
         # Story 54 allows two decimal places by hand; only the buttons move in
         # 0.05, and a validation step would reject this.
         ("uiScale", 1.23),
+        ("coronaColour", "#000000"),
+        ("coronaColour", "#FFFFFF"),
+        ("coronaOpacity", 0),
+        ("coronaOpacity", 1),
+        ("drawRadius", True),
     ],
 )
 def test_values_at_the_boundaries_are_accepted(
@@ -438,6 +463,33 @@ def test_values_at_the_boundaries_are_accepted(
     value: Any,
 ) -> None:
     assert validate(settings, key, value) is True
+
+
+def test_a_colour_is_stored_in_one_case(settings: MtaSandbox) -> None:
+    """A picker hands back lower case and a person types either, and two
+    spellings of one colour would compare unequal wherever they met."""
+    normalize = settings.eval(
+        "function(k, v) return ANKIGTA.Settings.normalize(k, v) end"
+    )
+
+    assert normalize("coronaColour", "#3CC8FF") == "#3cc8ff"
+    assert normalize("coronaColour", "#3cc8ff") == "#3cc8ff"
+
+
+def test_a_colour_is_read_as_the_channels_it_is_drawn_from(
+    settings: MtaSandbox,
+) -> None:
+    """The format is decided by the rule, so exactly one reader of it exists."""
+    channels = settings.eval(
+        "function(v) return {ANKIGTA.Settings.colourChannels(v)} end"
+    )
+
+    assert list(channels("#3cc8ff").values()) == [0x3C, 0xC8, 0xFF]
+    assert list(channels("#000000").values()) == [0, 0, 0]
+    # Anything the rule would have refused, so a corrupted value falls back to
+    # a default rather than being drawn as black.
+    assert len(channels("nonsense")) == 0
+    assert len(channels("#3cf")) == 0
 
 
 def test_every_rejection_reason_has_a_translation(settings: MtaSandbox) -> None:
@@ -520,11 +572,21 @@ def test_auto_follows_the_reported_locale(locale: MtaSandbox) -> None:
     assert locale.eval('ANKIGTA.Locale.text("settings.title")') == "Настройки"
 
 
-def test_both_languages_cover_the_same_keys(locale: MtaSandbox) -> None:
-    english = locale.eval("ANKIGTA.Locale.strings.en")
-    russian = locale.eval("ANKIGTA.Locale.strings.ru")
+def test_english_is_the_complete_table(locale: MtaSandbox) -> None:
+    """English is the fallback, so every key any language holds is in it.
 
-    assert set(english.keys()) == set(russian.keys())
+    This was equality in both directions until Russian stopped being kept up
+    (ticket 08 removes it). Equality would now mean a string added in English
+    had to be translated in the same commit to be added at all, which is the
+    tail wagging the dog for a table that is on its way out. What it still
+    catches is the one that matters: a key that exists only in Russian is a key
+    the fallback cannot answer, so it renders as its own name for every English
+    player and as words for nobody who reports it.
+    """
+    english = set(locale.eval("ANKIGTA.Locale.strings.en").keys())
+    russian = set(locale.eval("ANKIGTA.Locale.strings.ru").keys())
+
+    assert russian - english == set()
 
 
 def test_russian_strings_survive_the_round_trip_as_utf8(

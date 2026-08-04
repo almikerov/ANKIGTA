@@ -83,8 +83,23 @@
                    step="0.5" />
           </label>
           <label class="inline check">
-            <input type="checkbox" id="entity-show-radius" />
-            <span data-i18n="f7.showRadius"></span>
+            <input type="checkbox" id="entity-show-corona" />
+            <span data-i18n="f7.showCorona"></span>
+          </label>
+          <!-- Both empty by default, and empty is not "no colour" but "the one
+               Settings says": an entity that was never given a look of its own
+               follows the setting when the setting changes. -->
+          <label class="inline">
+            <span data-i18n="f7.coronaColour"></span>
+            <input type="text" id="entity-corona-colour"
+                   data-i18n-placeholder="f7.coronaFollowsSettings" />
+            <span class="swatch" id="entity-corona-swatch"></span>
+          </label>
+          <label class="inline">
+            <span data-i18n="f7.coronaOpacity"></span>
+            <input type="number" id="entity-corona-opacity" min="0" max="1"
+                   step="0.05"
+                   data-i18n-placeholder="f7.coronaFollowsSettings" />
           </label>
         </div>
 

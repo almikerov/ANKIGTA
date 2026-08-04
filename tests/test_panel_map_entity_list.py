@@ -143,7 +143,7 @@ def panel_entry(
             "name": name,
             "entityTag": "",
             "radius": 3,
-            "showRadius": False,
+            "showCorona": False,
         },
         "link": {"state": "Unlinked"},
     }

@@ -57,7 +57,7 @@ def entry(
                 "name": name,
                 "entityTag": entity_tag,
                 "radius": 3,
-                "showRadius": False,
+                "showCorona": False,
             },
             "authored": {
                 "position": {"x": 0, "y": 0, "z": 0},
@@ -70,7 +70,7 @@ def entry(
             "name": name,
             "entityTag": entity_tag,
             "radius": 3,
-            "showRadius": False,
+            "showCorona": False,
         },
         "link": {"state": state},
     }

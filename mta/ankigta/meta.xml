@@ -35,6 +35,9 @@
     <script src="client/review_mode.lua" type="client" cache="false" />
     <script src="client/activation.lua" type="client" cache="false" />
     <script src="client/indicator.lua" type="client" cache="false" />
+    <!-- Before the polling below, which asks it whether a corona already marks
+         a spot before the indicator puts a second mark on top of one. -->
+    <script src="client/zone_marks.lua" type="client" cache="false" />
     <!-- After both: it is the world-polling that feeds them, and it hands the
          indicator the source its markers follow. -->
     <script src="client/spatial.lua" type="client" cache="false" />

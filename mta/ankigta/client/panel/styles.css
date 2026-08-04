@@ -425,6 +425,20 @@ label {
 .entity-settings .entity-name-control { flex: 1 1 100%; }
 .entity-settings .entity-name-control input { flex: 1; }
 .entity-settings .check input { width: auto; }
+#entity-corona-colour { width: 90px; }
+
+/* The colour the corona will actually be, beside the field that names it.
+   A hex triplet is not something anyone reads as a colour. */
+.swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1px solid var(--line-soft);
+  display: inline-block;
+  flex: 0 0 auto;
+}
+.colour-field { display: inline-flex; align-items: center; gap: var(--space-2); }
+.colour-field input { width: 90px; }
 
 /* --- confirmation ----------------------------------------------------- */
 

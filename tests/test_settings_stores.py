@@ -537,6 +537,8 @@ SERVER_VALUES = {
     "maxActivationSpeedKmh": 45,
     "reviewMode": "allow_all",
     "includeInStudy": False,
+    "coronaColour": "#ff8800",
+    "coronaOpacity": 0.25,
 }
 
 
@@ -643,6 +645,8 @@ def test_a_snapshot_carries_every_answerable_setting_and_no_secret(
         "maxActivationSpeedKmh",
         "reviewMode",
         "includeInStudy",
+        "coronaColour",
+        "coronaOpacity",
         "connectionPort",
     } == keys
     assert "connectionToken" not in keys
@@ -769,6 +773,7 @@ def test_the_client_may_not_write_a_setting_the_server_owns(
 
 CLIENT_VALUES = {
     "indicatorMode": "sphere_and_minimap",
+    "drawRadius": True,
     "reviewProtection": False,
     "disablePlayerControls": False,
     "closeAfterRating": False,
