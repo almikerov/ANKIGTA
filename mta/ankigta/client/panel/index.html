@@ -52,7 +52,7 @@
   </section>
 
   <section class="section entities" id="section-entities" hidden>
-    <div class="workspace">
+    <div class="workspace" id="workspace">
 
       <div class="column">
         <div class="column-head">
@@ -123,28 +123,34 @@
           <button type="submit" class="primary" data-i18n="cardPicker.search"></button>
         </form>
         <div class="rows" id="cards" role="list"></div>
-        <div class="inspector" id="inspector" hidden>
-          <div class="inspector-head">
-            <h3 data-i18n="inspector.title"></h3>
-            <span class="hint" id="inspector-state"></span>
-          </div>
-          <div class="inspector-fields" id="inspector-fields"></div>
-          <label class="inspector-tags">
-            <span data-i18n="inspector.tags"></span>
-            <input type="text" id="inspector-tags"
-                   data-i18n-placeholder="inspector.tagsHint" />
-          </label>
-          <div class="inspector-actions">
-            <span class="field-error" id="inspector-error" role="alert"></span>
-            <button type="button" id="save-note" class="primary"
-                    data-i18n="inspector.save"></button>
-          </div>
-        </div>
 
+        <!-- Everything that acts on the chosen card, in one row: linking it,
+             replacing a link with it, saving an edit to it, and opening the
+             editor beside the list. -->
         <div class="column-actions">
           <button type="button" id="link" class="primary" data-i18n="cardPicker.link"></button>
           <button type="button" id="replace" data-i18n="f7.replaceCard"></button>
+          <button type="button" id="save-note" data-i18n="inspector.save"></button>
+          <button type="button" id="toggle-inspector" aria-expanded="false"
+                  data-i18n="inspector.open"></button>
         </div>
+      </div>
+
+      <!-- The editor is its own column rather than a block inside the card
+           list, and it is drawn only while it is open: a form permanently
+           taking a third of the panel is a form taking it from the list. -->
+      <div class="column inspector" id="inspector" hidden>
+        <div class="inspector-head">
+          <h3 data-i18n="inspector.title"></h3>
+          <span class="hint" id="inspector-state"></span>
+        </div>
+        <div class="inspector-fields" id="inspector-fields"></div>
+        <label class="inspector-tags">
+          <span data-i18n="inspector.tags"></span>
+          <input type="text" id="inspector-tags"
+                 data-i18n-placeholder="inspector.tagsHint" />
+        </label>
+        <span class="field-error" id="inspector-error" role="alert"></span>
       </div>
 
     </div>

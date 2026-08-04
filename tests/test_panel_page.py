@@ -90,6 +90,13 @@ for (const step of script) {
     }
   }
   if (step.set) byId[step.set.id].value = step.set.value;
+  if (step.type) {
+    const box = byId["inspector-fields"].children
+      .map((w) => w.children[1])
+      .find((b) => b.getAttribute("data-field") === step.type.field);
+    box.value = step.type.value;
+    for (const f of box.listeners["input"] || []) f({});
+  }
   if (step.choose) {
     const option = byId["deck-menu"].children.find(
       (o) => o.getAttribute("data-deck") === step.choose.deck
@@ -106,6 +113,12 @@ console.log(JSON.stringify({
   deckLabel: byId["deck"].textContent,
   scopeLabel: byId["scope"].textContent,
   searchQuery: byId["search-query"].value,
+  saveDisabled: byId["save-note"].disabled,
+  inspectorHidden: byId["inspector"].hidden,
+  workspaceClass: byId["workspace"].className,
+  fieldNames: byId["inspector-fields"].children.map(
+    (w) => w.children[1].getAttribute("data-field")
+  ),
 }));
 """
 
@@ -120,6 +133,19 @@ def run_page(script: list[dict[str, object]]) -> dict[str, object]:
     )
     assert result.returncode == 0, result.stderr
     return dict(json.loads(result.stdout))
+
+
+def with_note(**over: object) -> dict[str, object]:
+    """A state with a card selected and its note read."""
+    base = state()
+    base["selected"] = {"mapId": False, "entityId": False, "cardId": "7"}
+    base["note"] = {
+        "noteId": 3,
+        "fields": [{"name": "Front", "value": "你好"}],
+        "tags": ["hsk1"],
+    }
+    base.update(over)
+    return base
 
 
 def state(**picker: object) -> dict[str, object]:
@@ -256,6 +282,74 @@ def test_the_expression_keeps_its_button() -> None:
 
     searches = [payload for action, payload in typed["sent"] if action == "searchCards"]
     assert [s["query"] for s in searches] == ["tag:verb"]
+
+
+def test_saving_is_offered_only_once_something_has_been_changed() -> None:
+    """A Save that is always available says nothing about whether there is
+    anything to save."""
+    untouched = run_page([{"receive": with_note()}])
+    assert untouched["saveDisabled"] is True
+
+    edited = run_page(
+        [
+            {"receive": with_note()},
+            {"type": {"field": "Front", "value": "再见"}},
+        ]
+    )
+    assert edited["saveDisabled"] is False
+
+    # And typing the stored value back is not a change either.
+    reverted = run_page(
+        [
+            {"receive": with_note()},
+            {"type": {"field": "Front", "value": "再见"}},
+            {"type": {"field": "Front", "value": "你好"}},
+        ]
+    )
+    assert reverted["saveDisabled"] is True
+
+
+def test_the_editor_stays_shut_until_it_is_asked_for() -> None:
+    """Selecting a card is not by itself a request to edit it."""
+    selected = run_page([{"receive": with_note()}])
+
+    assert selected["inspectorHidden"] is True
+    assert selected["workspaceClass"] == "workspace"
+
+    opened = run_page(
+        [
+            {"receive": with_note()},
+            {"fire": {"id": "toggle-inspector", "type": "click"}},
+        ]
+    )
+    assert opened["inspectorHidden"] is False
+    # A third column, beside the card list rather than inside it.
+    assert opened["workspaceClass"] == "workspace editing"
+    assert opened["fieldNames"] == ["Front"]
+
+    shut = run_page(
+        [
+            {"receive": with_note()},
+            {"fire": {"id": "toggle-inspector", "type": "click"}},
+            {"fire": {"id": "toggle-inspector", "type": "click"}},
+        ]
+    )
+    assert shut["inspectorHidden"] is True
+
+
+def test_an_edit_survives_the_editor_being_shut_and_reopened() -> None:
+    """Hiding a form is not discarding what was typed into it."""
+    answer = run_page(
+        [
+            {"receive": with_note()},
+            {"fire": {"id": "toggle-inspector", "type": "click"}},
+            {"type": {"field": "Front", "value": "再见"}},
+            {"fire": {"id": "toggle-inspector", "type": "click"}},
+            {"fire": {"id": "toggle-inspector", "type": "click"}},
+        ]
+    )
+
+    assert answer["saveDisabled"] is False
 
 
 if __name__ == "__main__":

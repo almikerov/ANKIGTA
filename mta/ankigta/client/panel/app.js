@@ -326,25 +326,64 @@
    * not thrown away by an unrelated redraw -- a state push happens whenever
    * anything at all changes, and most of it is not this. */
   var shownNote = null;
+  /* Whether the editor is slid out. The player's, not the state's: a card
+   * being selected is not by itself a request to edit it, and a panel that
+   * opens a form every time a row is clicked has decided that for them. */
+  var inspectorOpen = false;
+  /* The boxes on screen and the note as Anki last reported it. Save is offered
+   * against the difference between the two: a Save that is always available
+   * says nothing about whether there is anything to save. */
+  var noteBoxes = [];
+  var noteBaseline = null;
+
+  function noteIsEdited() {
+    if (!noteBaseline || noteBoxes.length !== noteBaseline.fields.length) {
+      return false;
+    }
+    for (var i = 0; i < noteBoxes.length; i += 1) {
+      if (noteBoxes[i].value !== noteBaseline.fields[i]) return true;
+    }
+    return document.getElementById("inspector-tags").value !== noteBaseline.tags;
+  }
+
+  function refreshSaveState() {
+    document.getElementById("save-note").disabled = !noteIsEdited();
+  }
+
+  function renderInspectorToggle() {
+    var button = document.getElementById("toggle-inspector");
+    button.disabled = !selected.cardId;
+    button.setAttribute("aria-expanded", String(inspectorOpen));
+    button.textContent = t(inspectorOpen ? "inspector.close" : "inspector.open");
+    /* The third column exists only while it is open, so the two lists have the
+     * whole panel the rest of the time. */
+    document.getElementById("workspace").className =
+      inspectorOpen && selected.cardId ? "workspace editing" : "workspace";
+  }
 
   function renderInspector(state) {
     var box = document.getElementById("inspector");
     var error = document.getElementById("inspector-error");
     var status = document.getElementById("inspector-state");
 
+    renderInspectorToggle();
+    box.hidden = !selected.cardId || !inspectorOpen;
     if (!selected.cardId) {
-      box.hidden = true;
       shownNote = null;
+      noteBaseline = null;
+      noteBoxes = [];
+      refreshSaveState();
       return;
     }
-    box.hidden = false;
 
     if (state.noteError) {
       error.textContent = t("inspector.unreadable").replace("%s", state.noteError);
       status.textContent = "";
       document.getElementById("inspector-fields").textContent = "";
-      document.getElementById("save-note").disabled = true;
       shownNote = null;
+      noteBaseline = null;
+      noteBoxes = [];
+      refreshSaveState();
       return;
     }
     error.textContent = "";
@@ -352,34 +391,45 @@
     var note = state.note;
     if (!note) {
       status.textContent = t("inspector.loading");
-      document.getElementById("save-note").disabled = true;
+      noteBaseline = null;
+      noteBoxes = [];
+      refreshSaveState();
       return;
     }
     status.textContent = "";
-    document.getElementById("save-note").disabled = false;
+
+    var fields = note.fields || [];
+    /* What Anki holds, refreshed on every state: a save answers with the note
+     * read back, and the button has to go quiet again once it has. */
+    noteBaseline = {
+      fields: fields.map(function (f) { return f.value; }),
+      tags: (note.tags || []).join(" ")
+    };
 
     var signature = JSON.stringify([
       note.noteId,
-      (note.fields || []).map(function (f) { return f.name; })
+      fields.map(function (f) { return f.name; })
     ]);
-    if (signature === shownNote) return;
-    shownNote = signature;
-
-    var host = document.getElementById("inspector-fields");
-    host.textContent = "";
-    var fields = note.fields || [];
-    for (var i = 0; i < fields.length; i += 1) {
-      var wrap = element("label", "inspector-field");
-      wrap.appendChild(element("span", null, fields[i].name));
-      var input = document.createElement("textarea");
-      input.rows = 2;
-      input.value = fields[i].value;
-      input.setAttribute("data-field", fields[i].name);
-      wrap.appendChild(input);
-      host.appendChild(wrap);
+    if (signature !== shownNote) {
+      shownNote = signature;
+      var host = document.getElementById("inspector-fields");
+      host.textContent = "";
+      noteBoxes = [];
+      for (var i = 0; i < fields.length; i += 1) {
+        var wrap = element("label", "inspector-field");
+        wrap.appendChild(element("span", null, fields[i].name));
+        var input = document.createElement("textarea");
+        input.rows = 2;
+        input.value = fields[i].value;
+        input.setAttribute("data-field", fields[i].name);
+        input.addEventListener("input", refreshSaveState);
+        wrap.appendChild(input);
+        host.appendChild(wrap);
+        noteBoxes.push(input);
+      }
+      document.getElementById("inspector-tags").value = noteBaseline.tags;
     }
-    document.getElementById("inspector-tags").value =
-      (note.tags || []).join(" ");
+    refreshSaveState();
   }
 
   function renderNotice(notice) {
@@ -648,13 +698,22 @@
     });
   });
 
+  document.getElementById("toggle-inspector").addEventListener("click", function () {
+    inspectorOpen = !inspectorOpen;
+    renderInspectorToggle();
+    document.getElementById("inspector").hidden =
+      !selected.cardId || !inspectorOpen;
+  });
+  document.getElementById("inspector-tags").addEventListener(
+    "input",
+    refreshSaveState
+  );
   document.getElementById("save-note").addEventListener("click", function () {
     var fields = [];
-    var boxes = document.querySelectorAll("#inspector-fields [data-field]");
-    for (var i = 0; i < boxes.length; i += 1) {
+    for (var i = 0; i < noteBoxes.length; i += 1) {
       fields.push({
-        name: boxes[i].getAttribute("data-field"),
-        value: boxes[i].value
+        name: noteBoxes[i].getAttribute("data-field"),
+        value: noteBoxes[i].value
       });
     }
     /* Split on whitespace: Anki separates tags by spaces, so what the field
