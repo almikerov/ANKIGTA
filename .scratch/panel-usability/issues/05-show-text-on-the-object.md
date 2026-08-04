@@ -1,5 +1,11 @@
 # 05 — Show text: a Text Label on the Map Entity
 
+> **Superseded.** This wave ran four lines in parallel and they did not join.
+> The work continues one ticket at a time under `.scratch/panel-rebuild/`, where
+> this ticket is `09-show-text-on-the-object.md`. Do not start from this file.
+
+**Status:** superseded
+
 **What to build:** a third Review Mode in which a linked Map Entity carries a
 **Text Label** — a line from its card's note, drawn in the world — instead of
 opening the review surface.

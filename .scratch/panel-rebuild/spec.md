@@ -1,0 +1,75 @@
+# Panel rebuild
+
+Fourteen things the owner asked for after running the panel, plus what four
+parallel branches left unfinished, folded into nine tickets that run **one at a
+time**.
+
+## Why this exists as a second wave
+
+The first wave ran four lines at once — the Card Picker, the world marks, the
+single string table and Show text. Each was fine on its own branch. Together
+they did not join: `panel.lua`, `app.js`, `index.html`, `locale.lua` and two
+test modules all conflicted, `panel.lua` was not even mergeable as text, and
+`zone_marks.lua` ended up sitting in the deployed folder undeclared by its own
+`meta.xml` — on disk, never loaded, for days.
+
+The owner judged those features by playing the game, and the game was running a
+build two tickets behind the trunk. So "English only" and "the zone follows its
+object" both read as not done when they were merged, green and unreachable.
+
+Hence the rule this wave is built on: **one ticket at a time, deployed and
+looked at before the next one starts.** The trunk is now the build the owner
+actually runs.
+
+## What that cost, and what it did not
+
+Tickets 06 and 07 of the first wave are no longer on the trunk. They are not
+gone: they remain on their own branches and as parents of the trunk commit that
+superseded them, so a ticket here that wants to read what they did has
+`git show`. Where that is worth doing, the ticket says so.
+
+Their *behaviour* is respecified here rather than merged, because the owner
+never saw either one and specifying from a report nobody has checked is how the
+first wave got its shape.
+
+## The owner's list, and where each item went
+
+| # | What the owner asked for | Ticket |
+|---|---|---|
+| 24 | Activation key, global and per link | 07 |
+| 25 | Activation type: by key or by zone | 07 |
+| 26 | `<KEY> to view` on an entity in key mode | 07 |
+| 27 | "Apply to all" beside every overridable global | 08 |
+| 28 | Teleport works in the Map Editor | 02 |
+| 29 | Drop language support, English only | 01 |
+| 30 | Dropdowns only open on the arrow | 03 |
+| 31 | A drawn zone has no distance at which it stops | 04 |
+| 32 | `editor_dump`/`editor_test`, and no map switch | 05 |
+| 33 | `entity_runtime_not_unique` — nothing links | 02 |
+| 34 | Zones do not follow their objects until F7 | 04 |
+| 35 | The entity edit pane should always be visible | 03 |
+| 36 | A field inheriting a global should show its value | 03 |
+| 37 | `Draw always` becomes `Show corona` | 04 |
+
+## Carried findings
+
+Small things found by review and by the live server, too small to be tickets.
+Each belongs to whichever ticket next opens the file; the ticket that does is
+named where it is obvious.
+
+- `companion/ankigta_companion/cards.py` carries a raw U+00A0 inside a
+  `.replace()` that `str.split()` already handles.
+- The card row's `label` key collides with the glossary's **Text Label**, which
+  is a different thing entirely. Ticket 09.
+- `.inspector-actions` in `styles.css` is dead. Ticket 03.
+- `tests/test_panel_page.py::test_saving_lives_with_the_fields_it_saves` reads
+  `index.html` as text and splits on `'id="inspector"'`, which
+  `docs/agents/lua-testing.md` forbids by name. Ticket 03.
+
+## Not in this wave
+
+**The teleport crash.** The owner reported the game crashing on teleport. No
+dump exists from that day and the client logs show no trace. It has no
+diagnosis, so it cannot have an acceptance criterion. Ticket 02 owns getting a
+reproduction, because it is already in teleport's code; if it reproduces, it
+becomes its own ticket with a real diagnosis behind it.

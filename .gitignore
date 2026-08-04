@@ -10,3 +10,5 @@ dist/
 !.scratch/ankigta-v1/**
 !.scratch/panel-usability/
 !.scratch/panel-usability/**
+!.scratch/panel-rebuild/
+!.scratch/panel-rebuild/**
