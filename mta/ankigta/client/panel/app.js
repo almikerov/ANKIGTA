@@ -639,14 +639,25 @@
     e.preventDefault();
     send("filter", {text: document.getElementById("filter").value});
   });
-  document.getElementById("search").addEventListener("submit", function (event) {
-    event.preventDefault();
+  function submitSearch() {
     send("searchCards", {
       query: document.getElementById("search-query").value,
       deck: document.getElementById("deck").value,
       scope: document.getElementById("scope").value
     });
+  }
+
+  document.getElementById("search").addEventListener("submit", function (event) {
+    event.preventDefault();
+    submitSearch();
   });
+  /* A chosen deck and a chosen row-kind apply themselves. Both are dropdowns
+   * whose whole meaning is which rows are below them, and picking a value that
+   * changes nothing until a second button is pressed reads as a broken filter.
+   * The expression keeps the button: it is typed, and searching per keystroke
+   * would ask Anki a question after every letter. */
+  document.getElementById("deck").addEventListener("change", submitSearch);
+  document.getElementById("scope").addEventListener("change", submitSearch);
   function applyConnection() {
     var portText = document.getElementById("port").value;
     var port = portText === "" ? null : Number(portText);

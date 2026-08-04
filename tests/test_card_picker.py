@@ -33,6 +33,12 @@ class FakeNote:
     tags: list[str]
     id: int = 0
 
+    def items(self) -> list[tuple[str, str]]:
+        return [("Front", "你好"), ("Back", "hello")]
+
+    def keys(self) -> list[str]:
+        return ["Front", "Back"]
+
 
 @dataclass
 class FakeCard:
@@ -438,6 +444,66 @@ def test_a_rejected_expression_and_the_chosen_scope_cross_the_http_boundary() ->
     assert rejected_status == 400
     assert rejected["error"]["category"] == "search_rejected"
     assert "typing mistakes" in rejected["error"]["message"]
+
+
+def test_a_card_id_survives_the_only_spelling_mta_can_send_it_in() -> None:
+    """MTA writes a Lua number to JSON as a float once it is large enough.
+
+    Every real Anki card id is that large: `1784032937016` leaves the panel and
+    arrives as `1784032937016.0`. Read as `int` alone it is not a card id at
+    all, and the sentinel `0` that stood in for it reached a validating
+    constructor, threw `ValueError` out of the request handler and closed the
+    connection with no response -- which the panel could only show as
+    `protocol_error` on every card the owner owns.
+    """
+    collection = FakeCollection()
+    collection.cards[1784032937016] = FakeCard(1784032937016, 10, 2, 12, ["hsk1"])
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+    observation = RuntimeObservation(
+        anki_version="26.05",
+        v3_scheduler=True,
+        fsrs_enabled=True,
+        collection=CollectionObservation(state=CollectionState.OPEN),
+    )
+
+    with HealthServer(lambda: observation, card_picker=service) as server:
+        status, read = _post(
+            server,
+            "/v1/cards/read",
+            {"cardId": 1784032937016.0, "collectionUuid": BOUND_UUID},
+        )
+        refused_status, refused = _post(
+            server,
+            "/v1/cards/read",
+            {"cardId": 12.5, "collectionUuid": BOUND_UUID},
+        )
+
+    assert status == 200
+    assert read["payload"]["card"]["identity"]["cardId"] == 1784032937016
+    # And a number that is not a card id is an answer, never a dropped
+    # connection: the panel can say what was wrong only if it gets one.
+    assert refused_status == 400
+    assert refused["error"]["category"] == "invalid_anki_card_identity"
+
+
+def test_the_inspector_gets_the_note_a_link_refresh_must_not_pay_for() -> None:
+    """A read by full identity is the inspector's read, and wants the note.
+
+    It returned the card with an empty note, so the inspector had no fields to
+    show for any card at all. The refresh that asks the same question of every
+    stored link still must not read them.
+    """
+    collection = FakeCollection()
+    service = CardPickerService(lambda: bound_identity(), lambda: collection)
+    identity = AnkiCardIdentity(BOUND_UUID, 2)
+
+    inspected = service.read_identity(identity, with_note=True)
+    refreshed = service.read_identity(identity)
+
+    assert inspected.note_id == 2
+    assert [field.name for field in inspected.fields] == ["Front", "Back"]
+    assert refreshed.note_id == 0
+    assert refreshed.fields == ()
 
 
 class CountingCollection:

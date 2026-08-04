@@ -127,6 +127,11 @@ local settingsPending = {}
 -- because this is the side that waits.
 local panelRequestedAt = false
 local searchRequestedAt = false
+--- Whether this opening of the panel has already asked for cards. The picker
+--- fills itself once per open; a snapshot arrives whenever anything at all
+--- changes, and searching on each of them would restart the list under the
+--- player every few seconds.
+local searchIssued = false
 
 -- Filled in further down, declared here: the commands and the Review Mode
 -- entry wire themselves to it before those definitions are reached.
@@ -255,6 +260,7 @@ local function closePanel()
     guiBrowser = nil
     browser = nil
     pageReady = false
+    searchIssued = false
     releaseCursor()
 end
 
@@ -1558,6 +1564,17 @@ addEventHandler(F7_SNAPSHOT_EVENT, resourceRoot, function(snapshot)
         return
     end
     lastSnapshot = snapshot
+    -- Cards without being asked for. Opening the picker *is* the question, and
+    -- an empty list behind a button reads as "your collection has nothing" --
+    -- which is also why the deck list was missing: the companion sends it with
+    -- a search page, so until one had run there were no decks to choose from.
+    if not searchIssued
+        and type(snapshot.cardPicker) == "table"
+        and snapshot.cardPicker.enabled == true
+    then
+        searchIssued = true
+        actions.searchCards({})
+    end
     local arrivedAt = getTickCount()
     push()
     local server = type(snapshot.diagnostics) == "table"

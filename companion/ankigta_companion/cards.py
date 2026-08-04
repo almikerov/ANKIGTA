@@ -279,7 +279,20 @@ class CardPickerService:
         self.read_identity(identity)
         return True
 
-    def read_identity(self, identity: AnkiCardIdentity) -> CardView:
+    def read_identity(
+        self,
+        identity: AnkiCardIdentity,
+        *,
+        with_note: bool = False,
+    ) -> CardView:
+        """One card named by its full identity, optionally with its note.
+
+        The note is off by default because the caller that reads every stored
+        link asks this same question of every card it holds, and reading the
+        fields of all of them to refresh a state nobody is looking at is what
+        the page-sized reads elsewhere in this file exist to avoid. The
+        inspector, which is looking at exactly one card, asks for it.
+        """
         if not isinstance(identity, AnkiCardIdentity):
             raise CardPickerError(
                 "invalid_anki_card_identity",
@@ -303,7 +316,7 @@ class CardPickerService:
                 "card_missing",
                 "card is missing from the bound collection",
             )
-        return self._view(collection, collection_uuid, card)
+        return self._view(collection, collection_uuid, card, with_note=with_note)
 
     def _bound_collection(self) -> tuple[str, CollectionLike]:
         observation = self._identity_provider()

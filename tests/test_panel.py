@@ -595,6 +595,36 @@ def test_the_expression_and_the_scope_the_page_chose_reach_the_server(
     assert request.args[4] == "notes"
 
 
+def test_the_picker_fills_itself_when_it_opens(client: MtaSandbox) -> None:
+    """Opening the picker is the question; a button press is not needed to ask.
+
+    An empty list behind a Search button reads as "your collection has nothing
+    in it". It is also why the deck dropdown was empty: the companion sends the
+    deck list with a search page, so until one had run there were no decks to
+    choose from.
+    """
+    open_workspace(client)
+
+    searches = server_events(client, "ankigta:requestCardPicker")
+    assert len(searches) == 1
+    assert searches[0].args[0] == ""
+
+
+def test_the_picker_fills_itself_once_and_not_on_every_snapshot(
+    client: MtaSandbox,
+) -> None:
+    """A snapshot arrives whenever anything at all changes.
+
+    Searching on each of them would restart the list under the player every few
+    seconds, and throw away the deck and expression they had chosen.
+    """
+    open_workspace(client)
+    linked_snapshot(client)
+    linked_snapshot(client)
+
+    assert len(server_events(client, "ankigta:requestCardPicker")) == 1
+
+
 def test_a_search_with_no_scope_chosen_leaves_the_server_to_its_default(
     client: MtaSandbox,
 ) -> None:
