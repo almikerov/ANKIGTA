@@ -612,12 +612,10 @@
       document.getElementById("entity-radius").value = entity.radius;
       document.getElementById("entity-draw-now").checked =
         entity.drawNow === true;
-      var always = document.getElementById("entity-draw-always");
-      always.checked = entity.showAlways === true;
-      /* Standing behind the look: you say "always" about a zone you are
-       * currently looking at. One already set stays reachable, or it could
-       * never be unset. */
-      always.disabled = entity.drawNow !== true && entity.showAlways !== true;
+      /* Independent of the look: "always" is a standing answer about the
+       * entity, so it can be given without first asking to see the zone. */
+      document.getElementById("entity-draw-always").checked =
+        entity.showAlways === true;
     }
 
     renderInspector(state);
