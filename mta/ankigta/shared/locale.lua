@@ -38,12 +38,12 @@ Locale.strings = {
     ["settings.value.key"] = "Key",
     ["settings.showCorona"] = "Show corona",
     ["settings.reviewMode"] = "Review mode",
-    -- A way of looking, so it says what it does to the view rather than what
-    -- it does to any entity: `f7.showCorona` is the entity's own.
-    ["settings.drawRadius"] = "Draw the selected row's radius while F7 is open",
     ["settings.coronaColor"] = "Corona colour",
     ["settings.coronaOpacity"] = "Corona opacity (0–1)",
     ["settings.indicatorMode"] = "Next Card Indicator",
+    -- The question the map answers is not "where are my objects" but "which of
+    -- them are ready", so the words say state rather than presence.
+    ["settings.showEntitiesOnMap"] = "Show every Map Entity on the map",
     ["settings.focusOnSelect"] = "Look at a Map Entity when I select it",
     ["settings.reviewProtection"] = "Review Protection",
     ["settings.disablePlayerControls"] = "Disable player controls",
@@ -62,7 +62,10 @@ Locale.strings = {
     -- A colour is chosen from swatches drawn in the page, and typed as hex for
     -- anything the swatches do not offer.
     ["settings.colorHex"] = "Hex",
-    ["settings.value.sphere_and_minimap"] = "Sphere and minimap",
+    -- A beam, because that is what is drawn: a standing bar over the entity, as
+    -- wide as its Activation Zone's radius. It was called a sphere and never
+    -- was one -- the sphere is the *zone*, which `Draw radius` draws.
+    ["settings.value.beam_and_minimap"] = "Beam and minimap",
     ["settings.value.minimap_only"] = "Minimap only",
     ["settings.value.none"] = "No marker",
     -- Each says which cards the session takes, which is the whole reason
@@ -227,10 +230,19 @@ Locale.strings = {
     -- third would have arrived with the next overridable setting.
     ["f7.inherited"] = "following Settings",
     ["f7.radiusClearHint"] = "Empty the box to follow Settings again",
+    -- Beside `Show corona` rather than in Settings: both answer "what do I see
+    -- around this row", and they were on two different screens. This one is
+    -- still the player's own way of looking rather than anything the entity
+    -- says, so the hint says whose it is and how long it lasts.
+    ["f7.drawRadius"] = "Draw radius",
+    ["f7.drawRadiusHint"] =
+        "Draws the selected row's Activation Zone while F7 is open."
+        .. " Yours alone; nobody else sees it.",
     -- What `Draw always` became. That switch made a drawn radius permanent,
     -- which confused a way of looking with a property of the thing looked at.
-    -- This half is the thing's: a corona standing where it stands, the same
-    -- for anyone looking. The other half is `settings.drawRadius`.
+    -- `f7.showCorona` is the thing's half: a corona standing where it stands,
+    -- the same for anyone looking. `f7.drawRadius` is the looking half, and the
+    -- two are side by side on the pane again.
     ["f7.activationType"] = "Activation type",
     ["f7.activationKey"] = "Activation key",
     -- Drawn over the entity itself while the player is inside its zone. The

@@ -735,6 +735,26 @@
     .getElementById("entity-show-corona")
     .appendChild(showCoronaMenu.root);
 
+  /* `Draw radius` is on this pane and is not the entity's: it is this player's
+   * own way of looking, and it draws the selected row's Activation Zone while
+   * F7 is open. So it is sent as a setting rather than as an override, and it
+   * has two states where every other control here has three -- an entity has
+   * nothing to say about it, so there is no global for it to follow.
+   *
+   * Not disabled with the rest of the pane when nothing is selected, for the
+   * same reason: the answer is the player's and outlives any one row. */
+  var drawRadius = false;
+  var drawRadiusToggle = document.getElementById("entity-draw-radius");
+  drawRadiusToggle.addEventListener("click", function () {
+    send("setSetting", {key: "drawRadius", value: !drawRadius});
+  });
+
+  function renderDrawRadius(value) {
+    drawRadius = value === true;
+    drawRadiusToggle.textContent = t("settings.value." + String(drawRadius));
+    drawRadiusToggle.setAttribute("aria-pressed", String(drawRadius));
+  }
+
   /* What each list was last filled with, so an unrelated redraw does not
    * rebuild it -- which would shut it while it was open. */
   var entityOptionShape = null;
@@ -1013,8 +1033,7 @@
   function settingsSignature(rows) {
     return JSON.stringify(rows.map(function (row) {
       return [
-        row.kind, row.key, row.mapId || "", row.labelKey || "",
-        row.labelText || "", row.options || false,
+        row.kind, row.key, row.labelKey || "", row.options || false,
         row.min, row.max, row.step, row.clearOverrides === true
       ];
     }));
@@ -1070,26 +1089,18 @@
 
   /* Every setting is named by the string table. The one row that carried its
      own text was the per-map switch, which named a map -- the user's words --
-     and there is no per-map row any more. */
+     and there is no per-map row any more. Nor a heading, a note, or a class
+     saying a row belongs to one map: all four were per-map machinery, inert
+     since the setting they served was removed. */
   function settingLabel(row) {
     return t(row.labelKey || "settings." + row.key);
   }
 
   function settingClass(row) {
-    return (row.mapId ? "setting per-map" : "setting")
-      + (row.error ? " invalid" : "");
+    return row.error ? "setting invalid" : "setting";
   }
 
   function settingRow(row) {
-    /* A group's heading and the line that says there is nothing under it are
-     * text, not controls: giving them a label and an empty field would offer
-     * something to change where there is nothing. */
-    if (row.kind === "heading") {
-      return element("h3", "setting-heading", settingLabel(row));
-    }
-    if (row.kind === "note") {
-      return element("p", "setting-note", settingLabel(row));
-    }
     var wrap = element("div", settingClass(row));
     wrap.setAttribute("data-setting", row.key);
     settingLabels[row.key] = settingLabel(row);
@@ -1150,13 +1161,7 @@
       toggle.type = "button";
       toggle.id = settingId(row);
       toggle.addEventListener("click", function () {
-        /* The map travels with the change: a per-map setting written without
-         * one is a global value that nothing reads. */
-        send("setSetting", {
-          key: control.row.key,
-          value: !control.row.value,
-          mapId: control.row.mapId
-        });
+        send("setSetting", {key: control.row.key, value: !control.row.value});
       });
       control.node = toggle;
       control.apply = function (next) {
@@ -1171,11 +1176,7 @@
       var menu = drawnMenu({
         name: row.key,
         onChoose: function (value) {
-          send("setSetting", {
-            key: control.row.key,
-            value: value,
-            mapId: control.row.mapId
-          });
+          send("setSetting", {key: control.row.key, value: value});
         }
       });
       menu.button.id = settingId(row);
@@ -1202,11 +1203,7 @@
         name: row.key,
         value: row.value,
         onChoose: function (value) {
-          send("setSetting", {
-            key: control.row.key,
-            value: value,
-            mapId: control.row.mapId
-          });
+          send("setSetting", {key: control.row.key, value: value});
         }
       });
       picker.button.id = settingId(row);
@@ -1233,8 +1230,7 @@
         key: control.row.key,
         value: control.row.kind === "number"
           ? parseFloat(input.value)
-          : input.value,
-        mapId: control.row.mapId
+          : input.value
       });
     });
     /* What Lua last reported for this field. A push that reports the same
@@ -1268,6 +1264,7 @@
     renderConnection(state.connection || {state: "disconnected"});
     selected = state.selected || {mapId: false, entityId: false, cardId: false};
     focusOnSelect = state.focusOnSelect !== false;
+    renderDrawRadius(state.drawRadius);
     renderStudy(state.study || {active: false, resumable: false});
     renderSettings(state.settings);
     /* The entity pane's lists are filled from the same rows Settings is drawn

@@ -823,6 +823,71 @@ def test_an_unrelated_push_does_not_throw_away_what_is_being_typed() -> None:
     assert node(moved, "set-activationRadius")["value"] == "7"
 
 
+# --- what per-map settings left behind ---------------------------------------
+#
+# Ticket 02 removed per-map settings and ticket 03 left their branches here:
+# a `heading` and a `note` row kind that only the per-map group used, a
+# `per-map` class on a row, and a `mapId` travelling with every change. All four
+# have been inert since, and inert code is code the next reader has to decide is
+# inert.
+
+
+@pytest.mark.parametrize("kind", ["boolean", "choice", "color", "number"])
+def test_a_change_carries_no_map_with_it(kind: str) -> None:
+    """There is no per-map setting for a map to belong to."""
+    rows = {
+        "boolean": (BOOLEAN_ROW, {"click": {"id": "set-muteGameWorld"}}),
+        "choice": (
+            CHOICE_ROW,
+            {"click": {"under": "settings-rows", "attr": "data-value",
+                       "is": "allow_all"}},
+        ),
+        "color": (
+            COLOR_ROW,
+            {"click": {"under": "settings-rows", "attr": "data-value",
+                       "is": "#ef4444"}},
+        ),
+        "number": (NUMBER_ROW, {"change": {"id": "set-activationRadius"}}),
+    }
+    row, act = rows[kind]
+    answer = run_page([{"receive": state(settings=settings(row))}, act])
+
+    sent = actions(answer, "setSetting")
+    assert sent, kind
+    assert all("mapId" not in payload for payload in sent), sent
+
+
+def test_no_row_claims_to_belong_to_one_map() -> None:
+    answer = run_page(
+        [{"receive": state(settings=settings(NUMBER_ROW, CHOICE_ROW))}]
+    )
+
+    assert descendants(node(answer, "settings-rows"), cls="per-map") == []
+
+
+def test_a_row_kind_the_schema_cannot_produce_is_not_drawn_as_prose() -> None:
+    """`heading` and `note` were the per-map group's own two kinds, and rows are
+    derived from the schema -- whose rules are boolean, choice, key, number,
+    color, secret and placement. A page that still drew a heading would be
+    holding open a door to a room that was demolished."""
+    answer = run_page(
+        [
+            {
+                "receive": state(
+                    settings=settings(
+                        {"kind": "heading", "key": "group", "labelKey": "x"},
+                        {"kind": "note", "key": "aside", "labelKey": "y"},
+                    )
+                )
+            }
+        ]
+    )
+
+    rows = node(answer, "settings-rows")
+    assert descendants(rows, cls="setting-heading") == []
+    assert descendants(rows, cls="setting-note") == []
+
+
 def test_a_settings_row_still_sends_after_a_redraw_that_did_not_rebuild_it() -> None:
     """The control reads the row it was last given rather than the one it was
     built with, or a row kept across a push would send a stale value."""
@@ -1133,6 +1198,97 @@ def test_a_typed_opacity_is_sent_as_the_number_it_is() -> None:
     )
 
     assert actions(answer, "setEntityMarks") == [{"coronaOpacity": 0.25}]
+
+
+# --- `Draw radius` is beside `Show corona`, and is still the player's --------
+
+
+def label_of(answer: dict[str, Any], control_id: str) -> dict[str, Any]:
+    """The `<label>` a control sits in, so a test can ask what is next to it."""
+    for candidate in walk(node(answer, "entity-fields")):
+        if any(child["id"] == control_id for child in walk(candidate)):
+            if candidate["tag"] == "LABEL":
+                return candidate
+    raise AssertionError(f"#{control_id} is not inside a label on the pane")
+
+
+def test_draw_radius_sits_next_to_show_corona_on_the_entity_pane() -> None:
+    """Ticket 04 pulled the two apart correctly -- one is a way of looking and
+    the other is a property of the entity -- and then left them on different
+    screens. In use that is the wrong seam: both answer "what do I see around
+    this row", both are reached while a row is selected, and walking to Settings
+    to turn one on and back to the list to turn the other on is two journeys for
+    one decision.
+    """
+    answer = run_page([{"receive": selecting(entity())}])
+
+    rows = node(answer, "entity-fields")["children"]
+    drawing = rows.index(label_of(answer, "entity-draw-radius"))
+    corona = rows.index(label_of(answer, "entity-show-corona"))
+    assert abs(drawing - corona) == 1
+
+
+def test_draw_radius_is_sent_as_a_setting_and_never_as_an_override() -> None:
+    """It stays the client's own. An entity has nothing to say about a way of
+    looking, so nothing about it is written to the entity."""
+    answer = run_page(
+        [
+            {"receive": selecting(entity(), drawRadius=False)},
+            {"click": {"id": "entity-draw-radius"}},
+        ]
+    )
+
+    assert actions(answer, "setSetting") == [{"key": "drawRadius", "value": True}]
+    assert actions(answer, "setEntityMarks") == []
+
+
+def test_draw_radius_has_two_states_and_not_three() -> None:
+    """Every other control on this pane carries a way back to the global it
+    follows. This one has no global above it, so offering `Follow Settings`
+    would be offering a third state that means nothing."""
+    answer = run_page([{"receive": selecting(entity(), drawRadius=True)}])
+
+    toggle = node(answer, "entity-draw-radius")
+    assert toggle["tag"] == "BUTTON"
+    assert descendants(label_of(answer, "entity-draw-radius"), cls="picker-option") == []
+    off = run_page(
+        [
+            {"receive": selecting(entity(), drawRadius=True)},
+            {"click": {"id": "entity-draw-radius"}},
+        ]
+    )
+    assert actions(off, "setSetting") == [{"key": "drawRadius", "value": False}]
+
+
+def test_draw_radius_says_which_of_the_two_it_currently_is() -> None:
+    """A control whose label is the action rather than the state leaves the
+    player guessing which way it is set."""
+    on = run_page(
+        [
+            {
+                "receive": selecting(
+                    entity(),
+                    drawRadius=True,
+                    locale={"settings.value.true": "On"},
+                )
+            }
+        ]
+    )
+    assert node(on, "entity-draw-radius")["text"] == "On"
+    assert node(on, "entity-draw-radius")["attrs"]["aria-pressed"] == "true"
+
+    off = run_page([{"receive": selecting(entity(), drawRadius=False)}])
+    assert off and node(off, "entity-draw-radius")["attrs"]["aria-pressed"] == "false"
+
+
+def test_draw_radius_stays_usable_with_no_row_selected() -> None:
+    """The rest of the pane goes quiet without a selection because it edits the
+    selected entity. This one is the player's own answer and outlives any one
+    row, so greying it out would say it belonged to the entity."""
+    answer = run_page([{"receive": state()}])
+
+    assert node(answer, "entity-draw-radius")["disabled"] is False
+    assert node(answer, "entity-radius")["disabled"] is True
 
 
 def test_with_nothing_selected_the_marks_controls_are_disabled() -> None:

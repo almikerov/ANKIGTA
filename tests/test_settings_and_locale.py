@@ -284,13 +284,20 @@ def test_defaults_match_what_the_modules_already_ship(
     )(key) == expected
 
 
-def test_panel_order_starts_with_the_companion_port(
+def test_panel_order_starts_with_ui_scale_then_the_companion_port(
     settings: MtaSandbox,
 ) -> None:
-    """Nothing else in the panel does anything until Anki is reachable."""
+    """UI Scale is the one a player reaches for before any other: nothing on
+    this panel can be read comfortably until the interface is a readable size,
+    and on a list this long it was second from last, at the bottom of a scroll.
+
+    The companion port keeps second place for the reason it had first --
+    nothing else in the panel does anything until Anki is reachable.
+    """
     ordered = settings.eval("function() return ANKIGTA.Settings.orderedKeys() end")()
 
-    assert ordered[1] == "connectionPort"
+    assert ordered[1] == "uiScale"
+    assert ordered[2] == "connectionPort"
 
 
 @pytest.mark.parametrize(
@@ -595,6 +602,183 @@ def test_drawing_the_selected_zone_is_off_until_the_player_asks(
     assert settings.eval(
         "function() return ANKIGTA.Settings.default('drawRadius') end"
     )() is False
+
+
+# --- which surface a setting is offered on -----------------------------------
+
+
+def test_drawing_the_selected_zone_is_offered_beside_show_corona(
+    settings: MtaSandbox,
+) -> None:
+    """`Draw radius` and `Show corona` answer one question between them -- "what
+    do I see around this row" -- and both are reached while a row is selected.
+    So it names the surface it belongs to, and is not a row in Settings nor a
+    line in the order they are laid out in.
+    """
+    assert settings.eval(
+        "function() return ANKIGTA.Settings.shownWith('drawRadius') end"
+    )() == "entity"
+    order = settings.eval("ANKIGTA.Settings.order")
+    assert "drawRadius" not in {str(order[index]) for index in order.keys()}
+    ordered = settings.eval("function() return ANKIGTA.Settings.orderedKeys() end")()
+    assert "drawRadius" not in {
+        str(ordered[index]) for index in ordered.keys()
+    }
+
+
+def test_a_setting_that_names_no_surface_belongs_to_settings(
+    settings: MtaSandbox,
+) -> None:
+    """Otherwise every setting would have to remember to say so, and the one
+    that forgot would be the one nobody could reach."""
+    for key in ("uiScale", "coronaOpacity", "indicatorMode"):
+        assert settings.eval(
+            "function(k) return ANKIGTA.Settings.shownWith(k) end"
+        )(key) == "settings", key
+
+
+def test_a_setting_the_settings_list_does_not_show_is_left_out_of_its_order(
+    settings: MtaSandbox,
+) -> None:
+    """`orderedKeys` appends a setting missing from `Settings.order` so that
+    forgetting to lay one out cannot hide it. A setting shown on another surface
+    is not that mistake -- it is reachable and named -- so it is left out rather
+    than appended to a list it does not belong to."""
+    settings.eval(
+        """
+        function()
+            ANKIGTA.Settings.schema.somewhereElse =
+                {authority = "client", default = false,
+                 rule = {kind = "boolean"}, shownWith = "entity"}
+            ANKIGTA.Settings.schema.forgotten =
+                {authority = "client", default = false,
+                 rule = {kind = "boolean"}}
+        end
+        """
+    )()
+    ordered = settings.eval("function() return ANKIGTA.Settings.orderedKeys() end")()
+    keys = {str(ordered[index]) for index in ordered.keys()}
+
+    assert "forgotten" in keys
+    assert "somewhereElse" not in keys
+
+
+def test_the_map_toggle_is_the_players_own_and_off_until_asked_for(
+    settings: MtaSandbox,
+) -> None:
+    """A world with hundreds of entities is a map with hundreds of blips, so
+    nobody gets one they did not ask for. And it is a toggle of its own rather
+    than a fourth value of `indicatorMode`: that setting answers "how is the
+    next card marked" about one entity, this one answers "is the rest of the
+    world marked at all".
+    """
+    assert can_write(settings, "client", "showEntitiesOnMap") is True
+    assert can_write(settings, "server", "showEntitiesOnMap") is not True
+    assert settings.eval(
+        "function() return ANKIGTA.Settings.default('showEntitiesOnMap') end"
+    )() is False
+    modes = settings.eval("ANKIGTA.Settings.schema.indicatorMode.rule.values")
+    assert "showEntitiesOnMap" not in {
+        str(modes[index]) for index in modes.keys()
+    }
+
+
+# --- a number is put back to the precision its rule declares -----------------
+
+
+def test_a_value_off_the_wire_is_read_at_the_precision_its_rule_declares(
+    settings: MtaSandbox,
+) -> None:
+    """Measured on the owner's running server: every server-to-client hop packs
+    a non-integer Lua number into a 32-bit float, so a stored `0.6` arrives as
+    `0.60000001999999997` and is read as `0.60000002`.
+    """
+    rounded = settings.eval(
+        "function(k, v) return ANKIGTA.Settings.rounded(k, v) end"
+    )
+
+    assert rounded("coronaOpacity", 0.60000001999999997) == 0.6
+    assert rounded("coronaOpacity", 0.55000000999999998) == 0.55
+    # And a value that never lost anything is handed straight back.
+    assert rounded("coronaOpacity", 0.25) == 0.25
+
+
+def test_only_a_rule_that_declares_a_precision_gets_one_applied(
+    settings: MtaSandbox,
+) -> None:
+    """A rule with no `decimals` declares none, and none of them needs one:
+    those settings step in whole or half units, and both are exact on the wire.
+    Rounding them anyway would be this function inventing a rule.
+    """
+    rounded = settings.eval(
+        "function(k, v) return ANKIGTA.Settings.rounded(k, v) end"
+    )
+
+    assert rounded("activationRadius", 7.5) == 7.5
+    assert rounded("connectionPort", 40001) == 40001
+    # Not a number and not a numeric setting: handed back untouched rather than
+    # turned into one.
+    assert rounded("coronaColor", "#3cc8ff") == "#3cc8ff"
+    assert rounded("coronaOpacity", False) is False
+    assert rounded("nothing at all", 0.6) == 0.6
+
+
+def test_every_numeric_setting_declares_a_precision_or_steps_exactly(
+    settings: MtaSandbox,
+) -> None:
+    """The invariant behind the rule above, over the whole schema rather than
+    over the settings the tail was noticed on.
+
+    A numeric setting either says how many decimals it has -- and is put back to
+    them -- or steps in units a 32-bit float holds exactly. A third kind would
+    be a setting that can arrive with a tail and has nothing to be put back to.
+    """
+    numeric = settings.eval(
+        """
+        function()
+            local found = {}
+            for key, definition in pairs(ANKIGTA.Settings.schema) do
+                if definition.rule.kind == "number" then
+                    found[key] = definition.rule
+                end
+            end
+            return found
+        end
+        """
+    )()
+
+    assert len(list(numeric.keys())) > 0
+    for key in numeric.keys():
+        rule = numeric[key]
+        if rule["decimals"]:
+            continue
+        step = rule["step"]
+        assert step is not None, f"{key} declares neither decimals nor a step"
+        # Exact in single precision: a whole number, or a fraction whose
+        # denominator is a power of two.
+        assert (float(step) * 2) % 1 == 0, f"{key} steps by {step}"
+
+
+def test_a_choice_stored_under_the_name_it_used_to_have_is_still_that_choice(
+    settings: MtaSandbox,
+) -> None:
+    """`sphere_and_minimap` named a shape nothing ever drew -- what stands over
+    the next card is a beam, and the sphere is the Activation Zone.
+
+    A stored setting is the player's answer, so the rename carries: the old word
+    validates, and normalizing puts it into the one the rule offers today.
+    """
+    assert validate(settings, "indicatorMode", "sphere_and_minimap") is True
+    assert settings.eval(
+        "function(k, v) return ANKIGTA.Settings.normalize(k, v) end"
+    )("indicatorMode", "sphere_and_minimap") == "beam_and_minimap"
+    # The list a player is offered holds only the name it is called now.
+    values = settings.eval("ANKIGTA.Settings.schema.indicatorMode.rule.values")
+    assert "sphere_and_minimap" not in {
+        str(values[index]) for index in values.keys()
+    }
+    # And a word that was never one of the choices is still refused.
+    assert validate(settings, "indicatorMode", "sphere_only")[0] is False
 
 
 def test_the_reason_a_colour_is_refused_has_words_behind_it(

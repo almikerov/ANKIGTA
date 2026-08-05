@@ -99,19 +99,24 @@ def key_prefixes() -> frozenset[str]:
 
 @cache
 def schema_labels() -> frozenset[str]:
-    """One `settings.<key>` per setting, read out of the loaded schema.
+    """One `settings.<key>` per setting the Settings list draws a row for.
 
     The settings rows are derived from the schema at runtime, so a setting
     added with no label behind it renders as `settings.uiScale` on its row.
     Out of the chunk rather than the file: the regex this replaced wanted
     `authority` on the line after the key and missed the eight settings written
     on one line, `uiScale` among them.
+
+    A setting the schema places on another surface is not one of these. Its
+    label is that surface's -- `f7.drawRadius` is a `data-i18n` on the entity
+    pane -- and asking for `settings.drawRadius` here would demand a string for
+    a row that no longer exists.
     """
     sandbox = MtaSandbox()
     try:
         sandbox.load("shared/settings.lua")
-        schema = sandbox.eval("ANKIGTA.Settings.schema")
-        return frozenset("settings." + str(key) for key in schema.keys())
+        keys = sandbox.eval("ANKIGTA.Settings.orderedKeys()")
+        return frozenset("settings." + str(keys[index]) for index in keys.keys())
     finally:
         sandbox.close()
 

@@ -321,6 +321,12 @@ local function closePanel()
     pageReady = false
     searchIssued = false
     editorOpen = false
+    -- The panel opens where it always opens: on the list. What outlives the
+    -- window is the *answer* -- the settings the player changed, which are
+    -- stored and untouched by this -- and not the screen they changed it on. A
+    -- window that reopens on Settings is a window whose state the player has to
+    -- notice and undo before doing the thing they opened it for.
+    requestedSection = nil
     -- The selection is deliberately not cleared. `Draw radius` stops drawing
     -- with the window, but the row the player was working on is still the row
     -- they were working on, so opening F7 again puts the zone straight back
@@ -360,7 +366,8 @@ end
 -- server-side-only guard is there to prevent.
 local SETTINGS_NOT_SHOWN = {secret = true, placement = true}
 
-local function offered(key, rule)
+--- May the page change this setting at all?
+local function editableFromPanel(key, rule)
     return not SETTINGS_NOT_SHOWN[rule.kind or ""]
 end
 
@@ -373,11 +380,22 @@ local function schema()
     return ANKIGTA.Settings
 end
 
+--- Does the *Settings* list carry a row for it?
+--
+-- Not the same question as `editableFromPanel`. `drawRadius` is edited from the
+-- panel -- it is a toggle on the entity pane, beside the `Show corona` it is
+-- half a decision with -- and is not a row here. Which surface a setting
+-- belongs to is the schema's answer, so a second one moving is a line there
+-- rather than a list of exceptions kept in this file.
+local function shownInSettings(key, rule)
+    return editableFromPanel(key, rule) and schema().shownWith(key) == "settings"
+end
+
 local function ownedByServer(key)
     return schema().authorityOf(key) == schema().SERVER
 end
 
-local function currentValue(key)
+local function storedValue(key)
     if ownedByServer(key) then
         if settingsPending[key] ~= nil then
             return settingsPending[key]
@@ -394,12 +412,28 @@ local function currentValue(key)
     return schema().default(key)
 end
 
+--- The value as the player should read it.
+--
+-- The one boundary between a number that has been stored and shipped about and
+-- a number somebody looks at, so the rounding happens here rather than at each
+-- of the places that show one: the Settings row, the global an entity follows,
+-- and the entity pane all come through this.
+--
+-- What it is for: a server-owned number reaches this side as a 32-bit float, so
+-- a stored `0.6` arrives as `0.60000001999999997` and read as `0.60000002` --
+-- a wrong rendering of the right value. Rounded to the precision the setting's
+-- own rule declares, it also compares equal to what the player chose, so the
+-- snapshot that follows an edit does not read as somebody else editing it back.
+local function currentValue(key)
+    return schema().rounded(key, storedValue(key))
+end
+
 local function settingsRows()
     local rows = {}
     for _, key in ipairs(schema().orderedKeys()) do
         local definition = schema().definition(key)
         local rule = definition and definition.rule or {}
-        if offered(key, rule) then
+        if shownInSettings(key, rule) then
             local row = {
                 key = key,
                 labelKey = "settings." .. key,
@@ -827,6 +861,56 @@ local function panelMarkable()
     return marks
 end
 
+--- The one link state that means a card will really open here.
+--
+-- Every other state -- unlinked, card missing, entity missing, waiting on a map
+-- save, a collision -- is a Map Entity ANKIGTA knows about and cannot study
+-- through. On the map that is one answer rather than five: the question a map
+-- answers is "which of these is ready", not "why is this one not".
+local LINK_STATE_ACTIVE = "Active Spatial Link"
+
+--- Every Map Entity the last snapshot holds, for the map.
+--
+-- The authored position, not a Runtime Instance's. The map is the one surface
+-- that shows a Map Entity the player cannot see, so a blip is wanted for an
+-- entity three districts away -- and that entity has no element here to read a
+-- position off. The mark that follows a thing as it moves is the corona, which
+-- is attached to it.
+--
+-- Off the snapshot rather than off `entityRows`, for the same reason
+-- `panelMarkable` is: a row hidden by the filter the player typed is still a
+-- thing standing in the world, and hiding it from a list must not take it off
+-- the map.
+local function panelMapEntities()
+    local entities = {}
+    for _, entry in ipairs(lastSnapshot and lastSnapshot.entities or {}) do
+        local mapEntity = entry.mapEntity
+        local authored = type(mapEntity.authored) == "table"
+            and mapEntity.authored or {}
+        local position = type(authored.position) == "table"
+            and authored.position or {}
+        local world = type(authored.world) == "table" and authored.world or {}
+        local x = tonumber(position.x)
+        local y = tonumber(position.y)
+        local z = tonumber(position.z)
+        -- A Map Entity with no position is one nothing can be put on a map at,
+        -- which is a stored record too damaged to draw rather than a state.
+        if x and y and z then
+            entities[#entities + 1] = {
+                mapId = mapEntity.mapId,
+                entityId = mapEntity.entityId,
+                x = x,
+                y = y,
+                z = z,
+                dimension = tonumber(world.dimension) or 0,
+                connected = entry.link
+                    and entry.link.state == LINK_STATE_ACTIVE or false,
+            }
+        end
+    end
+    return entities
+end
+
 --- Which Map Entity the player has selected, if any.
 --
 -- The panel owns the selection -- the page is a view -- so whatever draws on
@@ -874,7 +958,15 @@ local function entityRows(snapshot)
         local given = givenName(entry)
         local original = editorName(entry)
         local metadata = type(entry.metadata) == "table" and entry.metadata or {}
-        local ownRadius = tonumber(metadata.radius)
+        -- Through the same door the globals above came through. An override
+        -- crossed the same wire, and both are read at the precision the one
+        -- rule behind them declares -- which for a radius is none, because it
+        -- steps in halves and a half is exact in a 32-bit float. Asked anyway,
+        -- so "how is this number read" has one answer for both sides of the
+        -- override rather than one per key.
+        local ownRadius = schema().rounded(
+            "activationRadius", tonumber(metadata.radius)
+        )
         -- `nil` where the entity says nothing of its own, which is what the
         -- store means by a NULL override column.
         local ownShowCorona = metadata.showCorona
@@ -882,7 +974,11 @@ local function entityRows(snapshot)
             and metadata.coronaColor ~= ""
             and metadata.coronaColor
             or nil
-        local ownCoronaOpacity = tonumber(metadata.coronaOpacity)
+        -- And this is the one the tail was found on: an entity told `0.55` of
+        -- its own reads `0.55000001` without it, exactly as the global did.
+        local ownCoronaOpacity = schema().rounded(
+            "coronaOpacity", tonumber(metadata.coronaOpacity)
+        )
         local ownActivationType = type(metadata.activationType) == "string"
             and metadata.activationType ~= ""
             and metadata.activationType
@@ -1134,6 +1230,10 @@ local function push()
         -- own answer, and pushed with the state like everything else the page
         -- draws from: the page decides nothing.
         focusOnSelect = currentValue("focusOnSelect") ~= false,
+        -- The other way of looking the pane offers. It is on the entity pane
+        -- rather than in Settings and it is still the client's own, so it
+        -- travels beside `focusOnSelect` rather than among the settings rows.
+        drawRadius = currentValue("drawRadius") == true,
         entityFilter = entityFilter,
         entityTotal = #(lastSnapshot and lastSnapshot.entities or {}),
         study = studyState(),
@@ -1458,7 +1558,7 @@ function actions.setSetting(payload)
         return
     end
     local definition = schema().definition(key)
-    if not definition or not offered(key, definition.rule or {}) then
+    if not definition or not editableFromPanel(key, definition.rule or {}) then
         return
     end
     if SETTINGS_DELEGATED[key] then
@@ -2040,6 +2140,11 @@ addEventHandler(F7_SNAPSHOT_EVENT, resourceRoot, function(snapshot)
     if ANKIGTA.WorldMarks then
         ANKIGTA.WorldMarks.refresh()
     end
+    -- And the map, for the same reason: a link made a moment ago is an entity
+    -- that has just stopped reading as disconnected.
+    if ANKIGTA.Indicator and ANKIGTA.Indicator.refreshMap then
+        ANKIGTA.Indicator.refreshMap()
+    end
     -- Cards without being asked for. Opening the picker *is* the question, and
     -- an empty list behind a button reads as "your collection has nothing" --
     -- which is also why the deck list was missing: the companion sends it with
@@ -2377,6 +2482,9 @@ ANKIGTA.Panel = {
     -- that can disagree with this one.
     selection = panelSelection,
     markable = panelMarkable,
+    -- What the map reads. Same rule as `markable`: the panel holds the
+    -- snapshot, so what draws asks here instead of keeping a second copy.
+    mapEntities = panelMapEntities,
     runtimeElements = runtimeElementsFor,
     entityKey = panelEntityKey,
 }

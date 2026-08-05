@@ -907,9 +907,41 @@ def test_every_setting_the_schema_owns_is_offered(client: MtaSandbox) -> None:
             """
         )().values()
     )
-    # The two the panel deliberately keeps elsewhere: a secret is never shown
-    # back, and placement is dragged rather than typed.
-    assert expected - offered <= {"connectionToken", "uiPlacement"}
+    # The three the panel deliberately keeps elsewhere: a secret is never shown
+    # back, placement is dragged rather than typed, and `Draw radius` is a
+    # toggle on the entity pane beside the `Show corona` it is half a decision
+    # with. Each is reachable; none is a row here.
+    assert expected - offered <= {"connectionToken", "uiPlacement", "drawRadius"}
+
+
+def test_ui_scale_is_the_first_row(client: MtaSandbox) -> None:
+    """Before anything else here can be read comfortably, the interface has to
+    be a readable size -- and on a panel with this many rows it was second from
+    last, at the bottom of a scroll."""
+    authorize(client)
+    announce(client, state="connected")
+    press_f7(client)
+    page_ready(client)
+    open_settings(client)
+
+    assert [row["key"] for row in settings_rows(client)][:2] == [
+        "uiScale",
+        "connectionPort",
+    ]
+
+
+def test_draw_radius_is_not_one_of_the_rows(client: MtaSandbox) -> None:
+    """It is on the entity pane beside `Show corona` now, and a control on two
+    screens is two places to change one answer."""
+    authorize(client)
+    announce(client, state="connected")
+    press_f7(client)
+    page_ready(client)
+    open_settings(client)
+
+    assert "drawRadius" not in [row["key"] for row in settings_rows(client)]
+    # And the page is told what it is, because the pane draws it.
+    assert last_state(client)["drawRadius"] is False
 
 
 def test_a_row_carries_the_control_its_rule_asks_for(client: MtaSandbox) -> None:
@@ -1051,6 +1083,54 @@ def test_leaving_settings_returns_to_where_the_player_was(
     act(client, "closeSettings")
 
     assert last_state(client)["section"] == "entities"
+
+
+# --- Settings does not outlive the window it was opened in --------------------
+
+
+def test_closing_f7_on_settings_and_reopening_lands_on_the_list(
+    client: MtaSandbox,
+) -> None:
+    """The same shape ticket 04 settled for the drawn zone: what outlives the
+    window is the *answer*, not the screen it was given on.
+
+    A window that reopens where it was left is a window whose state the player
+    has to notice and undo before doing the thing they opened it for.
+    """
+    authorize(client)
+    announce(client, state="connected")
+    press_f7(client)
+    page_ready(client)
+    open_settings(client)
+    assert last_state(client)["section"] == "settings"
+
+    press_f7(client)
+    press_f7(client)
+    page_ready(client)
+
+    assert last_state(client)["section"] == "entities"
+
+
+def test_only_the_screen_resets_and_not_the_settings_on_it(
+    client: MtaSandbox,
+) -> None:
+    """The settings the player changed are stored; the section they changed
+    them on is not a setting at all."""
+    authorize(client)
+    announce(client, state="connected")
+    press_f7(client)
+    page_ready(client)
+    open_settings(client)
+    act(client, "setSetting", {"key": "muteGameWorld", "value": True})
+    act(client, "setSetting", {"key": "uiScale", "value": 1.25})
+
+    press_f7(client)
+    press_f7(client)
+    page_ready(client)
+    open_settings(client)
+
+    assert row_for(client, "muteGameWorld")["value"] is True
+    assert row_for(client, "uiScale")["value"] == 1.25
 
 
 def test_the_secret_is_never_sent_back_to_the_page(client: MtaSandbox) -> None:

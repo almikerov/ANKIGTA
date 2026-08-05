@@ -781,9 +781,11 @@ def test_the_client_may_not_write_a_setting_the_server_owns(
 
 
 CLIENT_VALUES = {
-    "indicatorMode": "sphere_and_minimap",
+    "indicatorMode": "beam_and_minimap",
     # A way of looking, so it is this machine's answer rather than the world's.
     "drawRadius": True,
+    # The other half of what ANKIGTA puts on the map, and the player's own too.
+    "showEntitiesOnMap": True,
     "focusOnSelect": False,
     "reviewProtection": False,
     "disablePlayerControls": False,
@@ -825,10 +827,31 @@ def test_every_setting_the_client_owns_survives_a_restart_and_is_reapplied(
     try:
         for key, value in written.items():
             assert plain(client_get(restarted, key)) == value, key
-        assert restarted.eval("ANKIGTA.Indicator.mode") == "sphere_and_minimap"
+        assert restarted.eval("ANKIGTA.Indicator.mode") == "beam_and_minimap"
+        assert restarted.eval("ANKIGTA.Indicator.showEntitiesOnMap") is True
         assert restarted.eval("function() return reviewModeState() end")()[
             "cardAudioEnabled"
         ] is False
+    finally:
+        restarted.close()
+
+
+def test_a_mode_stored_under_the_name_it_used_to_have_is_still_that_mode(
+    player: MtaSandbox,
+) -> None:
+    """`sphere_and_minimap` named a shape nothing ever drew, and became
+    `beam_and_minimap`. A stored setting is the player's answer: an unrecognized
+    value is discarded on load, so without the rename being carried the mark
+    would have gone quietly back to `none` for anyone who had chosen it.
+    """
+    player.write_file(
+        "@ankigta-settings.json", '{"indicatorMode":"sphere_and_minimap"}'
+    )
+
+    restarted = open_client(player.files)
+    try:
+        assert client_get(restarted, "indicatorMode") == "beam_and_minimap"
+        assert restarted.eval("ANKIGTA.Indicator.mode") == "beam_and_minimap"
     finally:
         restarted.close()
 
