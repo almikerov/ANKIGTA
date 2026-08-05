@@ -93,15 +93,36 @@
                    holds the global that is actually in force, and this says
                    that is what it is. -->
               <span class="inherited-mark" id="entity-radius-inherited"
-                    data-i18n="f7.radiusInherited" hidden></span>
+                    data-i18n="f7.inherited" hidden></span>
+            </label>
+            <!-- Which of the two ways in this entity offers, and the key that
+                 takes it. Both are globals a link may override, so both are
+                 drawn as the value in force with a mark beside them saying
+                 whether it is the entity's own. -->
+            <label class="inline">
+              <span data-i18n="f7.activationType"></span>
+              <span id="entity-activation-type"></span>
+              <span class="inherited-mark" id="entity-activation-type-inherited"
+                    data-i18n="f7.inherited" hidden></span>
+            </label>
+            <label class="inline">
+              <span data-i18n="f7.activationKey"></span>
+              <span id="entity-activation-key"></span>
+              <span class="inherited-mark" id="entity-activation-key-inherited"
+                    data-i18n="f7.inherited" hidden></span>
             </label>
             <!-- A property of the entity, not a way of looking: the corona
                  stands where the thing stands and everyone sees it. Drawing
                  the selected row's radius is the other half of what
-                 `Draw always` used to confuse, and it is in Settings. -->
-            <label class="inline check">
-              <input type="checkbox" id="entity-show-corona" />
+                 `Draw always` used to confuse, and it is in Settings.
+                 Three-way rather than a checkbox: off on this one entity and
+                 following a global that is off look the same today and stop
+                 looking the same the moment the global is turned on. -->
+            <label class="inline">
               <span data-i18n="f7.showCorona"></span>
+              <span id="entity-show-corona"></span>
+              <span class="inherited-mark" id="entity-show-corona-inherited"
+                    data-i18n="f7.inherited" hidden></span>
             </label>
             <label class="inline">
               <span data-i18n="f7.coronaColor"></span>
@@ -110,7 +131,7 @@
                    over a page rendered into a game window. -->
               <span id="entity-corona-color"></span>
               <span class="inherited-mark" id="entity-corona-color-inherited"
-                    data-i18n="f7.coronaInherited" hidden></span>
+                    data-i18n="f7.inherited" hidden></span>
             </label>
             <label class="inline">
               <span data-i18n="f7.coronaOpacity"></span>
@@ -118,7 +139,7 @@
                      step="0.05" data-inherited="false"
                      data-i18n-title="f7.coronaOpacityClearHint" />
               <span class="inherited-mark" id="entity-corona-opacity-inherited"
-                    data-i18n="f7.coronaInherited" hidden></span>
+                    data-i18n="f7.inherited" hidden></span>
             </label>
           </div>
         </div>
@@ -211,6 +232,21 @@
       <button type="button" id="close-settings" data-i18n="common.close"></button>
     </div>
     <div class="settings-rows" id="settings-rows"></div>
+  </section>
+
+  <!-- Clearing overrides across a world is not undone by pressing the control
+       again, so it names how many links it is about to change and asks. The
+       number comes from the server, which is the side about to do it. -->
+  <section class="modal" id="bulk-dialog" role="dialog" aria-modal="true" hidden>
+    <div class="modal-card">
+      <h2 data-i18n="settings.applyToAll.title"></h2>
+      <p id="bulk-question"></p>
+      <div class="modal-actions">
+        <button type="button" id="bulk-cancel" data-i18n="common.cancel"></button>
+        <button type="button" id="bulk-confirm" class="primary"
+                data-i18n="settings.applyToAll.confirm"></button>
+      </div>
+    </div>
   </section>
 
   <!-- Replacing a card is the one action here that throws away a link the

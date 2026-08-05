@@ -87,7 +87,9 @@ def test_f7_exposes_missing_metadata_and_relink_actions() -> None:
     assert "relinkEntity" in main
     assert "Entity missing" in main
     assert "entityTag" in main
-    assert "showCorona" in main
+    # What an entity says of its own is read as a whole rather than field by
+    # field now, so the snapshot names the reader instead of the fields.
+    assert "Store.metadataOf(row)" in main
     assert "RELINK_ENTITY_REQUEST_EVENT" in main
     assert 'relink_entity' in main
     assert "RELINK_ENTITY_REQUEST_EVENT" in client

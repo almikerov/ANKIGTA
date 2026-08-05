@@ -533,11 +533,18 @@ def keys_owned_by(sandbox: MtaSandbox, side: str) -> set[str]:
 
 SERVER_VALUES = {
     "activationRadius": 7.5,
+    # Which way in a link offers where it says nothing of its own, and the key
+    # that takes the offer. The world's, like the radius: an entity opening by
+    # a press does so for whoever walks up to it.
+    "activationType": "key",
+    "activationKey": "q",
     "activationDelaySeconds": 2.5,
     "maxActivationSpeedKmh": 45,
     "reviewMode": "allow_all",
-    # What a corona looks like where the entity says nothing of its own. The
-    # world's, not one machine's: every player sees the same marker.
+    # Whether an entity that says nothing of its own wears a corona, and what
+    # it looks like. The world's, not one machine's: every player sees the same
+    # marker.
+    "showCorona": True,
     "coronaColor": "#ffaa00",
     "coronaOpacity": 0.35,
 }
@@ -642,9 +649,12 @@ def test_a_snapshot_carries_every_answerable_setting_and_no_secret(
 
     assert {
         "activationRadius",
+        "activationType",
+        "activationKey",
         "activationDelaySeconds",
         "maxActivationSpeedKmh",
         "reviewMode",
+        "showCorona",
         "coronaColor",
         "coronaOpacity",
         "connectionPort",

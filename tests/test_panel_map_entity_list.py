@@ -648,7 +648,8 @@ def test_naming_something_the_list_only_offered_takes_it_in(
     )
 
     row = server.connection.raw.execute(
-        "SELECT name, radius FROM map_entity_metadata WHERE entity_id = ?",
+        "SELECT name, radius_override FROM map_entity_metadata"
+        " WHERE entity_id = ?",
         ("lamp-3",),
     ).fetchone()
     assert row is not None, "the offer was not taken into the store"
@@ -709,7 +710,8 @@ def test_an_entity_stored_under_one_map_is_written_to_from_another(
     ]
     assert refused == [], f"refused: {[event.args for event in refused]}"
     assert server.connection.raw.execute(
-        "SELECT show_radius FROM map_entity_metadata WHERE entity_id = ?",
+        "SELECT show_corona_override FROM map_entity_metadata"
+        " WHERE entity_id = ?",
         ("stairs-9",),
     ).fetchone() == (1,)
 
@@ -735,8 +737,8 @@ def test_an_already_stamped_element_is_listed_as_the_entity_it_is(
     )
     server.connection.raw.execute(
         "INSERT INTO map_entity_metadata"
-        " (map_id, entity_id, name, entity_tag, radius, show_radius)"
-        " VALUES (?, ?, '', '', 3, 1)",
+        " (map_id, entity_id, name, entity_tag, show_corona_override)"
+        " VALUES (?, ?, '', '', 1)",
         ("a-map-that-is-not-running", "stairs-9"),
     )
     server.connection.raw.commit()
@@ -1304,7 +1306,7 @@ def test_a_radius_that_was_chosen_is_stored_and_can_be_given_back(
     write_metadata(server, player, {"name": "North gate"})
     assert stored_override(server) == 7.5
 
-    write_metadata(server, player, {"radius": False})
+    write_metadata(server, player, {"radius": "inherit"})
     assert stored_override(server) is None
 
 

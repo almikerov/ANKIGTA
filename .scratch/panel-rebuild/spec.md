@@ -81,6 +81,17 @@ named where it is obvious.
 - `tests/test_panel_page.py::test_saving_lives_with_the_fields_it_saves` reads
   `index.html` as text and splits on `'id="inspector"'`, which
   `docs/agents/lua-testing.md` forbids by name. Ticket 03.
+- `app.js` still carries ticket 03's per-map branches — `heading`, `note`,
+  `settingClass`'s `per-map`, `mapId` on the wire — inert since 02 removed
+  per-map settings. Whichever ticket next opens the file.
+- `tests/test_mta_ticket_09.py`, `test_mta_ticket_10.py` and
+  `test_mta_ticket_24.py` assert over the *source text* of Lua files, the same
+  thing the finding above names. Ticket 05 had to edit all three to follow a
+  refactor rather than a behaviour change.
+- `map_entity_metadata` carries four inert columns after 05 — `radius`,
+  `show_radius`, `corona_color`, `corona_opacity` — each superseded by the
+  override column beside it. Dropping them means rebuilding a table other
+  tables cascade from, which is its own ticket.
 
 ## Not in this wave
 

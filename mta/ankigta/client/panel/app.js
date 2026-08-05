@@ -222,6 +222,32 @@
     return menu;
   }
 
+  /* A list whose last entry is the way back to the global.
+   *
+   * The entity pane's version of the colour picker's "Follow Settings": a
+   * number box is emptied to say it, and a list has nowhere to be empty, so the
+   * list says it. The value shown is the one actually in force -- the entity's
+   * own, or the global it follows -- because a control showing nothing would
+   * claim the entity has no answer when it plainly does. */
+  var INHERIT = "inherit";
+
+  function overridableMenu(spec) {
+    var menu = drawnMenu({
+      name: spec.name,
+      onChoose: function (value) {
+        var change = {};
+        change[spec.field] = value;
+        send("setEntityMarks", change);
+      }
+    });
+    menu.setOverridableOptions = function (options) {
+      menu.setOptions(options.concat([
+        {value: INHERIT, label: t("f7.followSettings")}
+      ]));
+    };
+    return menu;
+  }
+
   /* Swatches enough to pick from at a glance, and a hex box for everything
    * else. Drawn here for the same reason the lists are: an `<input
    * type="color">` opens a native dialog that has nowhere to appear over a
@@ -680,6 +706,73 @@
     .getElementById("entity-corona-color")
     .appendChild(coronaColorPicker.root);
 
+  /* The three lists in the entity pane, built once for the same reason the
+   * colour picker is: rebuilding one on each state push takes away the surface
+   * the player has open. Their options are fixed -- two modes, two states, and
+   * the keys Lua offers -- so they are filled from the first state that carries
+   * them and left alone after. */
+  var activationTypeMenu = overridableMenu({
+    name: "entityActivationType",
+    field: "activationType"
+  });
+  document
+    .getElementById("entity-activation-type")
+    .appendChild(activationTypeMenu.root);
+
+  var activationKeyMenu = overridableMenu({
+    name: "entityActivationKey",
+    field: "activationKey"
+  });
+  document
+    .getElementById("entity-activation-key")
+    .appendChild(activationKeyMenu.root);
+
+  var showCoronaMenu = overridableMenu({
+    name: "entityShowCorona",
+    field: "showCorona"
+  });
+  document
+    .getElementById("entity-show-corona")
+    .appendChild(showCoronaMenu.root);
+
+  /* What each list was last filled with, so an unrelated redraw does not
+   * rebuild it -- which would shut it while it was open. */
+  var entityOptionShape = null;
+
+  function fillEntityMenus(settings) {
+    var rows = (settings && settings.rows) || [];
+    var keys = [];
+    for (var i = 0; i < rows.length; i += 1) {
+      if (rows[i].key === "activationKey") keys = rows[i].options || [];
+    }
+    /* Every word that ends up on one of the three lists, so a state that
+     * carries the string table for the first time -- or a changed one -- fills
+     * them, and one that changes nothing leaves an open list open. */
+    var shape = JSON.stringify([
+      keys,
+      t("f7.followSettings"),
+      t("settings.value.automatic"),
+      t("settings.value.key"),
+      t("settings.value.true"),
+      t("settings.value.false")
+    ]);
+    if (shape === entityOptionShape) return;
+    entityOptionShape = shape;
+    activationTypeMenu.setOverridableOptions([
+      {value: "automatic", label: t("settings.value.automatic")},
+      {value: "key", label: t("settings.value.key")}
+    ]);
+    showCoronaMenu.setOverridableOptions([
+      {value: true, label: t("settings.value.true")},
+      {value: false, label: t("settings.value.false")}
+    ]);
+    activationKeyMenu.setOverridableOptions(keys.map(function (name) {
+      /* The key's own name, not a lookup: a key is a stored technical value
+       * and the string table has no business holding one. */
+      return {value: name, label: name};
+    }));
+  }
+
   /* On screen whether or not a row is selected. It used to appear with the
    * selection and vanish with it, so the panel jumped every time the player
    * moved down the list; the fields are disabled rather than removed, which
@@ -689,10 +782,12 @@
     var name = document.getElementById("entity-name");
     var radius = document.getElementById("entity-radius");
     var mark = document.getElementById("entity-radius-inherited");
-    var showCorona = document.getElementById("entity-show-corona");
     var opacity = document.getElementById("entity-corona-opacity");
     var colorMark = document.getElementById("entity-corona-color-inherited");
     var opacityMark = document.getElementById("entity-corona-opacity-inherited");
+    var coronaMark = document.getElementById("entity-show-corona-inherited");
+    var typeMark = document.getElementById("entity-activation-type-inherited");
+    var keyMark = document.getElementById("entity-activation-key-inherited");
 
     /* What these say comes from `applyLocale`, like every other fixed word on
      * the page; what this decides is which of them are on screen and whether
@@ -700,9 +795,11 @@
     empty.hidden = !!entity;
     name.disabled = !entity;
     radius.disabled = !entity;
-    showCorona.disabled = !entity;
     opacity.disabled = !entity;
     coronaColorPicker.button.disabled = !entity;
+    showCoronaMenu.button.disabled = !entity;
+    activationTypeMenu.button.disabled = !entity;
+    activationKeyMenu.button.disabled = !entity;
 
     if (!entity) {
       reportedEntity = null;
@@ -710,12 +807,17 @@
       radius.value = "";
       radius.setAttribute("data-inherited", "false");
       mark.hidden = true;
-      showCorona.checked = false;
       opacity.value = "";
       opacity.setAttribute("data-inherited", "false");
       opacityMark.hidden = true;
       coronaColorPicker.setValue(false);
       colorMark.hidden = true;
+      showCoronaMenu.setValue(undefined);
+      activationTypeMenu.setValue(undefined);
+      activationKeyMenu.setValue(undefined);
+      coronaMark.hidden = true;
+      typeMark.hidden = true;
+      keyMark.hidden = true;
       return;
     }
 
@@ -727,7 +829,10 @@
       entity.radiusInherited === true,
       entity.coronaOpacity,
       entity.coronaOpacityInherited === true,
-      entity.coronaColor
+      entity.coronaColor,
+      entity.showCorona === true,
+      entity.activationType,
+      entity.activationKey
     ]);
     if (reported !== reportedEntity) {
       reportedEntity = reported;
@@ -750,17 +855,26 @@
        * and one that reports the same colour must not take the half-typed code
        * out from under them. */
       coronaColorPicker.setValue(entity.coronaColor);
+      /* The value in force, whichever side of the override it came from. The
+       * lists carry no half-typed state, but they are set inside the guard
+       * with the rest so that a push reporting the same entity leaves an open
+       * one open. */
+      showCoronaMenu.setValue(entity.showCorona === true);
+      activationTypeMenu.setValue(entity.activationType);
+      activationKeyMenu.setValue(entity.activationKey);
     }
     /* Shown, and said: a number that came from Settings looks exactly like a
      * number somebody chose. */
     radius.setAttribute("data-inherited", String(entity.radiusInherited === true));
     mark.hidden = entity.radiusInherited !== true;
-    showCorona.checked = entity.showCorona === true;
     colorMark.hidden = entity.coronaColorInherited !== true;
     opacity.setAttribute(
       "data-inherited", String(entity.coronaOpacityInherited === true)
     );
     opacityMark.hidden = entity.coronaOpacityInherited !== true;
+    coronaMark.hidden = entity.showCoronaInherited !== true;
+    typeMark.hidden = entity.activationTypeInherited !== true;
+    keyMark.hidden = entity.activationKeyInherited !== true;
   }
 
   /* --- the card editor --------------------------------------------------- */
@@ -901,7 +1015,7 @@
       return [
         row.kind, row.key, row.mapId || "", row.labelKey || "",
         row.labelText || "", row.options || false,
-        row.min, row.max, row.step
+        row.min, row.max, row.step, row.clearOverrides === true
       ];
     }));
   }
@@ -917,12 +1031,37 @@
       for (var i = 0; i < rows.length; i += 1) {
         host.appendChild(settingRow(rows[i]));
       }
-      return;
+    } else {
+      for (var j = 0; j < rows.length; j += 1) {
+        var control = settingsControls[settingId(rows[j])];
+        if (control) control.apply(rows[j]);
+      }
     }
-    for (var j = 0; j < rows.length; j += 1) {
-      var control = settingsControls[settingId(rows[j])];
-      if (control) control.apply(rows[j]);
-    }
+    /* After the rows, not before: the question names the setting in the words
+     * its row uses, and those words are learnt while the row is drawn. */
+    renderBulkDialog(settings);
+  }
+
+  /* The label of the setting the sweep is about, so the question names it in
+   * the words the row above uses rather than by its key. */
+  var settingLabels = {};
+  /* What the confirmation is currently about. Lua's, pushed with the state --
+   * the page decides nothing, including which sweep the button confirms. */
+  var lastPendingClear = null;
+
+  function renderBulkDialog(settings) {
+    var pending = (settings && settings.pendingClear) || false;
+    lastPendingClear = pending || null;
+    document.getElementById("bulk-dialog").hidden = !pending;
+    if (!pending) return;
+    var label = settingLabels[pending.key] || pending.key;
+    var count = pending.count || 0;
+    document.getElementById("bulk-question").textContent = count === 0
+      ? t("settings.applyToAll.none").replace("%s", label)
+      : t("settings.applyToAll.question")
+          .replace("%d", String(count))
+          .replace("%s", label);
+    document.getElementById("bulk-confirm").disabled = count === 0;
   }
 
   function settingId(row) {
@@ -953,6 +1092,7 @@
     }
     var wrap = element("div", settingClass(row));
     wrap.setAttribute("data-setting", row.key);
+    settingLabels[row.key] = settingLabel(row);
     var label = element("label", "setting-label");
     label.setAttribute("for", settingId(row));
     label.appendChild(element("span", null, settingLabel(row)));
@@ -972,6 +1112,20 @@
 
     var control = settingControl(row, wrap, error);
     wrap.appendChild(control.node);
+    /* Beside the global it is about, because that is the thing it is about:
+     * "every link that was told otherwise goes back to following this". It is
+     * here for every setting a link can override, and Lua says which those are
+     * -- the page keeps no list of its own, so a setting that gains an override
+     * gains this control without either side being edited. */
+    if (row.clearOverrides === true) {
+      var sweep = element("button", "setting-apply-all", t("settings.applyToAll"));
+      sweep.type = "button";
+      sweep.setAttribute("data-apply-all", row.key);
+      sweep.addEventListener("click", function () {
+        send("clearEntityOverrides", {key: control.row.key});
+      });
+      wrap.appendChild(sweep);
+    }
     wrap.appendChild(error);
     settingsControls[settingId(row)] = control;
     control.apply(row);
@@ -1013,7 +1167,7 @@
       return control;
     }
 
-    if (row.kind === "choice") {
+    if (row.kind === "choice" || row.kind === "key") {
       var menu = drawnMenu({
         name: row.key,
         onChoose: function (value) {
@@ -1025,8 +1179,15 @@
         }
       });
       menu.button.id = settingId(row);
+      /* A key is named by itself. It is a stored technical value -- the same
+       * word MTA's own `bindKey` takes -- so putting it through the string
+       * table would be inventing a translation for an identifier. */
+      var namesItself = row.kind === "key";
       menu.setOptions((row.options || []).map(function (value) {
-        return {value: value, label: t("settings.value." + value)};
+        return {
+          value: value,
+          label: namesItself ? value : t("settings.value." + value)
+        };
       }));
       control.node = menu.root;
       control.apply = function (next) {
@@ -1109,6 +1270,10 @@
     focusOnSelect = state.focusOnSelect !== false;
     renderStudy(state.study || {active: false, resumable: false});
     renderSettings(state.settings);
+    /* The entity pane's lists are filled from the same rows Settings is drawn
+     * from: the keys ANKIGTA offers are the schema's answer, and asking for
+     * them twice is two answers that can disagree. */
+    fillEntityMenus(state.settings);
     lastEntities = state.entities || [];
     renderRows(state.entities);
     renderCards(state.cardPicker);
@@ -1244,20 +1409,12 @@
   document.getElementById("entity-radius").addEventListener("change", function () {
     var typed = document.getElementById("entity-radius").value;
     send("setEntityMarks", {
-      radius: String(typed) === "" ? false : parseFloat(typed)
+      radius: String(typed) === "" ? INHERIT : parseFloat(typed)
     });
   });
   document.getElementById("entity-name").addEventListener("change", function () {
     send("setEntityName", {
       name: document.getElementById("entity-name").value
-    });
-  });
-  /* What the entity itself says about how it is marked. The world shows it
-   * whether or not the panel is open and whoever is looking, which is what
-   * makes it the entity's rather than this player's. */
-  document.getElementById("entity-show-corona").addEventListener("change", function () {
-    send("setEntityMarks", {
-      showCorona: document.getElementById("entity-show-corona").checked
     });
   });
   /* Sent when the field is left rather than on every keystroke, and emptied
@@ -1267,9 +1424,20 @@
     .addEventListener("change", function () {
       var typed = document.getElementById("entity-corona-opacity").value;
       send("setEntityMarks", {
-        coronaOpacity: String(typed) === "" ? false : parseFloat(typed)
+        coronaOpacity: String(typed) === "" ? INHERIT : parseFloat(typed)
       });
     });
+
+  /* The sweep asks before it runs, and the question it asks came from the
+   * server -- so Cancel is a real answer and leaves the world untouched. */
+  document.getElementById("bulk-cancel").addEventListener("click", function () {
+    send("cancelClearEntityOverrides");
+  });
+  document.getElementById("bulk-confirm").addEventListener("click", function () {
+    var pending = lastPendingClear;
+    if (!pending) return;
+    send("clearEntityOverrides", {key: pending.key, confirmed: true});
+  });
 
   document.getElementById("toggle-inspector").addEventListener("click", function () {
     inspectorOpen = !inspectorOpen;

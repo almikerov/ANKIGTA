@@ -32,7 +32,10 @@ def test_current_schema_persists_display_metadata_and_card_missing_state() -> No
     # Ticket 09 needs schema 4 or later; later tickets may migrate past it.
     schema_version = re.search(r"CURRENT_SCHEMA_VERSION = (\d+)", store)
     assert schema_version and int(schema_version.group(1)) >= 4
-    history_schema = function_body(store, "ensureChangeHistorySchema")
+    # The metadata table is built rather than written out, because one column
+    # per overridable setting is a list the schema already holds. What it is
+    # built out of is here; that the two agree is `test_activation_by_key.py`'s.
+    history_schema = function_body(store, "metadataTableStatement")
     assert "CREATE TABLE IF NOT EXISTS map_entity_metadata" in history_schema
     assert "name TEXT NOT NULL DEFAULT ''" in history_schema
     assert "entity_tag TEXT NOT NULL DEFAULT ''" in history_schema

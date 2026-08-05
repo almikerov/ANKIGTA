@@ -480,6 +480,16 @@ label {
   color: #fecaca;
   font-size: 11px;
 }
+/* Beside the global it is about, on its own line under the control: it acts on
+   every link rather than on this value, so it is deliberately not the thing the
+   eye lands on next to the field. */
+.setting-apply-all {
+  grid-column: 2;
+  justify-self: start;
+  font-size: 11px;
+  padding: 2px var(--space-2);
+  color: var(--muted);
+}
 .setting .field-error[hidden] { display: none; }
 
 .setting input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

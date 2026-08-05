@@ -32,6 +32,11 @@ Locale.strings = {
     ["settings.activationDelaySeconds"] = "Activation delay (s)",
     ["settings.maxActivationSpeedKmh"] =
         "Open cards when speed lower than:",
+    ["settings.activationType"] = "Activation type",
+    ["settings.activationKey"] = "Activation key",
+    ["settings.value.automatic"] = "Automatic",
+    ["settings.value.key"] = "Key",
+    ["settings.showCorona"] = "Show corona",
     ["settings.reviewMode"] = "Review mode",
     -- A way of looking, so it says what it does to the view rather than what
     -- it does to any entity: `f7.showCorona` is the entity's own.
@@ -79,6 +84,27 @@ Locale.strings = {
         "Stored window placement is not usable",
     ["settings.error.wrong_authority"] = "This setting is owned elsewhere",
     ["settings.error.not_saved"] = "The setting could not be saved",
+    ["settings.error.not_a_key"] = "That is not a key ANKIGTA can bind",
+    -- Refused rather than allowed to shadow: a key ANKIGTA already answers to
+    -- would stop doing what it does today, which is a different feature
+    -- breaking for a reason nobody could see.
+    ["settings.error.key_in_use"] = "ANKIGTA already uses that key",
+    ["settings.error.not_overridable"] =
+        "This setting cannot be set on a single link",
+    -- Beside every global a link can override: it clears that override
+    -- everywhere, so those links follow the global again.
+    -- Map Entity, not link: an entity carries its own answer whether or not a
+    -- card was ever hung on it, and a Spatial Link is the thing that hangs one.
+    -- The count is of what the sweep will really change.
+    ["settings.applyToAll"] = "Apply to all",
+    ["settings.applyToAll.title"] =
+        "Make every Map Entity follow this setting?",
+    ["settings.applyToAll.question"] =
+        "%d Map Entity have their own \"%s\". Clearing it makes them follow"
+        .. " Settings, now and whenever it changes.",
+    ["settings.applyToAll.none"] =
+        "No Map Entity has its own \"%s\". Nothing to clear.",
+    ["settings.applyToAll.confirm"] = "Clear overrides",
     ["ui.smaller"] = "Smaller (−0.05)",
     ["ui.larger"] = "Larger (+0.05)",
     ["ui.reset"] = "Reset UI layout",
@@ -194,20 +220,28 @@ Locale.strings = {
     ["f7.noSelection"] = "Select a Map Entity to name it,"
         .. " or to say how close you must stand to it.",
     ["f7.radius"] = "Radius (m)",
-    -- No radius of its own: what the box shows is the global, and it says so
-    -- rather than leaving the player to guess whether it was chosen.
-    ["f7.radiusInherited"] = "following Settings",
+    -- No answer of its own: what the control shows is the global, and it says
+    -- so rather than leaving the player to guess whether it was chosen. One
+    -- key, because it is one sentence on six controls -- it was two, and a
+    -- third would have arrived with the next overridable setting.
+    ["f7.inherited"] = "following Settings",
     ["f7.radiusClearHint"] = "Empty the box to follow Settings again",
     -- What `Draw always` became. That switch made a drawn radius permanent,
     -- which confused a way of looking with a property of the thing looked at.
     -- This half is the thing's: a corona standing where it stands, the same
     -- for anyone looking. The other half is `settings.drawRadius`.
+    ["f7.activationType"] = "Activation type",
+    ["f7.activationKey"] = "Activation key",
+    -- Drawn over the entity itself while the player is inside its zone. The
+    -- key is substituted in, never looked up here: it is a stored technical
+    -- value, and this is the whole of how the player discovers it.
+    ["f7.activationPrompt"] = "%s to view",
+    -- The way back for a field that offers a choice rather than a number, and
+    -- so cannot be emptied: an entry in the list that means "follow Settings".
+    ["f7.followSettings"] = "Follow Settings",
     ["f7.showCorona"] = "Show corona",
     ["f7.coronaColor"] = "Corona colour",
     ["f7.coronaOpacity"] = "Corona opacity",
-    -- Two fields showing a value nobody chose for this entity, which is not
-    -- something the value alone conveys.
-    ["f7.coronaInherited"] = "following Settings",
     ["f7.coronaFollowSettings"] = "Follow Settings",
     ["f7.coronaOpacityClearHint"] = "Empty the box to follow Settings again",
     ["f7.replaceTitle"] = "Replace the linked card?",

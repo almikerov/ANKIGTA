@@ -71,27 +71,81 @@ one undo.
 
 **Blocked by:** 01, 03, 04.
 
-**Status:** ready-for-agent
+**Status:** done. Automated proof: `tests/test_activation_by_key.py`, plus the
+page's own half in `tests/test_panel_page.py`. What needs a person to look at a
+frame — whether the prompt is *readable*, and whether it flickers — is
+`docs/checklists/panel-rebuild-05-activation-by-key.md`, which is `not run`.
 
-- [ ] `Activation type` offers `Automatic` and `Key`, globally and on a link
-- [ ] `Automatic` behaves exactly as it does today, delay and speed included
-- [ ] In `Key`, standing in the zone and pressing the key opens the card
-- [ ] In `Key`, standing in the zone alone never opens the card
-- [ ] In `Key`, the activation delay does not gate the press
-- [ ] An entity offering a card shows `<KEY> to view` while the player is in its
+- [x] `Activation type` offers `Automatic` and `Key`, globally and on a link
+- [x] `Automatic` behaves exactly as it does today, delay and speed included
+- [x] In `Key`, standing in the zone and pressing the key opens the card
+- [x] In `Key`, standing in the zone alone never opens the card
+- [x] In `Key`, the activation delay does not gate the press
+- [x] An entity offering a card shows `<KEY> to view` while the player is in its
       zone, and stops when they leave
-- [ ] The prompt names the key that is actually bound
-- [ ] The prompt obeys the draw distance from ticket 04
-- [ ] Whether the prompt is drawn is decidable from outside the draw call, so
+- [x] The prompt names the key that is actually bound
+- [x] The prompt obeys the draw distance from ticket 04
+- [x] Whether the prompt is drawn is decidable from outside the draw call, so
       ticket 06 can suppress it without reaching into this one
-- [ ] `Activation key` is settable globally and on a link
-- [ ] A key ANKIGTA already uses is refused with a reason
-- [ ] Nothing about admission or rating changes: the card opens the one way in
-- [ ] Every global setting a link can override offers the bulk control
-- [ ] A setting that gains an override later gains the control without being
+- [x] `Activation key` is settable globally and on a link
+- [x] A key ANKIGTA already uses is refused with a reason
+- [x] Nothing about admission or rating changes: the card opens the one way in
+- [x] Every global setting a link can override offers the bulk control
+- [x] A setting that gains an override later gains the control without being
       added to a list
-- [ ] Using it makes every link follow the global for that setting
-- [ ] Changing the global afterwards moves those links again
-- [ ] Other settings' overrides are untouched
-- [ ] It names how many links it will change, and asks first
-- [ ] It is one Change History entry, and one Undo puts every override back
+- [x] Using it makes every link follow the global for that setting
+- [x] Changing the global afterwards moves those links again
+- [x] Other settings' overrides are untouched
+- [x] It names how many links it will change, and asks first
+- [x] It is one Change History entry, and one Undo puts every override back
+
+## What was decided along the way
+
+**`Show corona` gained a global.** The ticket names it among the settings the
+bulk control covers, and clearing an override means "follow the global" — so
+there had to be one for it to follow. It ships off, which is what every entity
+already was, and the per-entity answer became three-way: on, off, or following.
+That third state is why the wire says `"inherit"` where it used to say `false`:
+`false` is a value `Show corona` can hold, so it cannot also be how a field says
+it holds nothing.
+
+**In `Key`, the speed threshold does not gate the press either.** The ticket's
+conclusion names only the delay, but the reason it gives covers both — a press
+carries the certainty they exist to wait for — and the default threshold is
+zero, so gating on it would mean the prompt saying `E to view` while walking and
+E doing nothing. The gate still short-circuits the zone walk whenever nothing in
+the world can be offering, which is the optimisation ticket 22 measured.
+
+**One spelling for "nothing of its own".** Every override is a NULL-able column
+now, `corona_color` and `corona_opacity` included — they said it with `''` and
+`-1`, and a sweep that clears overrides everywhere would have needed to know
+which spelling each column used. That is the list this ticket exists to avoid.
+
+**"Links" here means Map Entity.** The prose above counts "links"; the control
+counts Map Entity, because an entity carries its own answer whether or not a
+card was ever hung on it, and a Spatial Link is what hangs one. The number the
+question names is what the sweep will really change.
+
+**An override reaching the client was the missing half.** The watched set the
+activation rules read is rebuilt only when Anki is next asked, so an entity told
+to open by a key went on opening by itself until that happened — and a sweep
+that put every entity back on `Automatic` left every client still waiting for a
+press. Editing an override, clearing them everywhere, and undoing either now go
+through `invalidateStudyDependents`, which is the seam link, unlink, replace and
+relink already used. Undo did not go through it before this either.
+
+## Found next door, not fixed
+
+- `map_entity_metadata` now carries four inert columns: `radius`, `show_radius`,
+  `corona_color`, `corona_opacity`. Each was the answer before the override
+  column beside it, and SQLite cannot drop a column from a table other tables
+  cascade from without rebuilding it — which is the procedure
+  `rebuildMapEntities` already follows for `map_entities`, and its own ticket.
+- `client/panel/app.js` still carries ticket 03's per-map branches (`heading`,
+  `note`, `settingClass`'s `per-map`, `mapId` on the wire). Inert since 02
+  removed per-map settings; noted in that merge and still there.
+- `tests/test_mta_ticket_09.py`, `test_mta_ticket_10.py` and
+  `test_mta_ticket_24.py` assert over the *source text* of Lua files, which
+  `docs/agents/lua-testing.md` forbids by name. All three had to be edited here
+  to follow a refactor rather than a behaviour change, which is the cost that
+  rule names.

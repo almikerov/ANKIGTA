@@ -1105,7 +1105,31 @@ def test_no_ankigta_action_is_bound_to_a_gamepad_key_or_a_game_control(
     assert not bound & set(GAMEPAD_KEYS)
     assert not bound & set(GTA_CONTROLS)
     # What is left is a keyboard, which is all v1 supports.
-    assert bound <= {"F7", "escape"}
+    #
+    # Read out of the schema rather than written here, and that is the point:
+    # `activationKey` is refused when it names a key ANKIGTA already answers to,
+    # and the refusal is only honest while `reservedKeys` is the list the client
+    # actually binds from. A binding moved to a key the schema does not reserve
+    # fails here rather than by silently shadowing the panel.
+    reserved = client.eval(
+        """
+        function()
+            local keys = {}
+            for _, key in pairs(ANKIGTA.Settings.reservedKeys) do
+                keys[#keys + 1] = key
+            end
+            return keys
+        end
+        """
+    )()
+    reserved = {str(reserved[index]) for index in reserved.keys()}
+    assert reserved == {"F7", "escape"}
+    # And the one key that is not reserved: whichever key takes an offer right
+    # now, which is a setting rather than a fixture.
+    activation = client.eval(
+        "function() return ANKIGTA.Activation.boundKey() end"
+    )()
+    assert bound <= reserved | {activation}
 
 
 @pytest.mark.parametrize("key", GAMEPAD_KEYS)

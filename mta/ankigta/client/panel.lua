@@ -47,6 +47,8 @@ local SETTINGS_REQUEST_EVENT = "ankigta:requestSettings"
 local SETTINGS_SNAPSHOT_EVENT = "ankigta:settingsSnapshot"
 local SETTINGS_UPDATE_EVENT = "ankigta:updateSetting"
 local SETTINGS_REJECTED_EVENT = "ankigta:settingRejected"
+local CLEAR_ENTITY_OVERRIDES_EVENT = "ankigta:clearEntityOverrides"
+local ENTITY_OVERRIDE_COUNT_EVENT = "ankigta:entityOverrideCount"
 local CONNECTION_SETTINGS_REQUEST_EVENT = "ankigta:requestConnectionSettings"
 local CONNECTION_SETTINGS_SNAPSHOT_EVENT = "ankigta:connectionSettingsSnapshot"
 local PAGE_URL = "http://mta/local/client/panel/index.html"
@@ -117,6 +119,9 @@ local requestedSection = nil
 -- of a form.
 local serverValues = {}
 local settingsRejections = {}
+--- The sweep the player has asked about and not yet answered: which setting,
+--- and how many links the server says it would put back on the global.
+local pendingOverrideClear = false
 --- Deleted objects the player has already answered about, this session.
 local answeredDeletions = {}
 
@@ -403,6 +408,12 @@ local function settingsRows()
                 value = currentValue(key),
                 owner = ownedByServer(key) and "server" or "client",
                 error = settingsRejections[key] or false,
+                -- A setting a link can override gets the control that clears
+                -- those overrides everywhere, and gets it by having an
+                -- override rather than by being named in a list here. The next
+                -- overridable setting appears with this control already beside
+                -- it.
+                clearOverrides = schema().entityOverrideColumn(key) ~= false,
             }
             if SETTINGS_DELEGATED[key] then
                 row.value = false
@@ -413,6 +424,11 @@ local function settingsRows()
                 row.decimals = rule.decimals
             elseif rule.kind == "choice" then
                 row.options = rule.values
+            elseif rule.kind == "key" then
+                -- The free ones only. A key ANKIGTA already answers to is
+                -- refused by the rule, and a list that offered it would be a
+                -- list arguing with the thing that validates it.
+                row.options = schema().offeredKeys()
             end
             table.insert(rows, row)
         end
@@ -733,8 +749,11 @@ end
 -- player typed: a row hidden from a list is still a thing standing in the
 -- world, and hiding it must not put its corona out.
 --
--- What a value of `false` means is settled here rather than at the drawing: it
--- is the entity saying nothing of its own, so the mark follows Settings.
+-- Every override is passed through as it arrived, absent and all. What an
+-- absent field means is settled at the drawing, which is the one place that
+-- knows what the entity would be following instead -- and flattening it here
+-- would need a word for "nothing of its own" that no value can also be, which
+-- `Show corona` broke the moment it gained one.
 local function panelMarkable()
     local marks = {}
     for _, entry in ipairs(lastSnapshot and lastSnapshot.entities or {}) do
@@ -743,10 +762,10 @@ local function panelMarkable()
         marks[#marks + 1] = {
             mapId = mapEntity.mapId,
             entityId = mapEntity.entityId,
-            radius = tonumber(metadata.radius) or false,
-            showCorona = metadata.showCorona == true,
-            coronaColor = metadata.coronaColor or false,
-            coronaOpacity = tonumber(metadata.coronaOpacity) or false,
+            radius = metadata.radius,
+            showCorona = metadata.showCorona,
+            coronaColor = metadata.coronaColor,
+            coronaOpacity = metadata.coronaOpacity,
         }
     end
     return marks
@@ -788,24 +807,41 @@ local function entityRows(snapshot)
     -- than per row: they are one global each, and asking the store fifty times
     -- for one would not make it any more current.
     local globalRadius = tonumber(currentValue("activationRadius")) or 3
+    local globalShowCorona = currentValue("showCorona") == true
     local globalCoronaColor = currentValue("coronaColor")
     local globalCoronaOpacity = tonumber(currentValue("coronaOpacity"))
+    local globalActivationType = currentValue("activationType")
+    local globalActivationKey = currentValue("activationKey")
     local rows = {}
     for _, entry in ipairs(snapshot and snapshot.entities or {}) do
         local mapEntity = entry.mapEntity
         local given = givenName(entry)
         local original = modelName(entry)
-        local ownRadius = tonumber(entry.metadata and entry.metadata.radius)
+        local metadata = type(entry.metadata) == "table" and entry.metadata or {}
+        local ownRadius = tonumber(metadata.radius)
         -- `nil` where the entity says nothing of its own, which is what the
-        -- store means by an empty colour and an opacity out of range.
-        local ownCoronaColor = entry.metadata
-            and type(entry.metadata.coronaColor) == "string"
-            and entry.metadata.coronaColor ~= ""
-            and entry.metadata.coronaColor
+        -- store means by a NULL override column.
+        local ownShowCorona = metadata.showCorona
+        local ownCoronaColor = type(metadata.coronaColor) == "string"
+            and metadata.coronaColor ~= ""
+            and metadata.coronaColor
             or nil
-        local ownCoronaOpacity = tonumber(
-            entry.metadata and entry.metadata.coronaOpacity
-        )
+        local ownCoronaOpacity = tonumber(metadata.coronaOpacity)
+        local ownActivationType = type(metadata.activationType) == "string"
+            and metadata.activationType ~= ""
+            and metadata.activationType
+            or nil
+        local ownActivationKey = type(metadata.activationKey) == "string"
+            and metadata.activationKey ~= ""
+            and metadata.activationKey
+            or nil
+        -- Spelt out rather than as an `and`/`or` chain: the entity's own answer
+        -- may be `false`, and `a and b or c` hands `false` to `c` -- which
+        -- would make "no corona on this one" read as "follows the global".
+        local showCorona = globalShowCorona
+        if ownShowCorona ~= nil then
+            showCorona = ownShowCorona == true
+        end
         table.insert(rows, {
             mapId = mapEntity.mapId,
             entityId = mapEntity.entityId,
@@ -835,12 +871,19 @@ local function entityRows(snapshot)
             -- one, the global where it has not -- with a flag beside it saying
             -- which, because a colour that came from Settings looks exactly
             -- like a colour somebody chose.
-            showCorona = entry.metadata
-                and entry.metadata.showCorona == true or false,
+            showCorona = showCorona,
+            showCoronaInherited = ownShowCorona == nil,
             coronaColor = ownCoronaColor or globalCoronaColor,
             coronaColorInherited = ownCoronaColor == nil,
             coronaOpacity = ownCoronaOpacity or globalCoronaOpacity,
             coronaOpacityInherited = ownCoronaOpacity == nil,
+            -- Which way in this entity offers, and the key that takes it. Same
+            -- shape as the radius above: the value in force, and whether it is
+            -- the entity's own.
+            activationType = ownActivationType or globalActivationType,
+            activationTypeInherited = ownActivationType == nil,
+            activationKey = ownActivationKey or globalActivationKey,
+            activationKeyInherited = ownActivationKey == nil,
             -- What is on the row now, so the replace confirmation can name
             -- what it is about to throw away rather than saying "unknown".
             linkedCard = type(entry.link.cardIdentity) == "table"
@@ -1069,7 +1112,13 @@ local function push()
         note = selectedNote or false,
         noteError = noteError or false,
         notice = notice,
-        settings = {rows = settingsRows()},
+        settings = {
+            rows = settingsRows(),
+            -- The question the sweep asks before it runs, or `false` while
+            -- nothing has been asked. It is the server's count, so the page
+            -- names the number of links that are really about to change.
+            pendingClear = pendingOverrideClear or false,
+        },
     }
     local encoded = toJSON(state, true)
     if not encoded then
@@ -1246,7 +1295,10 @@ function togglePanel()
     triggerServerEvent(CONNECTION_SETTINGS_REQUEST_EVENT, resourceRoot)
 end
 
-bindKey("F7", "down", togglePanel)
+-- Through the schema, not by name. `activationKey` is refused when it names
+-- a key ANKIGTA already answers to, and that refusal is only honest while
+-- the list it reads is the list this binds from.
+bindKey(schema().reservedKeys.panel, "down", togglePanel)
 
 -- Kept from the window this replaces: reachable by command as well as by key,
 -- because "always reachable" has to hold when the key is bound to something
@@ -1479,11 +1531,16 @@ end
 -- you must stand to it no longer waits for a card to be chosen.
 --
 -- Three answers per field, and they are not the same: absent means the player
--- did not touch it, `false` means they emptied it and the entity follows
--- Settings again, and a value means they set one. Coercing `false` to `nil`
--- here is how "clear this" would silently become "leave it alone".
+-- did not touch it, `"inherit"` means they cleared it and the entity follows
+-- Settings again, and a value means they set one. Coercing `"inherit"` to
+-- `nil` here is how "clear this" would silently become "leave it alone".
+--
+-- `"inherit"` rather than `false`: `Show corona` is overridable now, and
+-- `false` is one of the two things it can be told to be.
+local INHERIT = "inherit"
+
 local function overridden(sent, convert)
-    if sent == nil or sent == false then
+    if sent == nil or sent == INHERIT then
         return sent
     end
     return convert and convert(sent) or sent
@@ -1501,11 +1558,39 @@ function actions.setEntityMarks(payload)
         entry.mapEntity.entityId,
         {
             radius = overridden(payload.radius, tonumber),
-            showCorona = payload.showCorona,
+            showCorona = overridden(payload.showCorona),
             coronaColor = overridden(payload.coronaColor),
             coronaOpacity = overridden(payload.coronaOpacity, tonumber),
+            activationType = overridden(payload.activationType),
+            activationKey = overridden(payload.activationKey),
         }
     )
+end
+
+--- Clear one setting's overrides on every link, once the player has agreed.
+--
+-- Asked first, always: the sweep is not undone by pressing the control again,
+-- so the server answers with how many links it would change and the page shows
+-- that before anything happens.
+function actions.clearEntityOverrides(payload)
+    local key = payload and payload.key
+    if type(key) ~= "string" or not schema().entityOverrideColumn(key) then
+        return
+    end
+    local confirmed = payload.confirmed == true
+    if confirmed then
+        -- The question has been answered, so it goes off screen now rather
+        -- than when the next snapshot happens to arrive.
+        pendingOverrideClear = false
+        push()
+    end
+    triggerServerEvent(CLEAR_ENTITY_OVERRIDES_EVENT, resourceRoot, key, confirmed)
+end
+
+--- Leave the sweep unasked.
+function actions.cancelClearEntityOverrides()
+    pendingOverrideClear = false
+    push()
 end
 
 --- Point the camera at a row without moving the Study Player.
@@ -2101,6 +2186,19 @@ addEventHandler(CONNECTION_SETTINGS_SNAPSHOT_EVENT, resourceRoot, function(value
     end
     connectionSettings = values
     connectionSettingsVersion = connectionSettingsVersion + 1
+    push()
+end)
+
+addEvent(ENTITY_OVERRIDE_COUNT_EVENT, true)
+addEventHandler(ENTITY_OVERRIDE_COUNT_EVENT, resourceRoot, function(key, count)
+    if source ~= resourceRoot or type(key) ~= "string" then
+        return
+    end
+    -- What the sweep would do, as the side that would do it counted it. Held
+    -- here rather than on the page for the same reason the selection is: the
+    -- page is a view, and a number it worked out itself is a number that can
+    -- disagree with the one about to be acted on.
+    pendingOverrideClear = {key = key, count = tonumber(count) or 0}
     push()
 end)
 

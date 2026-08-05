@@ -230,144 +230,210 @@ local function historyTransaction(operation, target, before, after, steps)
     return true
 end
 
---- Record whether this entity has an Activation Zone radius of its own.
---
--- A statement of its own rather than a column in the insert beside it, because
--- "it has none" is SQL NULL and `dbExec` takes a parameter *list*: a nil in the
--- middle of one truncates it and `false` binds as 0, which is a radius of zero
--- rather than the absence of one. A literal NULL in the statement has neither
--- problem, and every write of a metadata row goes through here so none of them
--- can forget the question.
-local function radiusOverrideStep(mapId, entityId, radius)
-    local number = tonumber(radius)
-    if number == nil then
-        return {
-            "UPDATE map_entity_metadata SET radius_override = NULL"
-                .. " WHERE map_id = ? AND entity_id = ?",
-            {mapId, entityId},
-        }
-    end
-    return {
-        "UPDATE map_entity_metadata SET radius_override = ?"
-            .. " WHERE map_id = ? AND entity_id = ?",
-        {number, mapId, entityId},
-    }
-end
-
 -- --- Map Entity metadata rows ------------------------------------------------
 --
 -- Written from six places: a metadata edit, either side of an undone relink,
 -- an undone removal, a relink and a copy. Each of them wrote the column list
 -- out again, so adding a column meant finding all six -- and the one that was
--- missed would quietly write a default over whatever the entity said.
+-- missed would quietly write a default over whatever the entity said. They go
+-- through `metadataSteps` now, and what that writes is the schema's own list of
+-- overridable settings rather than a column list kept here.
 
---- The opacity that means "this entity has nothing of its own to say".
+--- Every setting a Map Entity may answer for itself, as this module needs it.
 --
--- Out of the setting's range on purpose: opacity is 0..1, so nothing a player
--- can choose collides with it. See the `CREATE TABLE` for why this is a value
--- rather than NULL.
-local CORONA_FOLLOWS_SETTING = -1
+-- Derived from the schema, and derived once. The schema is a shipped table that
+-- nothing rewrites while the server runs, and this is read once per row of the
+-- F7 snapshot -- ten thousand rows inside a two-second envelope. Re-deriving it
+-- there means walking and sorting the whole schema per row, which costs more
+-- than the read it serves.
+local overridable = false
+
+local function overridableSettings()
+    if overridable then
+        return overridable
+    end
+    local settings = ANKIGTA.Settings
+    local list = {}
+    for _, key in ipairs(settings.entityOverridableKeys()) do
+        local definition = settings.definition(key)
+        list[#list + 1] = {
+            key = key,
+            column = settings.entityOverrideColumn(key),
+            field = settings.entityOverrideField(key),
+            kind = definition and definition.rule and definition.rule.kind,
+        }
+    end
+    overridable = list
+    return list
+end
+
+--- One override as SQLite should hold it, or `nil` for "nothing of its own".
+--
+-- A boolean is stored as 1/0 because SQLite has no boolean, and the column is
+-- NULL-able so that `false` -- "no corona on this one, whatever the global
+-- says" -- is a value the entity can hold rather than a way of saying nothing.
+local function storedOverride(kind, value)
+    if value == nil then
+        return nil
+    end
+    if kind == "boolean" then
+        return value == true and 1 or 0
+    end
+    if kind == "number" then
+        return tonumber(value)
+    end
+    if type(value) == "string" and value ~= "" then
+        return value
+    end
+    return nil
+end
+
+--- The same, read back out of a row.
+--
+-- SQL NULL reaches Lua as boolean `false` (`PushRegistryResultTable`), which is
+-- also a legitimate value for a boolean column -- so the two are told apart
+-- here, once, by the type SQLite handed over rather than by its truthiness.
+local function readOverride(kind, stored)
+    if stored == nil or stored == false then
+        return nil
+    end
+    if kind == "boolean" then
+        return tonumber(stored) == 1
+    end
+    if kind == "number" then
+        return tonumber(stored)
+    end
+    if type(stored) ~= "string" or stored == "" then
+        return nil
+    end
+    return stored
+end
+
+--- Record one override, or record that the entity has none.
+--
+-- A statement of its own rather than a column in the insert beside it, because
+-- "it has none" is SQL NULL and `dbExec` takes a parameter *list*: a nil in the
+-- middle of one truncates it and `false` binds as 0, which for a radius is zero
+-- rather than the absence of one. A literal NULL in the statement has neither
+-- problem, and every write of a metadata row goes through here so none of them
+-- can forget the question.
+local function overrideStep(column, mapId, entityId, value)
+    if value == nil then
+        return {
+            "UPDATE map_entity_metadata SET " .. column .. " = NULL"
+                .. " WHERE map_id = ? AND entity_id = ?",
+            {mapId, entityId},
+        }
+    end
+    return {
+        "UPDATE map_entity_metadata SET " .. column .. " = ?"
+            .. " WHERE map_id = ? AND entity_id = ?",
+        {value, mapId, entityId},
+    }
+end
 
 local METADATA_INSERT = [[
     INSERT OR REPLACE INTO map_entity_metadata (
-        map_id, entity_id, name, entity_tag, radius, show_radius,
-        corona_color, corona_opacity, presence_state
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        map_id, entity_id, name, entity_tag, presence_state
+    ) VALUES (?, ?, ?, ?, ?)
 ]]
 
---- A stored colour, or `false` where the entity follows the setting.
+--- What this row says of its own, keyed the way the rest of the resource is.
 --
--- `false` rather than `nil`, which is the word the store already uses for a
--- column holding nothing: a SQL NULL reaches Lua as `false`, so a reader that
--- has to tell "unset" from "set" already tests for it.
-local function coronaColorOf(row)
-    local stored = row and row.corona_color
-    if type(stored) ~= "string" or stored == "" then
-        return false
-    end
-    return stored
-end
-
-local function coronaOpacityOf(row)
-    local stored = tonumber(row and row.corona_opacity)
-    if stored == nil or stored < 0 then
-        return false
-    end
-    return stored
-end
-
---- What a row says its corona should look like, where it says anything.
+-- An absent field is the entity saying nothing, which means it follows the
+-- global. One word for that, everywhere: `false` used to be it, and stopped
+-- working the day a boolean became overridable -- `false` is then a value
+-- somebody chose, not the absence of one.
 --
 -- Exposed because the F7 snapshot is built out of rows this module hands over,
--- and "an empty colour means follow the setting" is this module's rule about
--- its own storage rather than the snapshot's.
-function Store.coronaOf(row)
-    return coronaColorOf(row), coronaOpacityOf(row)
-end
-
---- Does this metadata want a corona, whichever version wrote it down?
---
--- Change History is persisted as JSON, so a row journalled before the flag was
--- renamed still says `showRadius` -- and it is exactly the rows that predate an
--- upgrade that Undo exists to put back. Reading only the current name would
--- turn every such undo into "and also switch the corona off".
---
--- The old name is read only where the new one is absent, so a row carrying
--- both cannot have the stale half win.
-local function wantsCorona(metadata)
-    if metadata.showCorona ~= nil then
-        return metadata.showCorona == true
+-- and "a NULL column means follow the setting" is this module's rule about its
+-- own storage rather than the snapshot's.
+function Store.overridesOf(row)
+    local overrides = {}
+    for _, setting in ipairs(overridableSettings()) do
+        overrides[setting.field] = readOverride(
+            setting.kind, row and row[setting.column]
+        )
     end
-    return metadata.showRadius == true
+    return overrides
 end
 
---- The values `METADATA_INSERT` binds, for one metadata table.
-local function metadataValues(mapId, entityId, metadata)
-    metadata = metadata or {}
-    local color = metadata.coronaColor
-    local opacity = tonumber(metadata.coronaOpacity)
-    return {
-        mapId,
-        entityId,
-        tostring(metadata.name or ""),
-        tostring(metadata.entityTag or ""),
-        -- The inert NOT NULL column, kept fed. What the entity actually says
-        -- about its Activation Zone is `radius_override`, written beside it.
-        tonumber(metadata.radius) or 3,
-        wantsCorona(metadata) and 1 or 0,
-        type(color) == "string" and color or "",
-        opacity or CORONA_FOLLOWS_SETTING,
-        metadata.presenceState or "identified",
-    }
-end
-
---- Write one metadata row, override and all.
+--- Everything one row says about itself, as a metadata table.
 --
--- Two statements, always together: `radius` cannot hold "this entity has none"
--- and `radius_override` is where that is said, so a caller that wrote only the
--- insert would put an entity back on the global every time it saved a name.
+-- The one reader. Six callers used to spell out the same field list, which is
+-- how "and also switch the corona off" got into an undo: the list each of them
+-- carried was the list as of the day it was written.
+function Store.metadataOf(row, presenceState)
+    local metadata = Store.overridesOf(row)
+    metadata.name = row and row.entity_name or ""
+    metadata.entityTag = row and row.entity_tag or ""
+    metadata.presenceState = presenceState
+        or (row and row.entity_state)
+        or "identified"
+    return metadata
+end
+
+--- The same metadata, with the one field that has had two names under one.
+--
+-- Change History is persisted as JSON, so a state journalled before the flag
+-- was renamed still says `showRadius` -- and it is exactly the states that
+-- predate an upgrade that Undo exists to put back. Reading only the current
+-- name would turn every such undo into "and also switch the corona off".
+--
+-- Done here, once, rather than inside the writer below: that loop is written to
+-- know no field names at all, and a name in it would be the beginning of a
+-- second list. The old name is read only where the new one is absent, so a
+-- state carrying both cannot have the stale half win.
+local function underCurrentNames(metadata)
+    if metadata.showCorona == nil and metadata.showRadius ~= nil then
+        local renamed = {}
+        for key, value in pairs(metadata) do
+            renamed[key] = value
+        end
+        renamed.showCorona = metadata.showRadius == true
+        return renamed
+    end
+    return metadata
+end
+
+--- Write one metadata row, overrides and all.
+--
+-- The insert carries only what every row must have; each override is its own
+-- statement, because "this entity has none" is NULL and a bound parameter list
+-- cannot hold one. A caller that wrote only the insert would put an entity back
+-- on every global each time it saved a name.
 local function metadataSteps(mapId, entityId, metadata)
-    return {
-        {METADATA_INSERT, metadataValues(mapId, entityId, metadata)},
-        radiusOverrideStep(mapId, entityId, (metadata or {}).radius),
+    metadata = underCurrentNames(metadata or {})
+    local steps = {
+        {
+            METADATA_INSERT,
+            {
+                mapId,
+                entityId,
+                tostring(metadata.name or ""),
+                tostring(metadata.entityTag or ""),
+                metadata.presenceState or "identified",
+            },
+        },
     }
+    for _, setting in ipairs(overridableSettings()) do
+        steps[#steps + 1] = overrideStep(
+            setting.column,
+            mapId,
+            entityId,
+            storedOverride(setting.kind, metadata[setting.field])
+        )
+    end
+    return steps
 end
 
 --- The same, read straight off a row rather than out of a metadata table.
 --
 -- The two differ in one thing: a row names its columns and a metadata table
 -- names the fields the rest of the resource uses. Everything else about "what
--- one metadata row holds" stays in `metadataValues`.
+-- one metadata row holds" stays in `metadataSteps`.
 local function metadataStepsFromRow(mapId, entityId, row, presenceState)
-    return metadataSteps(mapId, entityId, {
-        name = row.entity_name or "",
-        entityTag = row.entity_tag or "",
-        radius = tonumber(row.radius),
-        showCorona = tonumber(row.show_radius) == 1,
-        coronaColor = coronaColorOf(row) or nil,
-        coronaOpacity = coronaOpacityOf(row) or nil,
-        presenceState = presenceState,
-    })
+    return metadataSteps(mapId, entityId, Store.metadataOf(row, presenceState))
 end
 
 --- Add every step of a metadata write to a step list being built.
@@ -395,6 +461,67 @@ local METADATA_COLUMN_ADDITIONS = {
     {name = "corona_opacity", declaration = "REAL NOT NULL DEFAULT -1"},
 }
 
+--- The override columns, as the schema names them.
+--
+-- Not written out here: `CREATE TABLE` below builds this part of itself from
+-- the schema, and the migration that adds them to an older database reads the
+-- same list. A setting that gains an override gains its column by gaining the
+-- declaration, in one place, rather than in three that have to agree.
+--
+-- Every one of them is NULL-able and has no default, because NULL is how a row
+-- says it has nothing of its own -- and a row that has just been created has
+-- exactly that to say about every one of them.
+local function overrideColumnDeclarations()
+    local declarations = {}
+    for _, setting in ipairs(overridableSettings()) do
+        local storage = "TEXT"
+        if setting.kind == "number" then
+            storage = "REAL"
+        elseif setting.kind == "boolean" then
+            storage = "INTEGER"
+        end
+        declarations[#declarations + 1] = {
+            name = setting.column,
+            declaration = storage,
+        }
+    end
+    return declarations
+end
+
+--- The metadata table, with one column per overridable setting.
+--
+-- The four columns above the overrides are inert and kept only because SQLite
+-- cannot drop a column from a table that is the child of a cascading foreign
+-- key without rebuilding it. Each of them was once the answer and could not
+-- hold "this entity has none": `radius` and `show_radius` are NOT NULL, and
+-- `corona_color` and `corona_opacity` said it with `''` and `-1` -- a different
+-- spelling of nothing per column, which is what made clearing an override
+-- everywhere need a list of special cases. The override columns beside them are
+-- NULL-able, and NULL is the one spelling.
+local function metadataTableStatement()
+    local columns = {
+        "map_id TEXT NOT NULL",
+        "entity_id TEXT NOT NULL",
+        "name TEXT NOT NULL DEFAULT ''",
+        "entity_tag TEXT NOT NULL DEFAULT ''",
+        "radius REAL NOT NULL DEFAULT 3",
+        "show_radius INTEGER NOT NULL DEFAULT 0",
+        "corona_color TEXT NOT NULL DEFAULT ''",
+        "corona_opacity REAL NOT NULL DEFAULT -1",
+        "presence_state TEXT NOT NULL DEFAULT 'identified'"
+            .. " CHECK (presence_state IN ('identified', 'entity_missing'))",
+    }
+    for _, addition in ipairs(overrideColumnDeclarations()) do
+        columns[#columns + 1] = addition.name .. " " .. addition.declaration
+    end
+    columns[#columns + 1] = "PRIMARY KEY (map_id, entity_id)"
+    columns[#columns + 1] = "FOREIGN KEY (map_id, entity_id)"
+        .. " REFERENCES map_entities(map_id, entity_id) ON DELETE CASCADE"
+    return "CREATE TABLE IF NOT EXISTS map_entity_metadata ("
+        .. table.concat(columns, ", ")
+        .. ")"
+end
+
 local function ensureChangeHistorySchema()
     local created, errorMessage = transaction(Store.connection, {
         {
@@ -420,51 +547,7 @@ local function ensureChangeHistorySchema()
         {
             "INSERT OR IGNORE INTO change_history_state (singleton, cursor_id) VALUES (1, 0)",
         },
-        {
-            [[
-                CREATE TABLE IF NOT EXISTS map_entity_metadata (
-                    map_id TEXT NOT NULL,
-                    entity_id TEXT NOT NULL,
-                    name TEXT NOT NULL DEFAULT '',
-                    entity_tag TEXT NOT NULL DEFAULT '',
-                    -- Inert. `radius` could not hold "this entity has no
-                    -- radius of its own", because it is NOT NULL -- so naming
-                    -- an entity wrote a copy of the shipped default onto it,
-                    -- and the global it should have been following stopped
-                    -- reaching it. SQLite cannot drop NOT NULL from a column
-                    -- without rebuilding the table, and this one is the child
-                    -- of a foreign key with ON DELETE CASCADE; the column
-                    -- beside it is the cheaper answer and the one this table
-                    -- already grew `presence_state` by.
-                    radius REAL NOT NULL DEFAULT 3,
-                    -- NULL means the entity follows the global. Every read
-                    -- goes through this one.
-                    radius_override REAL,
-                    -- Whether the entity wears a corona. Still spelled
-                    -- `show_radius`: the column is the same standing answer it
-                    -- always was, and renaming a column in SQLite means
-                    -- rebuilding a table that is the child of a cascading
-                    -- foreign key. What it *means* is named everywhere it is
-                    -- read, which is where a reader looks.
-                    show_radius INTEGER NOT NULL DEFAULT 0,
-                    -- Not a colour and not an opacity where the entity has
-                    -- nothing of its own to say -- the settings value is then
-                    -- the answer, and a copy of it written here would go stale
-                    -- the moment the setting changed. Said with an empty
-                    -- string and an out-of-range number rather than with NULL,
-                    -- because a bound parameter list is a Lua array and a nil
-                    -- in the middle of one ends it: `unpack` would drop this
-                    -- column and every column after it.
-                    corona_color TEXT NOT NULL DEFAULT '',
-                    corona_opacity REAL NOT NULL DEFAULT -1,
-                    presence_state TEXT NOT NULL DEFAULT 'identified'
-                        CHECK (presence_state IN ('identified', 'entity_missing')),
-                    PRIMARY KEY (map_id, entity_id),
-                    FOREIGN KEY (map_id, entity_id)
-                        REFERENCES map_entities(map_id, entity_id) ON DELETE CASCADE
-                )
-            ]],
-        },
+        {metadataTableStatement()},
         {
             [[
                 CREATE TABLE IF NOT EXISTS user_settings (
@@ -505,10 +588,12 @@ local function ensureChangeHistorySchema()
                 end
             end
         end
-        -- `radius_override` is *not* repaired here. It rewrites rows, and
+        -- The override columns are *not* repaired here. Adding them rewrites
+        -- rows -- what the entity used to say lives in the inert column beside
+        -- each one and has to be carried across -- and
         -- `docs/operations/backups-and-recovery.md` wants a verified copy
-        -- before anything that does -- which only the migration path takes.
-        -- See `activation_radius_override` in `MIGRATIONS`.
+        -- before anything that does, which only the migration path takes. See
+        -- `entity_override_columns` in `MIGRATIONS`.
     end
     Store.historyReady = created == true
     return created, errorMessage
@@ -932,52 +1017,118 @@ end
 -- A step with no `to` is a shape repair rather than a version step. It bumps
 -- nothing, and its `needed` probe both decides whether it runs and, once it has
 -- run, terminates the loop.
---- Is there a `map_entity_metadata` that cannot yet say "no radius of my own"?
+--- Which override columns `map_entity_metadata` is still missing.
 --
 -- The table is created by `ensureChangeHistorySchema`, which runs *after*
 -- migrations, so a database that has never had it needs nothing here: it will
--- be created with the column already on it, and `PRAGMA table_info` of a table
--- that does not exist answers with no rows.
-local function needsRadiusOverride()
+-- be created with every column already on it, and `PRAGMA table_info` of a
+-- table that does not exist answers with no rows.
+local function missingOverrideColumns()
     local ok, columns = execute(
         Store.connection,
         "PRAGMA table_info(map_entity_metadata)"
     )
     if not ok or #columns == 0 then
-        return false
+        return {}
     end
+    local present = {}
     for _, column in ipairs(columns) do
-        if column.name == "radius_override" then
-            return false
+        present[column.name] = true
+    end
+    local missing = {}
+    for _, addition in ipairs(overrideColumnDeclarations()) do
+        if not present[addition.name] then
+            missing[#missing + 1] = addition
         end
     end
-    return true
+    return missing
 end
 
---- Give every metadata row somewhere to say it has no radius of its own.
+local function needsOverrideColumns()
+    return #missingOverrideColumns() > 0
+end
+
+--- What each override column inherits from the inert one it replaces.
 --
--- `radius` is NOT NULL, so it could not hold that -- and naming an entity
--- therefore wrote a copy of the shipped default onto it and the global stopped
--- reaching it. SQLite cannot drop NOT NULL without rebuilding the table, and
--- this one is the child of a foreign key with ON DELETE CASCADE, so the column
--- beside it is the cheaper answer; `radius` is left inert.
+-- Only the four that had somewhere to be before. `radius` is NOT NULL, so it
+-- could not say "this entity has none" -- naming an entity wrote a copy of the
+-- shipped default onto it and the global stopped reaching it. `show_radius` is
+-- the same shape, and `corona_color` and `corona_opacity` each said "nothing of
+-- its own" in a spelling of their own, `''` and `-1`.
 --
--- Every number already on disk becomes an override of itself. A stored 3 might
--- be a number somebody chose or the copy the old write path made, and nothing
--- on disk can tell them apart -- so the reading that changes nothing is the one
--- to take. Putting a row back on the global is then one row at a time, which is
--- the player's call rather than an upgrade's.
+-- What is already on disk becomes an override of itself, except where the old
+-- column was saying nothing. A stored radius of 3 might be a number somebody
+-- chose or the copy the old write path made, and nothing on disk can tell them
+-- apart -- so the reading that changes nothing is the one to take. A
+-- `show_radius` of 0 *is* distinguishable: it was the default a row got for
+-- being written at all, so it becomes "follows the global", and with the
+-- shipped global off that is the same dark entity it was yesterday.
+--
+-- The two override columns this ticket adds outright inherit nothing: nobody
+-- has ever answered them, so every row follows the global by having no answer.
+-- Each names the inert column it reads, because a shape old enough to predate
+-- the override is sometimes old enough to predate what it inherits from too:
+-- `corona_color` arrived with ticket 04 and is added by the shape repair in
+-- `ensureChangeHistorySchema`, which runs *after* migrations do. An UPDATE
+-- naming a column that is not there yet fails the whole transaction, and a
+-- failed migration is a server that will not start.
+local OVERRIDE_BACKFILL = {
+    radius_override = {
+        from = "radius",
+        statement = "UPDATE map_entity_metadata SET radius_override = radius"
+            .. " WHERE radius_override IS NULL",
+    },
+    show_corona_override = {
+        from = "show_radius",
+        statement = "UPDATE map_entity_metadata SET show_corona_override = 1"
+            .. " WHERE show_corona_override IS NULL AND show_radius = 1",
+    },
+    corona_color_override = {
+        from = "corona_color",
+        statement = "UPDATE map_entity_metadata"
+            .. " SET corona_color_override = corona_color"
+            .. " WHERE corona_color_override IS NULL AND corona_color <> ''",
+    },
+    corona_opacity_override = {
+        from = "corona_opacity",
+        statement = "UPDATE map_entity_metadata"
+            .. " SET corona_opacity_override = corona_opacity"
+            .. " WHERE corona_opacity_override IS NULL AND corona_opacity >= 0",
+    },
+}
+
+--- Give every metadata row somewhere to say it has nothing of its own.
+--
+-- SQLite cannot drop NOT NULL without rebuilding the table, and this one is the
+-- child of a foreign key with ON DELETE CASCADE, so a column beside each is the
+-- cheaper answer; the originals are left inert.
 --
 -- A migration rather than a shape fixup beside `presence_state`, because it
 -- rewrites rows and only this path takes a verified copy first.
-local function migrateRadiusOverride()
-    return transaction(Store.connection, {
-        {"ALTER TABLE map_entity_metadata ADD COLUMN radius_override REAL"},
-        {
-            "UPDATE map_entity_metadata SET radius_override = radius"
-                .. " WHERE radius_override IS NULL",
-        },
-    })
+local function migrateOverrideColumns()
+    local ok, columns = execute(
+        Store.connection,
+        "PRAGMA table_info(map_entity_metadata)"
+    )
+    if not ok then
+        return false, "metadata_schema_read_failed"
+    end
+    local present = {}
+    for _, column in ipairs(columns) do
+        present[column.name] = true
+    end
+    local steps = {}
+    for _, addition in ipairs(missingOverrideColumns()) do
+        steps[#steps + 1] = {
+            "ALTER TABLE map_entity_metadata ADD COLUMN "
+                .. addition.name .. " " .. addition.declaration,
+        }
+        local backfill = OVERRIDE_BACKFILL[addition.name]
+        if backfill and present[backfill.from] then
+            steps[#steps + 1] = {backfill.statement}
+        end
+    end
+    return transaction(Store.connection, steps)
 end
 
 --- Throw away the `coronaOpacity` a schema that no longer exists wrote down.
@@ -1077,13 +1228,16 @@ local MIGRATIONS = {
         apply = migrateVersionEight,
     },
     -- A shape repair, and last: it probes the shape rather than the number, so
-    -- it applies to any database whose metadata table predates the column and
-    -- clears itself once it has run.
+    -- it applies to any database whose metadata table predates a column and
+    -- clears itself once it has run. It covers every override the schema
+    -- declares, which is why it is not named after any one of them: the next
+    -- setting to gain an override is added to the schema and repaired here
+    -- without this list changing.
     {
-        id = "activation_radius_override",
+        id = "entity_override_columns",
         from = 1,
-        needed = needsRadiusOverride,
-        apply = migrateRadiusOverride,
+        needed = needsOverrideColumns,
+        apply = migrateOverrideColumns,
     },
 }
 
@@ -1543,18 +1697,11 @@ function Store.forgetMapEntity(mapId, entityId)
             interior = stored.interior,
             dimension = stored.dimension,
         },
-        metadata = {
-            name = row.entity_name or "",
-            entityTag = row.entity_tag or "",
-            -- Absent, not 3, when the entity has no radius of its own: `or 3`
-            -- would record "it followed the global" as "it was pinned at the
-            -- global's current value", and Undo would put back the second.
-            radius = tonumber(row.radius),
-            showCorona = tonumber(row.show_radius) == 1,
-            coronaColor = coronaColorOf(row),
-            coronaOpacity = coronaOpacityOf(row),
-            presenceState = row.entity_state or "identified",
-        },
+        -- Absent, not 3, where the entity has no radius of its own -- and the
+        -- same for every other override. `or 3` would record "it followed the
+        -- global" as "it was pinned at the global's current value", and Undo
+        -- would put back the second.
+        metadata = Store.metadataOf(row),
         link = row.link_state and {
             collectionUuid = row.collection_uuid,
             cardId = tonumber(row.card_id),
@@ -1878,15 +2025,23 @@ local function applyHistoryStateSteps(operation, target, state)
             end
         else
             local identity = targetRow.collectionUuid and targetRow or nil
-            addMetadataSteps(steps, targetMapId, targetEntityId, {
+            -- The recorded state names the overrides flat beside the identity,
+            -- so they are read back the same way -- by the schema's field names
+            -- rather than by a list written out here, which is what an entry
+            -- recorded by a later build would not match.
+            local moved = {
                 name = targetRow.entityName,
                 entityTag = targetRow.entityTag,
-                radius = tonumber(targetRow.radius),
-                showCorona = wantsCorona(targetRow),
-                coronaColor = targetRow.coronaColor,
-                coronaOpacity = targetRow.coronaOpacity,
                 presenceState = "identified",
-            })
+                -- Read for its own sake: an entry recorded before ticket 04
+                -- renamed the flag says `showRadius`, and it is exactly those
+                -- that Undo exists to put back.
+                showRadius = targetRow.showRadius,
+            }
+            for _, setting in ipairs(overridableSettings()) do
+                moved[setting.field] = targetRow[setting.field]
+            end
+            addMetadataSteps(steps, targetMapId, targetEntityId, moved)
             table.insert(steps, {
                 "UPDATE map_entity_metadata SET presence_state = 'entity_missing' "
                     .. "WHERE map_id = ? AND entity_id = ?",
@@ -2012,6 +2167,39 @@ local function applyHistoryStateSteps(operation, target, state)
             -- whatever the global happened to say -- and the same holds for a
             -- corona colour and opacity the entity did not have.
             addMetadataSteps(steps, target.mapId, target.entityId, state)
+        end
+    elseif operation == "clear_entity_overrides" then
+        if type(target) ~= "table" or type(target.settingKey) ~= "string"
+            or type(state) ~= "table"
+        then
+            return false, "invalid_history_target"
+        end
+        local column = ANKIGTA.Settings.entityOverrideColumn(target.settingKey)
+        if not column then
+            return false, "invalid_history_target"
+        end
+        local definition = ANKIGTA.Settings.definition(target.settingKey)
+        local kind = definition and definition.rule and definition.rule.kind
+        -- Cleared first and then written back one row at a time, in both
+        -- directions. Undo is not "put these back beside whatever is there
+        -- now": the sweep is one decision over the whole world, so reversing
+        -- it has to leave the world in the state it recorded, including the
+        -- rows that had nothing of their own before it ran.
+        table.insert(steps, {
+            "UPDATE map_entity_metadata SET " .. column .. " = NULL",
+        })
+        for _, entry in ipairs(state.overrides or {}) do
+            local stored = storedOverride(kind, entry.value)
+            if stored ~= nil
+                and type(entry.mapId) == "string"
+                and type(entry.entityId) == "string"
+            then
+                table.insert(steps, {
+                    "UPDATE map_entity_metadata SET " .. column .. " = ?"
+                        .. " WHERE map_id = ? AND entity_id = ?",
+                    {stored, entry.mapId, entry.entityId},
+                })
+            end
         end
     elseif operation == "user_setting" then
         if type(target) ~= "table" or type(target.settingKey) ~= "string"
@@ -2357,6 +2545,20 @@ function Store.volumeReport()
     }
 end
 
+--- The override columns, as a projection for a SELECT over the join.
+--
+-- Generated, so a row read anywhere carries every override the schema declares.
+-- A LEFT JOIN that finds no metadata row answers NULL for each of them, which
+-- is the same thing a metadata row with nothing of its own says -- so an entity
+-- nobody has ever touched follows every global by the join alone.
+local function overrideProjection()
+    local parts = {}
+    for _, setting in ipairs(overridableSettings()) do
+        parts[#parts + 1] = "map_entity_metadata." .. setting.column
+    end
+    return table.concat(parts, ", ")
+end
+
 function Store.listMapEntities()
     if not Store.ready then
         return false, Store.errorCategory or "storage_unavailable"
@@ -2364,8 +2566,7 @@ function Store.listMapEntities()
 
     local ok, rows = execute(
         Store.connection,
-        [[
-            SELECT
+        "SELECT " .. overrideProjection() .. [[,
                 maps.map_id,
                 maps.resource_name,
                 maps.map_name,
@@ -2382,17 +2583,10 @@ function Store.listMapEntities()
                 map_entities.dimension,
                 COALESCE(map_entity_metadata.name, '') AS entity_name,
                 COALESCE(map_entity_metadata.entity_tag, '') AS entity_tag,
-                -- Not coalesced to 3: absent is a fact about the entity --
-                -- that it follows the global -- and inventing a number here
-                -- is what made every row look like a decision somebody took.
-                map_entity_metadata.radius_override AS radius,
-                COALESCE(map_entity_metadata.show_radius, 0) AS show_radius,
-                -- The "nothing of its own" values for a row that has no
-                -- metadata at all, so the corona of an untouched entity is
-                -- decided by Settings rather than by a missing join.
-                COALESCE(map_entity_metadata.corona_color, '') AS corona_color,
-                COALESCE(map_entity_metadata.corona_opacity, -1)
-                    AS corona_opacity,
+                -- No override is coalesced to anything: absent is a fact about
+                -- the entity -- that it follows the global -- and inventing a
+                -- value here is what made every row look like a decision
+                -- somebody had taken.
                 spatial_links.collection_uuid,
                 spatial_links.card_id,
                 spatial_links.state AS link_state,
@@ -2498,8 +2692,7 @@ function Store.getMapEntity(mapId, entityId)
     end
     local ok, rows = execute(
         Store.connection,
-        [[
-            SELECT
+        "SELECT " .. overrideProjection() .. [[,
                 maps.map_id,
                 maps.resource_name,
                 maps.map_name,
@@ -2519,10 +2712,6 @@ function Store.getMapEntity(mapId, entityId)
                 map_entities.dimension,
                 map_entity_metadata.name AS entity_name,
                 map_entity_metadata.entity_tag AS entity_tag,
-                map_entity_metadata.radius_override AS radius,
-                map_entity_metadata.show_radius AS show_radius,
-                map_entity_metadata.corona_color AS corona_color,
-                map_entity_metadata.corona_opacity AS corona_opacity,
                 spatial_links.collection_uuid,
                 spatial_links.card_id,
                 spatial_links.state AS link_state,
@@ -2611,6 +2800,19 @@ function Store.relinkEntity(value)
         source = source,
         target = target,
     }
+    -- Everything the source said of its own, flat beside the identity that is
+    -- moving. Built from the overrides rather than field by field, so an
+    -- override added later moves with the relink and comes back on a Redo
+    -- without this being edited.
+    local moved = Store.overridesOf(source)
+    moved.mapId = value.targetMapId
+    moved.entityId = value.targetEntityId
+    moved.state = "active"
+    moved.entityName = source.entity_name or ""
+    moved.entityTag = source.entity_tag or ""
+    moved.collectionUuid = source.collection_uuid
+    moved.cardId = tonumber(source.card_id)
+    moved.verifiedMapSha256 = source.verified_map_sha256
     local after = {
         phase = "after",
         source = {
@@ -2618,20 +2820,7 @@ function Store.relinkEntity(value)
             entityId = value.sourceEntityId,
             state = "removed",
         },
-        target = {
-            mapId = value.targetMapId,
-            entityId = value.targetEntityId,
-            state = "active",
-            entityName = source.entity_name or "",
-            entityTag = source.entity_tag or "",
-            radius = tonumber(source.radius) or false,
-            showCorona = tonumber(source.show_radius) == 1,
-            coronaColor = coronaColorOf(source),
-            coronaOpacity = coronaOpacityOf(source),
-            collectionUuid = source.collection_uuid,
-            cardId = tonumber(source.card_id),
-            verifiedMapSha256 = source.verified_map_sha256,
-        },
+        target = moved,
     }
     -- The target takes on everything the source said about itself, in one
     -- statement rather than an insert-if-absent followed by an update: those
@@ -2696,14 +2885,7 @@ function Store.relinkEntity(value)
         sourceEntityId = value.sourceEntityId,
         targetMapId = value.targetMapId,
         targetEntityId = value.targetEntityId,
-        metadata = {
-            name = source.entity_name or "",
-            entityTag = source.entity_tag or "",
-            radius = tonumber(source.radius) or false,
-            showCorona = tonumber(source.show_radius) == 1,
-            coronaColor = coronaColorOf(source),
-            coronaOpacity = coronaOpacityOf(source),
-        },
+        metadata = Store.metadataOf(source, "identified"),
         link = {
             collectionUuid = source.collection_uuid,
             cardId = tonumber(source.card_id),
@@ -3151,33 +3333,28 @@ function Store.updateEntityMetadata(mapId, entityId, metadata)
     if not metadataOk then
         return false, "entity_metadata_read_failed"
     end
-    local before = {
-        exists = metadataRows[1] ~= nil,
-        name = existing.entity_name or "",
-        entityTag = existing.entity_tag or "",
-        -- `false` is "this entity follows the global", which is a different
-        -- answer from 3 and has to survive a round trip through Change
-        -- History as itself.
-        radius = tonumber(existing.radius) or false,
-        showCorona = tonumber(existing.show_radius) == 1,
-        coronaColor = coronaColorOf(existing),
-        coronaOpacity = coronaOpacityOf(existing),
-        presenceState = existing.entity_state or "identified",
-    }
+    -- An absent field is "this entity follows the global", which is a different
+    -- answer from 3 and has to survive a round trip through Change History as
+    -- itself.
+    local before = Store.metadataOf(existing)
+    before.exists = metadataRows[1] ~= nil
     local after = {
         exists = true,
         name = tostring(metadata.name or ""),
         entityTag = tostring(metadata.entityTag or ""),
-        radius = tonumber(metadata.radius) or false,
-        showCorona = wantsCorona(metadata),
-        -- `false` is a colour the entity does not have, which is how "follow
-        -- the setting" is said. Anything else is stored as given: the caller
-        -- has already checked it against the schema's own colour rule.
-        coronaColor = type(metadata.coronaColor) == "string"
-            and metadata.coronaColor or false,
-        coronaOpacity = tonumber(metadata.coronaOpacity) or false,
-        presenceState = metadata.presenceState or existing.entity_state or "identified",
+        presenceState = metadata.presenceState
+            or existing.entity_state
+            or "identified",
     }
+    -- Each override taken as the caller gave it, which has already been checked
+    -- against the schema's own rule for the setting it overrides. Nothing is
+    -- coerced here: `false` is a corona switched off on this entity and absent
+    -- is one that follows the global, and a coercion is how those two became
+    -- one answer the last time this was written out field by field.
+    local wanted = underCurrentNames(metadata)
+    for _, setting in ipairs(overridableSettings()) do
+        after[setting.field] = wanted[setting.field]
+    end
     local committed, errorMessage = historyTransaction(
         "entity_metadata",
         historyTarget(mapId, entityId),
@@ -3189,6 +3366,103 @@ function Store.updateEntityMetadata(mapId, entityId, metadata)
         return false, "entity_metadata_update_failed: " .. tostring(errorMessage)
     end
     return true
+end
+
+--- The column a setting's overrides live in, or why there is none.
+local function overrideColumnFor(settingKey)
+    if type(settingKey) ~= "string" then
+        return false, "settings.error.unknown"
+    end
+    if not ANKIGTA.Settings.definition(settingKey) then
+        return false, "settings.error.unknown"
+    end
+    local column = ANKIGTA.Settings.entityOverrideColumn(settingKey)
+    if not column then
+        return false, "settings.error.not_overridable"
+    end
+    return column
+end
+
+--- How many links say something of their own about this setting.
+--
+-- Asked before the clearing rather than carried on every settings push: the
+-- number is what the confirmation names, and a number attached to a control the
+-- player is not looking at would be recounted on every state change instead.
+function Store.countEntityOverrides(settingKey)
+    if not Store.ready then
+        return false, Store.errorCategory or "storage_unavailable"
+    end
+    local column, reason = overrideColumnFor(settingKey)
+    if not column then
+        return false, reason
+    end
+    local ok, rows = execute(
+        Store.connection,
+        "SELECT COUNT(*) AS overrides FROM map_entity_metadata"
+            .. " WHERE " .. column .. " IS NOT NULL"
+    )
+    if not ok or not rows[1] then
+        return false, "entity_override_read_failed"
+    end
+    return tonumber(rows[1].overrides) or 0
+end
+
+--- Put every link back on the global for one setting.
+--
+-- Clearing, not copying. Every link *follows* the global afterwards, so
+-- changing the global again moves them all again; writing today's value into
+-- each link as its own override would look identical for a minute and then
+-- quietly stop tracking.
+--
+-- One Change History entry for the whole sweep, because it is one decision. The
+-- entry carries what each link said, so one Undo puts every one of them back.
+function Store.clearEntityOverrides(settingKey)
+    if not Store.ready or not Store.historyReady then
+        return false, Store.errorCategory or "storage_unavailable"
+    end
+    local column, reason = overrideColumnFor(settingKey)
+    if not column then
+        return false, reason
+    end
+    local definition = ANKIGTA.Settings.definition(settingKey)
+    local kind = definition and definition.rule and definition.rule.kind
+    local ok, rows = execute(
+        Store.connection,
+        "SELECT map_id, entity_id, " .. column .. " AS override"
+            .. " FROM map_entity_metadata WHERE " .. column .. " IS NOT NULL"
+    )
+    if not ok then
+        return false, "entity_override_read_failed"
+    end
+    local overrides = {}
+    for _, row in ipairs(rows) do
+        overrides[#overrides + 1] = {
+            mapId = row.map_id,
+            entityId = row.entity_id,
+            value = readOverride(kind, row.override),
+        }
+    end
+    if #overrides == 0 then
+        -- Nothing changed, so there is nothing to undo. An entry here would be
+        -- a history step that does nothing and an Undo that appears to fail.
+        return {settingKey = settingKey, cleared = 0}
+    end
+    local committed, errorMessage = historyTransaction(
+        "clear_entity_overrides",
+        jsonEncode({settingKey = settingKey}),
+        {settingKey = settingKey, overrides = overrides},
+        {settingKey = settingKey, overrides = {}},
+        {
+            {
+                "UPDATE map_entity_metadata SET " .. column .. " = NULL"
+                    .. " WHERE " .. column .. " IS NOT NULL",
+            },
+        }
+    )
+    if not committed then
+        return false, "entity_override_clear_failed: " .. tostring(errorMessage)
+    end
+    return {settingKey = settingKey, cleared = #overrides}
 end
 
 --- Every persisted setting, decoded, keyed by setting.

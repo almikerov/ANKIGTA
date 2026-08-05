@@ -42,6 +42,72 @@ local function toggle()
     return {kind = "boolean"}
 end
 
+--- The keys ANKIGTA has already bound, and what each one does.
+--
+-- Here rather than at the three `bindKey` calls, because two different
+-- questions read it: the client binds through it, and `activationKey` is
+-- refused when it names one of these. A second list would answer the second
+-- question about a binding the first had since moved.
+Settings.reservedKeys = {
+    panel = "F7",
+    dismiss = "escape",
+}
+
+--- Is this key one ANKIGTA already answers to?
+function Settings.keyIsReserved(name)
+    for _, reserved in pairs(Settings.reservedKeys) do
+        if reserved == name then
+            return true
+        end
+    end
+    return false
+end
+
+--- Every key `activationKey` may name, spelt the way MTA spells it.
+--
+-- MTA's own table (`Client/core/CKeyBinds.cpp`, `g_bindableKeys`, read
+-- 2026-08-05, SHA-256
+-- d87c62055f7763f9ea3057a092b73cc074abfa45b9f0f7b2941a19ee6d61d542): letters
+-- and digits are lowercase and unshifted, the function keys are uppercase, and
+-- `F8` is absent because MTA keeps it for its console. Keyboard only -- a mouse
+-- button is a key `bindKey` accepts and not one to open a card with.
+--
+-- A list rather than "any string": `bindKey` refuses a name it does not know,
+-- and a refusal there is a setting that reads as saved and binds nothing.
+local KEY_NAMES = {
+    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+    "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+    "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F9", "F10", "F11", "F12",
+    "space", "enter", "tab", "backspace", "capslock",
+    "lshift", "rshift", "lctrl", "rctrl", "lalt", "ralt",
+    "insert", "delete", "home", "end", "pgup", "pgdn",
+    "arrow_l", "arrow_u", "arrow_r", "arrow_d",
+    "num_0", "num_1", "num_2", "num_3", "num_4",
+    "num_5", "num_6", "num_7", "num_8", "num_9", "num_enter",
+    "escape",
+}
+
+local function keyName()
+    return {kind = "key", values = KEY_NAMES}
+end
+
+--- The keys a player may actually be offered.
+--
+-- `KEY_NAMES` is every key ANKIGTA is willing to bind and this is the part of
+-- it that is still free, so the reserved ones are refused by the rule *and*
+-- absent from the list. Offering a value the validator will refuse is a control
+-- that argues with itself.
+function Settings.offeredKeys()
+    local free = {}
+    for _, name in ipairs(KEY_NAMES) do
+        if not Settings.keyIsReserved(name) then
+            free[#free + 1] = name
+        end
+    end
+    return free
+end
+
 --- A colour the user picks, as `#rrggbb`.
 --
 -- Text rather than three numbers because that is what the picker hands back
@@ -63,12 +129,44 @@ local function placement()
 end
 
 --- Every user-facing setting, its owner, its default and its rules.
+--
+-- `entityOverride` names the `map_entity_metadata` column a Map Entity says its
+-- own answer in. It is what makes a setting overridable on a link -- the panel
+-- offers a way to clear those overrides everywhere by reading this, the store
+-- finds the column by reading this, and neither keeps a list of its own. A
+-- setting that gains an override gains both by gaining this field.
+--
+-- Every such column is NULL where the entity has nothing of its own to say.
+-- One spelling for "follows the global", so clearing an override is one
+-- statement whatever the setting is; a column that said it with `''` or `-1`
+-- would need the sweep to know which, which is the list this avoids.
 Settings.schema = {
     -- World and study: persisted, shared, undoable.
     activationRadius = {
         authority = SERVER,
         default = 3,
         rule = numeric(0.5, 50, 0.5),
+        entityOverride = {column = "radius_override", field = "radius"},
+    },
+    -- Which of the two ways in this entity offers. `automatic` is the zone and
+    -- its delay deciding on the player's behalf; `key` is the zone offering and
+    -- the player taking it. Not a slower `automatic`: a press is the certainty
+    -- the delay and the speed gate exist to wait for, so in `key` neither of
+    -- them stands between the offer and the card.
+    activationType = {
+        authority = SERVER,
+        default = "automatic",
+        rule = choice({"automatic", "key"}),
+        entityOverride = {column = "activation_type_override", field = "activationType"},
+    },
+    -- Which key takes the offer. Overridable per entity for the same reason the
+    -- radius is: one object can be the odd one out without moving everything
+    -- else.
+    activationKey = {
+        authority = SERVER,
+        default = "e",
+        rule = keyName(),
+        entityOverride = {column = "activation_key_override", field = "activationKey"},
     },
     activationDelaySeconds = {
         authority = SERVER,
@@ -89,16 +187,33 @@ Settings.schema = {
         default = "allow_due",
         rule = choice({"allow_due", "allow_all"}),
     },
-    -- What a corona looks like where the entity does not say otherwise. Owned
-    -- by the server for the same reason `activationRadius` is: these are the
-    -- defaults behind a value stored on the Map Entity itself, and a default
-    -- kept on one player's machine would describe a marker every other player
-    -- sees differently.
-    coronaColor = {authority = SERVER, default = "#3cc8ff", rule = color()},
+    -- Whether an entity wears a corona at all, and what it looks like where the
+    -- entity does not say otherwise. Owned by the server for the same reason
+    -- `activationRadius` is: these are the defaults behind a value stored on
+    -- the Map Entity itself, and a default kept on one player's machine would
+    -- describe a marker every other player sees differently.
+    --
+    -- `showCorona` was the entity's alone until it needed a way back: an
+    -- entity that has been told to show one, months ago, could only be told
+    -- otherwise one at a time. A global behind it is what "put these back the
+    -- way the rest of them are" means.
+    showCorona = {
+        authority = SERVER,
+        default = false,
+        rule = toggle(),
+        entityOverride = {column = "show_corona_override", field = "showCorona"},
+    },
+    coronaColor = {
+        authority = SERVER,
+        default = "#3cc8ff",
+        rule = color(),
+        entityOverride = {column = "corona_color_override", field = "coronaColor"},
+    },
     coronaOpacity = {
         authority = SERVER,
         default = 0.6,
         rule = numeric(0, 1, nil, 2),
+        entityOverride = {column = "corona_opacity_override", field = "coronaOpacity"},
     },
     -- No `includeInStudy`. Which maps take part is not a preference: a Map
     -- Entity is in play when its map is loaded, which the world already
@@ -111,9 +226,9 @@ Settings.schema = {
     -- is on, the selected row's Activation Zone is drawn for as long as the
     -- panel is open. The answer outlives F7 and the drawing does not -- it is
     -- about the row being worked on, and nothing is being worked on with the
-    -- window shut. `Show corona` is the other half of the pair and lives on the
-    -- entity, because that one is a property of the thing, everyone sees it,
-    -- and it is there whether or not anybody has a window open.
+    -- window shut. `Show corona` is the other half of the pair and is a
+    -- property of the thing, everyone sees it, and it is there whether or not
+    -- anybody has a window open -- so it is server-owned and overridable above.
     drawRadius = {authority = CLIENT, default = false, rule = toggle()},
     indicatorMode = {
         authority = CLIENT,
@@ -161,12 +276,17 @@ Settings.schema = {
 Settings.order = {
     "connectionPort",
     "activationRadius",
+    -- Which way in, and the key that takes it, next to the zone they are about.
+    "activationType",
+    "activationKey",
     "activationDelaySeconds",
     "maxActivationSpeedKmh",
     "reviewMode",
-    -- The three that decide what ANKIGTA draws into the world, together: the
-    -- way of looking first, then what the mark the entity wears looks like.
+    -- The four that decide what ANKIGTA draws into the world, together: the
+    -- way of looking first, then whether the entity wears a mark at all and
+    -- what that mark looks like.
     "drawRadius",
+    "showCorona",
     "coronaColor",
     "coronaOpacity",
     "indicatorMode",
@@ -213,6 +333,41 @@ end
 
 function Settings.definition(key)
     return Settings.schema[key]
+end
+
+--- Where a Map Entity says its own answer to this setting, if it may have one.
+function Settings.entityOverrideColumn(key)
+    local definition = Settings.schema[key]
+    local override = definition and definition.entityOverride
+    return override and override.column or false
+end
+
+--- What that answer is called everywhere outside the database.
+--
+-- The store's column and the field the snapshot, the panel and Change History
+-- use are two names for one answer, and both are declared here: a store that
+-- knew the second would be keeping a list of its own, which is the thing this
+-- ticket exists to stop.
+function Settings.entityOverrideField(key)
+    local definition = Settings.schema[key]
+    local override = definition and definition.entityOverride
+    return override and override.field or false
+end
+
+--- Every setting a link can override, in the order the panel lays them out.
+--
+-- Derived from the schema, so the control that clears an override everywhere is
+-- offered for a setting by that setting having an override -- never by being
+-- named in a list here or in the panel or in the store. The set has grown three
+-- times in three tickets; a list would be missing the fourth.
+function Settings.entityOverridableKeys()
+    local keys = {}
+    for _, key in ipairs(Settings.orderedKeys()) do
+        if Settings.entityOverrideColumn(key) then
+            keys[#keys + 1] = key
+        end
+    end
+    return keys
 end
 
 function Settings.authorityOf(key)
@@ -356,6 +511,27 @@ function Settings.validate(key, value)
             end
         end
         return false, "settings.error.not_a_choice"
+    end
+
+    -- A key name, and one nobody here is already listening for. Shadowing F7
+    -- would leave the panel's own key opening a card instead, which is a
+    -- setting that quietly breaks a different feature -- so it is refused, and
+    -- the reason says which kind of no it is.
+    if rule.kind == "key" then
+        local known = false
+        for _, allowed in ipairs(rule.values) do
+            if value == allowed then
+                known = true
+                break
+            end
+        end
+        if not known then
+            return false, "settings.error.not_a_key"
+        end
+        if Settings.keyIsReserved(value) then
+            return false, "settings.error.key_in_use"
+        end
+        return true
     end
 
     if rule.kind == "number" then

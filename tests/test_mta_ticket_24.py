@@ -77,7 +77,11 @@ def test_client_pick_entity_has_modal_aim_and_exact_cleanup_contract() -> None:
     assert "clickedElement" in function_body(pick, "targetUnderCursor")
     assert "isElementStreamedIn" in function_body(pick, "isEligibleTarget")
     assert "restoreInputState" in function_body(pick, "finishPickEntity")
-    assert 'bindKey("escape", "down"' in pick
+    # Escape still cancels, but it is named by the shared schema rather than
+    # spelt here: `activationKey` is refused for naming a key ANKIGTA already
+    # answers to, and that refusal reads the same list this binds from.
+    assert 'bindKey(dismissKey(), "down"' in pick
+    assert "reservedKeys.dismiss" in function_body(pick, "dismissKey")
     assert 'addEventHandler("onClientResourceStop"' in pick
 
 

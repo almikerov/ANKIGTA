@@ -915,7 +915,8 @@ def test_show_corona_is_stored_on_the_entity(server: MtaSandbox) -> None:
     write_metadata(server, player, {"showCorona": True})
 
     assert server.connection.raw.execute(
-        "SELECT show_radius FROM map_entity_metadata WHERE entity_id = ?",
+        "SELECT show_corona_override FROM map_entity_metadata"
+        " WHERE entity_id = ?",
         ("gate-17",),
     ).fetchone() == (1,)
     assert snapshot_row(server, player)["metadata"]["showCorona"] is True
@@ -940,7 +941,7 @@ def test_a_colour_and_an_opacity_are_stored_on_the_entity(
 def test_an_entity_that_says_nothing_follows_settings(
     server: MtaSandbox,
 ) -> None:
-    """`false`, not a copy of today's global: a copy would go stale the moment
+    """Absent, not a copy of today's global: a copy would go stale the moment
     the setting changed, and the entity would stop following it."""
     seed_entity(server)
     player = server.add_study_player()
@@ -948,8 +949,8 @@ def test_an_entity_that_says_nothing_follows_settings(
     write_metadata(server, player, {"name": "North gate"})
 
     row = snapshot_row(server, player)["metadata"]
-    assert row["coronaColor"] is False
-    assert row["coronaOpacity"] is False
+    assert "coronaColor" not in row
+    assert "coronaOpacity" not in row
 
 
 def test_clearing_a_colour_goes_back_to_following_settings(
@@ -959,9 +960,9 @@ def test_clearing_a_colour_goes_back_to_following_settings(
     player = server.add_study_player()
     write_metadata(server, player, {"coronaColor": "#ff8000"})
 
-    write_metadata(server, player, {"coronaColor": False})
+    write_metadata(server, player, {"coronaColor": "inherit"})
 
-    assert snapshot_row(server, player)["metadata"]["coronaColor"] is False
+    assert "coronaColor" not in snapshot_row(server, player)["metadata"]
 
 
 def test_setting_one_field_does_not_erase_the_others(
@@ -1008,8 +1009,8 @@ def test_a_value_the_schema_would_refuse_is_refused_here_too(
 
     assert refusals(server) != []
     row = snapshot_row(server, player)["metadata"]
-    assert row["coronaColor"] is False
-    assert row["coronaOpacity"] is False
+    assert "coronaColor" not in row
+    assert "coronaOpacity" not in row
 
 
 def test_undo_puts_back_the_corona_the_entity_had(server: MtaSandbox) -> None:
