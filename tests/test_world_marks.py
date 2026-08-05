@@ -256,6 +256,28 @@ def test_the_snapshot_is_asked_for_as_soon_as_the_player_is_authorized(
     ]
 
 
+def test_a_map_loading_after_the_player_did_is_asked_about_too(
+    client: MtaSandbox,
+) -> None:
+    """One snapshot at the door is not enough: a map loaded afterwards, or a
+    corona another player ticked, would go unmarked until somebody pressed F7 --
+    which is the same defect one step along."""
+    authorize(client)
+    push_snapshot(client, [])
+    asked = len(
+        [e for e in client.recorder.server_events if e.name == "ankigta:requestF7"]
+    )
+
+    # A map loading is elements appearing, which is what the client hears.
+    standing(client)
+    client.trigger("onClientElementCreate", standing(client, entity_id="gate-18"))
+    client.fire_timers()
+
+    assert len(
+        [e for e in client.recorder.server_events if e.name == "ankigta:requestF7"]
+    ) > asked
+
+
 def test_a_corona_is_sized_by_the_activation_zone_it_stands_for(
     client: MtaSandbox,
 ) -> None:
@@ -588,6 +610,26 @@ def far_away(sandbox: MtaSandbox) -> float:
     return sandbox.eval(
         "function() return ANKIGTA.WorldMarks.drawDistance() end"
     )() + 1
+
+
+def test_the_stated_distance_is_a_distance_worth_stating(
+    client: MtaSandbox,
+) -> None:
+    """The tests below take the distance from the module, so on its own a wrong
+    number could not fail them. This is the range it has to be in, and neither
+    end is arbitrary.
+
+    A corona is meant to be seen from across a street, and a GTA San Andreas
+    block is on the order of a hundred metres. Above MTA's own streaming there
+    is nothing to draw on: markers stream within 600 units and objects within
+    500 (`CClientManager::CClientManager`), and a corona only ever goes on a
+    Runtime Instance that is streamed in.
+    """
+    stated = client.eval(
+        "function() return ANKIGTA.WorldMarks.drawDistance() end"
+    )()
+
+    assert 100 <= stated <= 500
 
 
 def test_a_drawn_zone_stops_at_the_stated_distance(client: MtaSandbox) -> None:

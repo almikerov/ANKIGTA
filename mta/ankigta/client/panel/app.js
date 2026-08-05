@@ -726,7 +726,8 @@
       entity.radius,
       entity.radiusInherited === true,
       entity.coronaOpacity,
-      entity.coronaOpacityInherited === true
+      entity.coronaOpacityInherited === true,
+      entity.coronaColor
     ]);
     if (reported !== reportedEntity) {
       reportedEntity = reported;
@@ -739,16 +740,22 @@
        * Settings says" and reads as no value at all. */
       radius.value = entity.radius;
       opacity.value = entity.coronaOpacity;
+      /* The colour the corona will really be, which for an entity that has
+       * chosen none is the one Settings holds. A swatch showing nothing would
+       * say the corona has no colour, and it has one.
+       *
+       * Inside the guard with the other two, because the picker owns a hex box
+       * somebody may be halfway through typing into: a state push happens
+       * whenever anything at all changes -- a car streaming in will do it --
+       * and one that reports the same colour must not take the half-typed code
+       * out from under them. */
+      coronaColorPicker.setValue(entity.coronaColor);
     }
     /* Shown, and said: a number that came from Settings looks exactly like a
      * number somebody chose. */
     radius.setAttribute("data-inherited", String(entity.radiusInherited === true));
     mark.hidden = entity.radiusInherited !== true;
     showCorona.checked = entity.showCorona === true;
-    /* The colour the corona will really be, which for an entity that has
-     * chosen none is the one Settings holds. A swatch showing nothing would
-     * say the corona has no colour, and it has one. */
-    coronaColorPicker.setValue(entity.coronaColor);
     colorMark.hidden = entity.coronaColorInherited !== true;
     opacity.setAttribute(
       "data-inherited", String(entity.coronaOpacityInherited === true)

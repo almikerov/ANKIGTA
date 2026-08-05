@@ -144,7 +144,7 @@ function Indicator.plan(player, candidates, cardIdentity)
         sphere = Indicator.mode == MODE_SPHERE_AND_MINIMAP,
         -- A corona already marks this spot, so the indicator emphasizes that
         -- mark instead of putting a second one on top of it.
-        emphasized = target.hasActivationZone == true,
+        emphasized = target.hasCorona == true,
         mapId = target.mapId,
         entityId = target.entityId,
         x = target.x,
@@ -299,6 +299,13 @@ function Indicator.render()
     -- Through the marks module, which is where the one rule about how far
     -- ANKIGTA draws lives. A mark that reached for `dxDrawMaterialLine3D`
     -- itself would be a second answer to a question with one.
+    --
+    -- Guarded like every other reach into it: a running client can be handed
+    -- one changed `cache="false"` script a restart before a newly added one,
+    -- and an unguarded call in a render handler is an error per frame.
+    if not ANKIGTA.WorldMarks then
+        return
+    end
     ANKIGTA.WorldMarks.beam(
         current.x,
         current.y,

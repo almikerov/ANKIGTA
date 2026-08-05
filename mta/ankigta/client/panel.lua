@@ -505,6 +505,10 @@ end
 -- (1)`, `object (2)` and so on, counting from one per map -- so two loaded maps
 -- collide on their first object, and an index keyed on the id alone quietly
 -- files one map's element under the other map's row.
+--
+-- Exported, because `runtimeElementsFor` answers in it and the world marks
+-- read that answer: two copies of one separator is a corona that silently
+-- stops resolving the day one of them changes.
 local function panelEntityKey(mapId, entityId)
     return tostring(mapId) .. "/" .. tostring(entityId)
 end
@@ -2101,8 +2105,18 @@ end)
 
 local entityRefreshTimer = nil
 
+--- Ask the server for the entity set again, once the world stops changing.
+--
+-- Not gated on the panel being open. It was, and that made sense while the
+-- snapshot was only ever a list on screen -- but the marks are drawn out of
+-- the same snapshot and they are a property of the world, so a map loaded
+-- after the player joined, or a corona another player ticked, would have gone
+-- unmarked until somebody pressed F7. That is the defect this ticket is about,
+-- one step further along.
+--
+-- Coalesced on a timer, so a map loading a thousand elements asks once.
 local function scheduleEntityRefresh()
-    if not authorized or not isPanelOpen() then
+    if not authorized then
         return
     end
     if isTimer(entityRefreshTimer) then
@@ -2110,7 +2124,7 @@ local function scheduleEntityRefresh()
     end
     entityRefreshTimer = setTimer(function()
         entityRefreshTimer = nil
-        if authorized and isPanelOpen() then
+        if authorized then
             triggerServerEvent(F7_REQUEST_EVENT, resourceRoot)
         end
     end, 100, 1)
@@ -2197,4 +2211,5 @@ ANKIGTA.Panel = {
     selection = panelSelection,
     markable = panelMarkable,
     runtimeElements = runtimeElementsFor,
+    entityKey = panelEntityKey,
 }

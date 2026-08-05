@@ -138,7 +138,7 @@ local function liveCandidate(link, into)
     -- emphasizes that mark rather than putting a second one on top of it. The
     -- marks are the side that knows: a corona is created by the entity saying
     -- so and taken away again by its Runtime Instance going.
-    into.hasActivationZone = ANKIGTA.WorldMarks ~= nil
+    into.hasCorona = ANKIGTA.WorldMarks ~= nil
         and ANKIGTA.WorldMarks.showsCorona(link.mapId, link.entityId)
     into.x = x
     into.y = y

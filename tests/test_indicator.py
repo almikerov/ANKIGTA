@@ -47,7 +47,7 @@ def candidate(
     dimension: int = 0,
     eligible: bool = True,
     present: bool = True,
-    has_zone: bool = False,
+    has_corona: bool = False,
     radius: float = 3.0,
 ) -> dict[str, Any]:
     return {
@@ -61,7 +61,7 @@ def candidate(
         "dimension": dimension,
         "eligible": eligible,
         "present": present,
-        "hasActivationZone": has_zone,
+        "hasCorona": has_corona,
         "radius": radius,
     }
 
@@ -265,7 +265,7 @@ def test_the_indicator_leaves_the_activation_zone_untouched() -> None:
         assert pending_before is not False
 
         set_mode(sandbox, "sphere_and_minimap")
-        plan(sandbox, [candidate(x=1.0, has_zone=True, radius=7.5)])
+        plan(sandbox, [candidate(x=1.0, has_corona=True, radius=7.5)])
         sandbox.eval("function() return ANKIGTA.Indicator.refresh() end")()
 
         assert sandbox.eval("ANKIGTA.Activation.radiusForNewEntity()") == 7.5
@@ -280,7 +280,7 @@ def test_an_overlapping_zone_is_emphasized_rather_than_doubled(
 ) -> None:
     set_mode(indicator, "sphere_and_minimap")
 
-    result = plan(indicator, [candidate(x=1.0, has_zone=True, radius=7.5)])
+    result = plan(indicator, [candidate(x=1.0, has_corona=True, radius=7.5)])
 
     assert result["sphere"] is True
     assert result["emphasized"] is True
@@ -293,7 +293,7 @@ def test_without_an_overlapping_zone_the_sphere_is_plain(
 ) -> None:
     set_mode(indicator, "sphere_and_minimap")
 
-    result = plan(indicator, [candidate(x=1.0, has_zone=False)])
+    result = plan(indicator, [candidate(x=1.0, has_corona=False)])
 
     assert result["sphere"] is True
     assert result["emphasized"] is False
@@ -304,7 +304,7 @@ def test_minimap_only_never_emphasizes_a_sphere_it_is_not_drawing(
 ) -> None:
     set_mode(indicator, "minimap_only")
 
-    result = plan(indicator, [candidate(x=1.0, has_zone=True)])
+    result = plan(indicator, [candidate(x=1.0, has_corona=True)])
 
     assert result["sphere"] is False
     assert result["sphereRadius"] is None
@@ -508,7 +508,7 @@ def test_a_repeated_plan_over_the_same_world_only_looks_at_the_card_it_marks(
                 x = 3.0, y = 0.0, z = 0.0,
                 interior = 0, dimension = 0,
                 eligible = true, present = true,
-                hasActivationZone = false, radius = 3.0,
+                hasCorona = false, radius = 3.0,
             }
             return list
         end

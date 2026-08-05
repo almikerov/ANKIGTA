@@ -96,7 +96,18 @@ WorldMarks.settings.coronaColor = settingsDefault("coronaColor")
 WorldMarks.settings.coronaOpacity = settingsDefault("coronaOpacity")
 WorldMarks.settings.activationRadius = settingsDefault("activationRadius")
 
+--- What one Map Entity is filed under here.
+--
+-- The panel's, not a second spelling of it: `runtimeElements` answers in this
+-- key and `look` reads that answer, so a key defined twice is a corona that
+-- stops resolving the day one of the two changes. Before the panel exists --
+-- an incremental reload can hand this client one script ahead of another --
+-- the same shape, so a mark made in that window is filed where the panel would
+-- have filed it.
 local function markKey(mapId, entityId)
+    if ANKIGTA.Panel and ANKIGTA.Panel.entityKey then
+        return ANKIGTA.Panel.entityKey(mapId, entityId)
+    end
     return tostring(mapId) .. "/" .. tostring(entityId)
 end
 

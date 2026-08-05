@@ -891,6 +891,33 @@ def test_a_colour_can_be_handed_back_to_settings() -> None:
     assert actions(answer, "setEntityMarks") == [{"coronaColor": False}]
 
 
+def test_a_push_does_not_take_a_half_typed_colour_out_from_under_the_player() -> None:
+    """A state push happens whenever anything at all changes -- a car streaming
+    in will do it -- and the picker owns a hex box somebody may be part-way
+    through. The radius box has been guarded since ticket 03; this is the same
+    guard, for the same reason."""
+    answer = run_page(
+        [
+            {"receive": selecting(entity())},
+            {
+                "set": {
+                    "attr": "data-color-hex",
+                    "is": "entityCoronaColor",
+                    "value": "#ff3",
+                }
+            },
+            {"receive": selecting(entity())},
+        ]
+    )
+
+    box = [
+        candidate
+        for candidate in walk(answer["tree"])
+        if candidate["attrs"].get("data-color-hex") == "entityCoronaColor"
+    ][0]
+    assert box["value"] == "#ff3"
+
+
 def test_an_emptied_opacity_asks_to_follow_settings_again() -> None:
     answer = run_page(
         [

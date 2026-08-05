@@ -383,7 +383,7 @@ def _reference_candidates(client: MtaSandbox, dataset: ReferenceDataset) -> Any:
                     "dimension": 0,
                     "eligible": True,
                     "present": True,
-                    "hasActivationZone": True,
+                    "hasCorona": True,
                     "cardIdentity": client.lua.table_from(
                         {
                             "collectionUuid": dataset.collection_uuid,

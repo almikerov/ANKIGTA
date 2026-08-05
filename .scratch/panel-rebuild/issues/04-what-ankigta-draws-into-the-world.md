@@ -96,6 +96,22 @@ Asked once per mark rather than once per line: a sphere is forty-eight
 segments, and testing each would draw the near half of a mark whose centre is
 out of range — an arc hanging in the air, which is worse than either answer.
 
+## Two things changed that the ticket did not name
+
+Both fell out of adding two columns to one table, and both are worth knowing
+about at the merge.
+
+- **`Store.relinkEntity` writes the metadata row in one statement.** It was an
+  `INSERT OR IGNORE` followed by an `UPDATE`, which had to be kept saying the
+  same thing; a column added to one and not the other survives a relink only
+  when the target row happened not to exist yet. It is now the same
+  `INSERT OR REPLACE` every other write path uses.
+- **A per-entity value is validated before it is normalized.** The old order
+  handed whatever arrived over the wire straight to the rule's own conversion,
+  which is harmless for a number and not for a colour: `string.lower` on a
+  boolean is an error rather than a refusal, so a client sending `true` would
+  have taken the handler down instead of being told no.
+
 ## Found while building this
 
 - **`Show corona` is silently capped at 32 by MTA.**
