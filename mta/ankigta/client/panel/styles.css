@@ -262,22 +262,28 @@ label {
    -- which is the row looking broken rather than laid out. */
 #search input { flex: 1 1 100%; }
 
-/* The deck list, drawn in the page. It is positioned against this wrapper and
-   scrolls once it is taller than the space it has, so a collection with fifty
-   decks opens a list rather than a column that runs off the panel. */
-.picklist { position: relative; }
-/* Fixed, not fitted: a deck called `Chinese::HSK 1::Vocabulary` would
-   otherwise size the button and push the rest of the row off the panel. The
-   name is cut with an ellipsis, and the list below shows it in full. */
-.picklist > button {
-  flex: 0 0 auto;
-  width: 10em;
+/* Every list on this page, drawn in the page. It is positioned against this
+   wrapper and scrolls once it is taller than the space it has, so a collection
+   with fifty decks opens a list rather than a column that runs off the panel.
+
+   One rule set, because there is one component: a deck list that looked and
+   behaved unlike the Cards/Notes switch beside it, which in turn looked unlike
+   a choice in Settings, is what a player had to learn three times. */
+.picker { position: relative; min-width: 0; }
+/* The whole button is the target, and it says which way it is set. A control
+   that opens only where an arrow is drawn is the defect being replaced. */
+.picker-button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
 }
-.picklist-menu {
+.picker-button[aria-expanded="true"] { border-color: var(--accent); }
+.picker-panel {
   position: absolute;
   z-index: 20;
   top: calc(100% + 2px);
@@ -292,8 +298,8 @@ label {
   background: #0b1020;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
 }
-.picklist-menu[hidden] { display: none; }
-.picklist-option {
+.picker-panel[hidden] { display: none; }
+.picker-option {
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -301,19 +307,43 @@ label {
   white-space: nowrap;
   padding: var(--space-2) var(--space-3);
 }
-.picklist-option:hover { background: rgba(148, 163, 184, 0.16); }
+.picker-option:hover { background: rgba(148, 163, 184, 0.16); }
+.picker-option[aria-selected="true"] { color: var(--accent); }
 
-/* The switch is fixed too, and for the same reason: `Карточки` and `Заметки`
-   are not the same width, so a fitted button would resize the row every time
-   it was flipped. */
-.search .toggle {
-  flex: 0 0 auto;
-  width: 6.5em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: center;
+/* A colour, chosen the same way a value from a list is: swatches to point at,
+   and a hex box for anything they do not offer. */
+.picker-colors { padding: var(--space-2); gap: var(--space-2); }
+.swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 28px);
+  gap: var(--space-1);
 }
+.swatch-option {
+  width: 28px;
+  height: 28px;
+  min-height: 0;
+  padding: 0;
+  border-radius: var(--radius-sm);
+}
+/* The chosen colour is shown as itself as well as written out: a hex code is
+   not a colour anybody can see. */
+.swatch {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.picker-color-value { overflow: hidden; text-overflow: ellipsis; }
+.picker-hex { gap: var(--space-1); }
+.picker-hex input[aria-invalid="true"] { border-color: var(--danger); }
+
+/* Fixed widths, not fitted: a deck called `Chinese::HSK 1::Vocabulary` would
+   otherwise size its button and push the rest of the row off the panel, and a
+   switch that resized every time it was flipped would move what is beside it.
+   The name is cut with an ellipsis and the list below shows it in full. */
+#deck-picker { flex: 0 0 10em; min-width: 0; }
+#scope-picker { flex: 0 0 7em; min-width: 0; }
 
 /* One column each below a narrow panel, rather than two unusable ones. */
 @media (max-width: 900px) {
@@ -368,6 +398,10 @@ label {
 .row .type { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row.card { grid-template-columns: minmax(0, 1fr) 90px; }
 .row .foreign-map { color: var(--danger); }
+/* What the row was called before somebody named it. Quieter than the name that
+   replaced it, and still there: it is the only thing tying this row to what
+   the Map Editor shows. */
+.row .original-name { font-style: italic; }
 
 /* State is carried by a word as well as a colour: colour alone is not a
    message a colour-blind player receives. */
@@ -455,41 +489,51 @@ label {
 }
 .setting .field-error[hidden] { display: none; }
 
-.setting select {
-  font: inherit;
-  width: 100%;
-  min-height: 36px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  padding: var(--space-1) var(--space-2);
-  background: var(--bg);
-  color: var(--text);
-}
-.setting select:focus-visible,
 .setting input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .setting .toggle[aria-pressed="true"] {
   border-color: var(--accent);
   color: var(--accent);
 }
+/* A row's list opens over the rows below it rather than pushing them down.
+   `position` without a `z-index` on purpose: giving the row one would make it a
+   stacking context and trap the list inside it, under the next row. */
+.setting { position: relative; }
 
 
 /* --- the Activation Zone of one entity -------------------------------- */
 
+/* On screen whether or not a row is selected: it used to appear with the
+   selection and vanish with it, so this corner of the panel jumped every time
+   the player moved down the list. The fields keep their place and go quiet
+   instead, and the line above them says why they are quiet. */
 .entity-settings {
+  border-top: 1px solid var(--line-soft);
+  padding-top: var(--space-2);
+}
+.entity-fields {
   display: flex;
   align-items: flex-end;
   gap: var(--space-3);
   flex-wrap: wrap;
-  border-top: 1px solid var(--line-soft);
-  padding-top: var(--space-2);
 }
-.entity-settings[hidden] { display: none; }
+.entity-settings .empty { padding: var(--space-2); text-align: left; }
+.entity-settings .empty[hidden] { display: none; }
 .entity-settings h3 { margin: 0; font-size: 12px; color: var(--muted); flex: 1 1 100%; }
 .entity-settings .inline { flex-direction: row; align-items: center; gap: var(--space-2); }
 .entity-settings input[type="number"] { width: 90px; }
 .entity-settings .entity-name-control { flex: 1 1 100%; }
 .entity-settings .entity-name-control input { flex: 1; }
 .entity-settings .check input { width: auto; }
+.entity-settings input:disabled { opacity: 0.45; }
+
+/* A number that came from Settings looks exactly like a number somebody chose,
+   so it is drawn as what it is: quieter, and labelled. */
+.entity-settings input[data-inherited="true"] {
+  color: var(--muted);
+  border-style: dashed;
+}
+.inherited-mark { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.inherited-mark[hidden] { display: none; }
 
 /* --- confirmation ----------------------------------------------------- */
 

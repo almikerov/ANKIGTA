@@ -22,6 +22,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Iterator
 
+import sqlite3
+
 import pytest
 
 from tests.lua import MtaSandbox
@@ -425,3 +427,80 @@ def test_a_database_already_current_takes_no_pre_migration_backup(
         assert [entry for entry in listed if entry["kind"] == "premigration"] == []
     finally:
         sandbox.close()
+
+
+# --- a radius of an entity's own, and the absence of one ----------------------
+
+
+def test_a_database_written_before_keeps_every_radius_it_held(
+    workspace: Path,
+) -> None:
+    """`radius` was NOT NULL, so it could not say "this entity follows the
+    global" -- and naming an entity wrote a copy of the shipped default onto it.
+
+    The column beside it can say that, and every number already on disk becomes
+    an override of itself on the way there. A stored 3 might be a number
+    somebody chose or the copy the old write path made, and nothing on disk can
+    tell them apart, so the reading that changes nothing is the one to take.
+    """
+    database = workspace / "ankigta.sqlite"
+    shipped_schemas.build(database, "v6", history=True)
+    before = {
+        (row["map_id"], row["entity_id"]): row["radius"]
+        for row in rows(database, "SELECT map_id, entity_id, radius FROM map_entity_metadata")
+    }
+    assert before, "the fixture holds no metadata to keep"
+
+    sandbox = server(workspace)
+    try:
+        assert opened(sandbox) is True
+
+        after = {
+            (row["map_id"], row["entity_id"]): row["radius_override"]
+            for row in rows(
+                database,
+                "SELECT map_id, entity_id, radius_override FROM map_entity_metadata",
+            )
+        }
+        assert after == before
+    finally:
+        sandbox.close()
+
+
+def test_opening_a_database_twice_does_not_backfill_a_cleared_radius(
+    workspace: Path,
+) -> None:
+    """The backfill runs when the column is added and never again.
+
+    Running it on every open would undo the one thing the column exists for:
+    an entity put back on the global would be pinned to whatever the inert
+    column still held, the next time the server started.
+    """
+    database = workspace / "ankigta.sqlite"
+    shipped_schemas.build(database, "v6", history=True)
+    first = server(workspace)
+    try:
+        assert opened(first) is True
+    finally:
+        first.close()
+
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE map_entity_metadata SET radius_override = NULL"
+            " WHERE entity_id = 'gate'"
+        )
+
+    second = server(workspace)
+    try:
+        assert opened(second) is True
+
+        cleared = rows(
+            database,
+            "SELECT radius, radius_override FROM map_entity_metadata"
+            " WHERE entity_id = 'gate'",
+        )
+        assert cleared[0]["radius_override"] is None
+        # And the inert column is left exactly as it was found.
+        assert cleared[0]["radius"] == 7.5
+    finally:
+        second.close()

@@ -498,12 +498,86 @@ local function runtimeElement(mapId, entityId, streamedOnly)
     return unstreamed
 end
 
+--- The name the user typed for this entity, or "" if nobody has named it.
+--
+-- Theirs and only theirs: what a row falls back to when nobody has named it is
+-- `modelName` below, and the two must not be confused. The name *box* is filled
+-- from this one -- pre-filling it with a model name is how "Infernus" gets
+-- stored as somebody's cosmetic name the first time they touch the field.
+local function givenName(entry)
+    local typed = entry.metadata and entry.metadata.name
+    if type(typed) ~= "string" or typed == "" then
+        typed = entry.link and entry.link.metadata and entry.link.metadata.name
+    end
+    if type(typed) == "string" and typed ~= "" then
+        return typed
+    end
+    return ""
+end
+
+--- Something a person can read, for a row nobody has named.
+--
+-- The prior resource walked `name`, `me:name`, `me:Name`, `me:ID` and then the
+-- *model* name, and that last step is the one that matters: an object nobody
+-- named reads as "Infernus" rather than as the hash that identifies it. The
+-- model name is not user content, and it is not the table's either.
+--
+-- Client-side because that is where the model tables are: the server has no
+-- `engineGetModelNameFromID`.
+local function modelName(entry)
+    local mapEntity = entry.mapEntity
+    local model = tonumber(mapEntity.model)
+    if not model then
+        return ANKIGTA.Locale.text("f7.entity.unnamed")
+    end
+    if mapEntity.type == "vehicle" and getVehicleNameFromModel then
+        local name = getVehicleNameFromModel(model)
+        if type(name) == "string" and name ~= "" then
+            return name
+        end
+    end
+    -- `engineGetModelNameFromID` reads `CModelNames`, which holds the object
+    -- table and the vehicle names for 400-610 -- and no peds at all. Asked
+    -- about a ped skin it answers `false` and logs `Expected valid model ID`,
+    -- which is what filled the client log with a warning per ped per snapshot
+    -- and left every ped reading as "Unnamed Map Entity". Asked about a
+    -- vehicle it answers, so vehicles keep this as their second chance.
+    if mapEntity.type ~= "ped" and engineGetModelNameFromID then
+        local name = engineGetModelNameFromID(model)
+        if type(name) == "string" and name ~= "" then
+            return name
+        end
+    end
+    -- A ped is named by its skin, because MTA has no name for one: there is no
+    -- ped table in `CModelNames` and no API that answers for a skin at all. The
+    -- number is at least the thing itself, and it tells two peds apart. What a
+    -- ped row should be headed by instead is ticket 07's question.
+    if mapEntity.type == "ped" then
+        return ANKIGTA.Locale.format("f7.entity.pedSkin", model)
+    end
+    return ANKIGTA.Locale.text("f7.entity.unnamed")
+end
+
+--- What the row is headed by: the name somebody gave it, or the model's.
+local function readableName(entry)
+    local typed = givenName(entry)
+    if typed ~= "" then
+        return typed
+    end
+    return modelName(entry)
+end
+
 --- Does this entry answer to what was typed?
 --
 -- Over the *stored* record, never over what happens to be streamed in: an
 -- entity whose Runtime Instance is gone is found by the same words that find
 -- one standing in front of the player (story 51). Plain substring, not a
 -- pattern, so a name with brackets in it is searchable by its brackets.
+--
+-- The model name is in here as well as the given one. Naming a thing replaces
+-- what the row said, so a filter that only knew the new name would make the
+-- old one -- the one the Map Editor still shows -- unsearchable the moment it
+-- stopped being displayed.
 local function matches(entry, query)
     if query == "" then
         return true
@@ -516,6 +590,7 @@ local function matches(entry, query)
         mapEntity.entityId,
         mapEntity.type,
         metadata.name,
+        modelName(entry),
         metadata.entityTag,
         entry.link and entry.link.state,
     }
@@ -566,57 +641,6 @@ local function dropFilterHiding(snapshot)
             return
         end
     end
-end
-
---- Something a person can read, for a row nobody has named.
---
--- The prior resource walked `name`, `me:name`, `me:Name`, `me:ID` and then the
--- *model* name, and that last step is the one that matters: an object nobody
--- named reads as "Infernus" rather than as the hash that identifies it. The
--- model name is not user content, and it is not the table's either.
---
--- Client-side because that is where the model tables are: the server has no
--- `engineGetModelNameFromID`.
-local function readableName(entry)
-    -- The name the user typed, wherever this snapshot carried it. Theirs
-    -- first and always: the model name is only for a row nobody has named.
-    local typed = entry.metadata and entry.metadata.name
-    if type(typed) ~= "string" or typed == "" then
-        typed = entry.link and entry.link.metadata and entry.link.metadata.name
-    end
-    if type(typed) == "string" and typed ~= "" then
-        return typed
-    end
-    local mapEntity = entry.mapEntity
-    local model = tonumber(mapEntity.model)
-    if not model then
-        return ANKIGTA.Locale.text("f7.entity.unnamed")
-    end
-    if mapEntity.type == "vehicle" and getVehicleNameFromModel then
-        local name = getVehicleNameFromModel(model)
-        if type(name) == "string" and name ~= "" then
-            return name
-        end
-    end
-    -- `engineGetModelNameFromID` reads `CModelNames`, which holds the object
-    -- table and the vehicle names for 400-610 -- and no peds at all. Asked
-    -- about a ped skin it answers `false` and logs `Expected valid model ID`,
-    -- which is what filled the client log with a warning per ped per snapshot
-    -- and left every ped reading as "Unnamed Map Entity". Asked about a
-    -- vehicle it answers, so vehicles keep this as their second chance.
-    if mapEntity.type ~= "ped" and engineGetModelNameFromID then
-        local name = engineGetModelNameFromID(model)
-        if type(name) == "string" and name ~= "" then
-            return name
-        end
-    end
-    -- A ped is named by its skin, because MTA has no name for one: there is no
-    -- ped table in `CModelNames` and no API that answers for a skin at all. The
-    -- number is at least the thing itself, and it tells two peds apart.
-    if mapEntity.type == "ped" then
-        return ANKIGTA.Locale.format("f7.entity.pedSkin", model)
-    end
-    return ANKIGTA.Locale.text("f7.entity.unnamed")
 end
 
 --- Draw the Activation Zone of every row that asks for it, while F7 is open.
@@ -695,7 +719,12 @@ local function renderActivationZones()
             or (isPanelOpen() and drawNowZones[key] == true)
         then
             local x, y, z = zonePosition(entry)
-            local radius = tonumber(metadata.radius) or 3
+            -- The zone in force, which for an entity with none of its own is
+            -- the global: a ring drawn at 3 while the setting says 10 is a
+            -- ring that lies about where the card will open.
+            local radius = tonumber(metadata.radius)
+                or tonumber(currentValue("activationRadius"))
+                or 3
             if x and y and z then
                 drawActivationZone(x, y, z, radius)
             end
@@ -727,19 +756,40 @@ end
 local function entityRows(snapshot)
     dropFilterHiding(snapshot)
     selectionArrivedFromOutside = false
+    -- The Activation Zone radius a row with none of its own follows. Read once
+    -- per render rather than per row: it is one global, and asking the store
+    -- fifty times for it would not make it any more current.
+    local globalRadius = tonumber(currentValue("activationRadius")) or 3
     local rows = {}
     for _, entry in ipairs(snapshot and snapshot.entities or {}) do
         local mapEntity = entry.mapEntity
+        local given = givenName(entry)
+        local original = modelName(entry)
+        local ownRadius = tonumber(entry.metadata and entry.metadata.radius)
         table.insert(rows, {
             mapId = mapEntity.mapId,
             entityId = mapEntity.entityId,
             type = mapEntity.type,
             name = readableName(entry),
+            -- What the player typed, kept apart from what the row is headed
+            -- by: the name field edits this one, and filling it with a model
+            -- name is how a model name becomes somebody's cosmetic name.
+            givenName = given,
+            -- A cosmetic name replaces the model name, which is the point --
+            -- but the model name is the only thing tying this row to what the
+            -- Map Editor shows, so a renamed row keeps saying it.
+            originalName = given ~= "" and original ~= given and original
+                or false,
             description = entityDescription(mapEntity),
             model = tonumber(entry.mapEntity.model) or 0,
             linkState = entry.link.state,
             guidanceKey = entry.link.guidanceKey or false,
-            radius = tonumber(entry.metadata and entry.metadata.radius) or 3,
+            -- The value actually in force, which for a row that has never been
+            -- told otherwise is the global. Sending an entity's own default of
+            -- 3 made every row look like a decision somebody had taken, and
+            -- changing the global then appeared to do nothing.
+            radius = ownRadius or globalRadius,
+            radiusInherited = ownRadius == nil,
             -- The store still calls this `show_radius`; it is the standing
             -- answer, and the panel names it for what it does.
             showAlways = entry.metadata
@@ -932,6 +982,10 @@ local function push()
             tokenError = settingsRejections.connectionToken or false,
         },
         entities = entityRows(lastSnapshot),
+        -- Whether a click on a row also points the camera at it. The player's
+        -- own answer, and pushed with the state like everything else the page
+        -- draws from: the page decides nothing.
+        focusOnSelect = currentValue("focusOnSelect") ~= false,
         entityFilter = entityFilter,
         entityTotal = #(lastSnapshot and lastSnapshot.entities or {}),
         study = studyState(),
@@ -1381,21 +1435,31 @@ function actions.setEntityRadius(payload)
         push()
         return
     end
+    local metadata = {showRadius = payload.showAlways}
+    if payload.radius ~= nil then
+        -- `false` is the box emptied, which means "follow the global again"
+        -- rather than "no radius". It is not the same as this message simply
+        -- not being about the radius, which is what a missing key means, so
+        -- the two cannot share one representation.
+        metadata.radius = payload.radius ~= false
+            and tonumber(payload.radius)
+            or false
+    end
     triggerServerEvent(
         ENTITY_METADATA_REQUEST_EVENT,
         resourceRoot,
         entry.mapEntity.mapId,
         entry.mapEntity.entityId,
-        {
-            radius = tonumber(payload.radius),
-            showRadius = payload.showAlways,
-        }
+        metadata
     )
 end
 
 --- Point the camera at a row without moving the Study Player.
--- The identity arrives with the double-click itself so two click events and a
--- browser/Lua round-trip cannot leave the camera acting on the previous row.
+--
+-- Sent by the same click that selects, because selecting a row and looking at
+-- it are the same intention almost every time. The identity arrives with the
+-- click itself so the click and the round-trip that follows it cannot leave
+-- the camera acting on the previously selected row.
 function actions.focusEntity(payload)
     if type(payload.mapId) ~= "string" or type(payload.entityId) ~= "string" then
         return

@@ -90,9 +90,11 @@ def seed(
             (MAP_ID, entity_id),
         )
         raw.execute(
+            # `radius_override` is where a radius of an entity's own lives;
+            # the column beside it is inert and NOT NULL.
             "INSERT OR REPLACE INTO map_entity_metadata (map_id, entity_id,"
-            " radius, show_radius) VALUES (?, ?, ?, ?)",
-            (MAP_ID, entity_id, radius, 1 if show_radius else 0),
+            " radius, radius_override, show_radius) VALUES (?, ?, ?, ?, ?)",
+            (MAP_ID, entity_id, radius, radius, 1 if show_radius else 0),
         )
         raw.execute(
             "INSERT OR IGNORE INTO spatial_links (map_id, entity_id,"
