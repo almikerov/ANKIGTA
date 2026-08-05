@@ -1,8 +1,7 @@
 # Panel rebuild
 
 Fourteen things the owner asked for after running the panel, plus what four
-parallel branches left unfinished, folded into six tickets that run **one at a
-time**.
+parallel branches left unfinished, folded into seven tickets.
 
 They are grouped by the file set they open, not by how they were reported. Two
 tickets that read the same 2000 lines of `app.js` are one ticket; a ticket small
@@ -54,11 +53,13 @@ first wave got its shape.
 | 35 | The entity edit pane should always be visible | 03 |
 | 36 | A field inheriting a global should show its value | 03 |
 | 37 | `Draw always` becomes `Show corona` | 04 |
+| 38 | Markers are ordinary Map Entities, renamable | 07 |
+| 39 | A row is named `ped (1)`, the way the editor names it | 07 |
 
 Two more, carried from the previous wave and not in the owner's numbered list:
 the Map Entity list's ergonomics (single-click camera, arrow keys, a renamed
-entity still showing its model name, and a ped reading as something better than
-`Ped skin N`) are in **03**; `Review mode: Show text` is **06**.
+entity still showing its original name) are in **03**; `Review mode: Show text`
+is **06**.
 
 ## Carried findings
 

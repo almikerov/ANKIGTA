@@ -62,11 +62,11 @@ model name, which is the point — but it also hides the only thing connecting t
 row to what the player sees in the Map Editor. The row shows the original
 alongside the given name, and the filter matches either.
 
-**A ped is not `Ped skin N`.** Objects and vehicles read as themselves because MTA
-can name them; peds read as a number because it cannot. Checked against the MTA
-source: `CModelNames` holds the object table and the vehicle names for 400–610 and
-no ped table at all, and no MTA API names a skin. A real name means shipping our
-own id→name table.
+**What a row is called by default is not this ticket.** The owner has since asked
+for the Map Editor's own name — `ped (1)`, not `Ped skin 0` — and that is
+ticket 07. **Do not ship an id→name table for ped skins**; the earlier plan to do
+so is withdrawn. Build the rename overlay and the filter as described above and
+leave the default name exactly as it is today; 07 replaces it underneath you.
 
 ## Two carried findings, both in these files
 
@@ -103,8 +103,6 @@ Do not merge to main yourself.
 - [ ] Up and down move the selection, and the selection stays on screen
 - [ ] A renamed row still shows the name it had before
 - [ ] The filter matches the original name as well as the given one
-- [ ] A ped row reads as a name rather than as a skin number
-- [ ] A skin with no name falls back to something honest, not to a wrong name
-- [ ] The ped table is data, checked by a test, not a chain of `if`s
+- [ ] No id→name table for ped skins is shipped — ticket 07 owns the default name
 - [ ] `app.js` is exercised by tests for each of the above
 - [ ] No test in `tests/test_panel_page.py` asserts on the text of a source file
