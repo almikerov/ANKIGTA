@@ -204,17 +204,22 @@ local function toggleSelectedStartup()
     if not resourceName then
         return
     end
-    -- The flag only ever means "Hot Reload will start this". MTA offers Lua no
-    -- way to write `mtaserver.conf`, so a resource the server already starts
-    -- cannot be changed from here, and pretending otherwise is what made this
-    -- column fiction in the first place. Say so instead.
-    if serverStartupByName[resourceName] then
+    local wanted = not startup
+    -- The flag only ever means "Hot Reload will start this". Setting it on a
+    -- resource `mtaserver.conf` already starts adds nothing, so that is
+    -- refused and said out loud.
+    --
+    -- Clearing it is never refused, even then. The flag can have been set
+    -- while the config did not start the resource and still be there after it
+    -- does -- and refusing both directions left exactly that flag with no way
+    -- to remove it: it would set and then never come off.
+    if wanted and serverStartupByName[resourceName] then
         setStatus(text("startupIsServers"):format(resourceName), true)
         return
     end
     setStatus(text("saving"), false)
     triggerServerEvent(
-        "dev_hotreload:setStartup", resourceRoot, resourceName, not startup
+        "dev_hotreload:setStartup", resourceRoot, resourceName, wanted
     )
 end
 
