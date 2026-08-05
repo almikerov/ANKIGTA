@@ -171,6 +171,14 @@ rewrites both files and should render it once for all six.
 `drawRadius` on every start — settings that no longer exist, left from before
 ticket 01.
 
+**Four orphan files sit in the deployed resource**, on disk and undeclared by
+its own `meta.xml`: `client/text_labels.lua`, `client/zone_marks.lua`,
+`server/text_labels.lua`, `shared/text_label.lua`. They are inert — MTA never
+loads them — but this is the shape the wave was called for
+(`spec.md`: "`zone_marks.lua` ended up sitting in the deployed folder undeclared
+by its own `meta.xml` — on disk, never loaded, for days"). Whoever deploys next
+should sweep the directory rather than copy over it.
+
 ## What this ticket touched that it was not asked for
 
 Three, each because a checklist item could not otherwise be met:
