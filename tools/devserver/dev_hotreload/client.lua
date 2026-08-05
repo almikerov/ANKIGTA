@@ -214,7 +214,10 @@ local function toggleSelectedStartup()
     -- does -- and refusing both directions left exactly that flag with no way
     -- to remove it: it would set and then never come off.
     if wanted and serverStartupByName[resourceName] then
-        setStatus(text("startupIsServers"):format(resourceName), true)
+        -- Not an error: nothing was attempted and nothing failed. The button
+        -- above is disabled in this case, so this is only reached by clicking
+        -- faster than the catalog comes back.
+        setStatus(text("startupIsServers"):format(resourceName), false)
         return
     end
     setStatus(text("saving"), false)
@@ -254,7 +257,16 @@ local function updateActionButton()
     if UI.startupButton and isElement(UI.startupButton) then
         -- A protected resource is one Hot Reload will not touch, but the
         -- server still starts it, so startup stays available for it.
-        guiSetEnabled(UI.startupButton, resourceName ~= nil)
+        -- There is nothing to toggle where the config already starts the
+        -- resource and this panel's flag is off: switching the flag on would
+        -- add nothing, and there is no flag to switch off. A button that
+        -- cannot be pressed says so without a red line that reads like a
+        -- failure -- which is how it read, because the column keeps saying
+        -- `yes` either way, honestly, since the config does start it.
+        local nothingToToggle = resourceName ~= nil
+            and serverStartupByName[resourceName] == true
+            and not startup
+        guiSetEnabled(UI.startupButton, resourceName ~= nil and not nothingToToggle)
         guiSetText(
             UI.startupButton,
             text("toggleStartup") .. (startup and " ✓" or "")
