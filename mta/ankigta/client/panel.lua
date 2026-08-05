@@ -316,9 +316,17 @@ local function closePanel()
     pageReady = false
     searchIssued = false
     editorOpen = false
-    -- The selection is deliberately not cleared: `Draw radius` keeps drawing
-    -- the zone of the row the player was setting up, which is what closing F7
-    -- and walking its edge is for.
+    -- The selection is deliberately not cleared. `Draw radius` stops drawing
+    -- with the window, but the row the player was working on is still the row
+    -- they were working on, so opening F7 again puts the zone straight back
+    -- rather than making them find the row a second time.
+    --
+    -- Told rather than left to the next poll: the marks look at the world four
+    -- times a second, and a sphere that hangs about for a quarter of a second
+    -- after the window has gone reads as the window not having closed properly.
+    if ANKIGTA.WorldMarks then
+        ANKIGTA.WorldMarks.refresh()
+    end
     releaseCursor()
 end
 
@@ -1168,6 +1176,11 @@ local function openPanel()
     end)
     if isElement(browser) then
         loadBrowserURL(browser, PAGE_URL)
+    end
+    -- The other half of what `closePanel` does: the zone belongs to the window,
+    -- so it goes up with it rather than at the next poll.
+    if ANKIGTA.WorldMarks then
+        ANKIGTA.WorldMarks.refresh()
     end
 end
 

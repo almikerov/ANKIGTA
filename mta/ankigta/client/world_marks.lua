@@ -6,25 +6,31 @@ ANKIGTA = ANKIGTA or {}
 --
 -- - The **zone** answers "how close would I have to stand?". `Draw radius` is
 --   a way of *looking* rather than a property of anything looked at, so it is a
---   client setting and it draws the *selected* row's Activation Zone. It
---   outlives the panel closing, which is the point: the player sizes a zone,
---   closes F7 and walks the edge of it.
+--   client setting, it draws the *selected* row's Activation Zone, and it is on
+--   screen only while F7 is. It is an answer about the row being worked on, and
+--   outside the panel there is no row being worked on -- a sphere left standing
+--   over an object the player walked away from an hour ago is scenery.
+--
+--   What outlives the panel is the *answer*, not the drawing: the setting stays
+--   on and the selection is not cleared, so opening F7 again puts the same zone
+--   back without anyone reselecting anything.
 --
 -- - A **corona** answers "where are the things I have set up?", from across a
 --   street and with nothing open. `Show corona` is a property of the entity, so
 --   it is stored on the entity and every player sees it; its colour and opacity
---   follow Settings unless the entity says otherwise.
+--   follow Settings unless the entity says otherwise. This is the one that does
+--   not wait for a window and does not go with it.
 --
 -- The first is drawn, the second is a marker element. That is not an
 -- inconsistency: a drawn thing exists while something is drawing it, which is
--- exactly right for a mark that follows the selection, and exactly wrong for
--- one that has to be there whether or not this module is doing anything.
+-- exactly right for a mark that lasts as long as a window, and exactly wrong
+-- for one that has to be there whether or not this module is doing anything.
 --
--- Both follow the thing they mark, and neither waits for F7. A corona is
--- attached to its Runtime Instance, so MTA moves it; the zone reads the
--- element's position on the frame it is drawn. The panel asks the server for
--- its snapshot as soon as the player is authorized, so what is marked is known
--- before any window has been opened.
+-- Both follow the thing they mark. A corona is attached to its Runtime
+-- Instance, so MTA moves it; the zone reads the element's position on the frame
+-- it is drawn. The panel asks the server for its snapshot as soon as the player
+-- is authorized, so which entities wear a corona is known before any window has
+-- been opened.
 --
 -- Nothing here decides anything about study. A mark is a mark; the Activation
 -- Zone it depicts is `client/activation.lua`'s, and drawing one neither creates
@@ -250,9 +256,9 @@ end
 -- here reads an element, a setting or a clock, which is what makes the rules
 -- checkable without a game running -- and the rules are the interesting part.
 --
--- `view` is `{selectedMapId, selectedEntityId, drawRadius, coronaColor,
--- coronaOpacity}`; each entry of `marks` is `{mapId, entityId, radius,
--- showCorona, coronaColor, coronaOpacity, present}`.
+-- `view` is `{panelOpen, selectedMapId, selectedEntityId, drawRadius,
+-- coronaColor, coronaOpacity}`; each entry of `marks` is `{mapId, entityId,
+-- radius, showCorona, coronaColor, coronaOpacity, present}`.
 function WorldMarks.plan(view, marks)
     view = type(view) == "table" and view or {}
     local plan = {zone = false, coronas = {}}
@@ -269,7 +275,12 @@ function WorldMarks.plan(view, marks)
                 and selectedMapId ~= nil
                 and mark.mapId == selectedMapId
                 and mark.entityId == selectedEntityId
-            if selected and view.drawRadius == true then
+            -- Only while the panel is open. The zone is an answer about the
+            -- row being worked on, and there is no row being worked on with F7
+            -- shut; the setting and the selection are both still there, so it
+            -- comes straight back with the window.
+            if selected and view.drawRadius == true and view.panelOpen == true
+            then
                 plan.zone = {
                     mapId = mark.mapId,
                     entityId = mark.entityId,
@@ -413,6 +424,7 @@ end
 local function view()
     local selectedMapId, selectedEntityId = panel().selection()
     return {
+        panelOpen = panel().isOpen() == true,
         selectedMapId = selectedMapId,
         selectedEntityId = selectedEntityId,
         drawRadius = WorldMarks.settings.drawRadius == true,

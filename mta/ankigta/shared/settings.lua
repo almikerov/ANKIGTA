@@ -108,10 +108,12 @@ Settings.schema = {
 
     -- Presentation, input and audio: this player's machine only.
     -- A way of looking rather than a property of the thing looked at: while it
-    -- is on, the selected row's Activation Zone is drawn, wherever the player
-    -- is and whether or not the panel is open. `Show corona` is the other half
-    -- of the pair and lives on the entity, because that one is a property of
-    -- the thing and everyone sees it.
+    -- is on, the selected row's Activation Zone is drawn for as long as the
+    -- panel is open. The answer outlives F7 and the drawing does not -- it is
+    -- about the row being worked on, and nothing is being worked on with the
+    -- window shut. `Show corona` is the other half of the pair and lives on the
+    -- entity, because that one is a property of the thing, everyone sees it,
+    -- and it is there whether or not anybody has a window open.
     drawRadius = {authority = CLIENT, default = false, rule = toggle()},
     indicatorMode = {
         authority = CLIENT,

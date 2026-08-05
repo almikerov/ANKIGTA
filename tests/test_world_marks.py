@@ -189,6 +189,17 @@ def announce_server(sandbox: MtaSandbox, **values: Any) -> None:
     )(to_lua(sandbox, values))
 
 
+def open_panel(sandbox: MtaSandbox) -> None:
+    """F7, as the key press does it."""
+    sandbox.eval(
+        "function() if not ANKIGTA.Panel.isOpen() then togglePanel() end end"
+    )()
+
+
+def close_panel(sandbox: MtaSandbox) -> None:
+    sandbox.eval("function() ANKIGTA.Panel.close() end")()
+
+
 def select(sandbox: MtaSandbox, entity_id: str, map_id: str = MAP_ID) -> None:
     sandbox.eval(
         """
@@ -511,6 +522,7 @@ def test_changing_a_colour_recolours_the_corona_in_place(
 
 def test_draw_radius_draws_the_selected_rows_zone(client: MtaSandbox) -> None:
     authorize(client)
+    open_panel(client)
     standing(client)
     standing(client, entity_id="gate-18", x=100.0)
     push_snapshot(client, [entry(), entry(entity_id="gate-18", radius=7.5)])
@@ -527,6 +539,7 @@ def test_nothing_is_drawn_for_an_unselected_row(client: MtaSandbox) -> None:
     """A way of looking is about the row being looked at, not about every row
     in the list."""
     authorize(client)
+    open_panel(client)
     standing(client)
     push_snapshot(client, [entry(radius=7.5)])
     announce_client(client, drawRadius=True)
@@ -539,6 +552,7 @@ def test_nothing_is_drawn_for_an_unselected_row(client: MtaSandbox) -> None:
 
 def test_nothing_is_drawn_while_the_setting_is_off(client: MtaSandbox) -> None:
     authorize(client)
+    open_panel(client)
     standing(client)
     push_snapshot(client, [entry(radius=7.5)])
     select(client, "gate-17")
@@ -555,6 +569,7 @@ def test_the_drawn_zone_is_the_radius_actually_in_force(
     """A zone drawn at 3 while the setting says 10 lies about where the card
     will open."""
     authorize(client)
+    open_panel(client)
     announce_server(client, activationRadius=10)
     announce_client(client, drawRadius=True)
     standing(client)
@@ -567,23 +582,52 @@ def test_the_drawn_zone_is_the_radius_actually_in_force(
     assert ring_radii(client) == {10.0}
 
 
-def test_the_drawn_zone_follows_its_object_and_outlives_the_panel(
-    client: MtaSandbox,
-) -> None:
-    """The point of it being the client's: the player sizes a zone, closes F7
-    and walks the edge of it."""
+def test_the_drawn_zone_follows_its_object(client: MtaSandbox) -> None:
+    """Read off the element on the frame it is drawn, so a zone on something
+    that moves is where the thing is rather than where the snapshot found it."""
     authorize(client)
+    open_panel(client)
     element = standing(client)
     push_snapshot(client, [entry(radius=5)])
     announce_client(client, drawRadius=True)
     select(client, "gate-17")
     refresh(client)
 
-    client.eval("function() ANKIGTA.Panel.close() end")()
     element["x"], element["y"] = 30.0, 40.0
     client.trigger("onClientRender")
 
     assert ring_radii(client, x=30.0, y=40.0) == {5.0}
+
+
+def test_the_zone_goes_with_the_window_and_the_answer_stays(
+    client: MtaSandbox,
+) -> None:
+    """The drawing lasts as long as F7 does: it is an answer about the row
+    being worked on, and nothing is being worked on with the window shut.
+
+    What outlives the window is the answer -- the setting is still on and the
+    row is still selected -- so opening F7 again puts the same zone back
+    without anybody reselecting anything.
+    """
+    authorize(client)
+    open_panel(client)
+    standing(client)
+    push_snapshot(client, [entry(radius=5)])
+    announce_client(client, drawRadius=True)
+    select(client, "gate-17")
+    refresh(client)
+    client.trigger("onClientRender")
+    assert ring_radii(client) == {5.0}
+
+    close_panel(client)
+    client.drawn_lines_3d.clear()
+    client.trigger("onClientRender")
+    assert client.drawn_lines_3d == []
+
+    open_panel(client)
+    client.trigger("onClientRender")
+
+    assert ring_radii(client) == {5.0}
 
 
 def test_a_zone_is_not_drawn_on_a_thing_that_is_not_here(
@@ -592,6 +636,7 @@ def test_a_zone_is_not_drawn_on_a_thing_that_is_not_here(
     """The old ring fell back to the authored position when no element could be
     found, which is how a mark came to hang in the air over nothing."""
     authorize(client)
+    open_panel(client)
     push_snapshot(client, [entry(radius=5)])
     announce_client(client, drawRadius=True)
     select(client, "gate-17")
@@ -634,6 +679,7 @@ def test_the_stated_distance_is_a_distance_worth_stating(
 
 def test_a_drawn_zone_stops_at_the_stated_distance(client: MtaSandbox) -> None:
     authorize(client)
+    open_panel(client)
     beyond = far_away(client)
     element = standing(client, x=beyond)
     push_snapshot(client, [entry(radius=5)])

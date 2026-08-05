@@ -96,6 +96,17 @@ Asked once per mark rather than once per line: a sphere is forty-eight
 segments, and testing each would draw the near half of a mark whose centre is
 out of range — an arc hanging in the air, which is worse than either answer.
 
+**The zone is drawn only while F7 is open**, and the corona is the one that is
+not. The first build here had the zone outliving the panel — "the player sizes
+a zone, closes F7 and walks the edge of it" — which was carried over from the
+reference branch's own comment rather than from this ticket, and the owner
+corrected it: the zone is an answer about the row being worked on, and with the
+window shut there is no row being worked on. What outlives F7 is the *answer*
+— the setting stays on, the selection is not cleared — so reopening puts the
+same zone straight back without anyone reselecting anything. Told rather than
+polled at both edges, so the sphere goes with the window rather than a quarter
+of a second later.
+
 ## Two things changed that the ticket did not name
 
 Both fell out of adding two columns to one table, and both are worth knowing
@@ -140,7 +151,9 @@ underneath it.
 - [x] Nothing is drawn past a stated distance
 - [x] That distance is one rule, in one place, for every drawn mark
 - [x] `Draw always` is gone, from the code and from the string table
-- [x] `Draw radius` draws the selected row's zone and is the client's own
+- [x] `Draw radius` draws the selected row's zone and is the client's own —
+      on screen while F7 is, per the owner; the setting and the selection
+      outlive the window, the drawing does not
 - [x] `Show corona` is stored on the entity
 - [x] A corona is sized by the Activation Zone it stands for
 - [x] Corona colour and opacity each have a global and a per-link override
@@ -174,9 +187,10 @@ screen at all.
    is visible over the panel rather than clipped — this is ticket 03's
    unchecked line, and this is the first build on which there is anything to
    open.
-5. **Turn on `Draw the selected row's radius`**, select a row, close F7 and walk
-   the edge of the zone. The sphere should follow the object and stay after the
-   panel is shut.
+5. **Turn on `Draw the selected row's radius`** and step down the list: the
+   sphere should move to whichever row is selected, be the size the row's box
+   says, and go the moment F7 closes — then be back on the same row when F7
+   opens again.
 6. **The opacity in force after the upgrade is 0.6**, not the 0.2 the database
    was carrying. If a corona looks nearly invisible on the first run, the
    migration did not happen and the server log will say why.

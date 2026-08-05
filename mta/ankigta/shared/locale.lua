@@ -35,7 +35,7 @@ Locale.strings = {
     ["settings.reviewMode"] = "Review mode",
     -- A way of looking, so it says what it does to the view rather than what
     -- it does to any entity: `f7.showCorona` is the entity's own.
-    ["settings.drawRadius"] = "Draw the selected row's radius",
+    ["settings.drawRadius"] = "Draw the selected row's radius while F7 is open",
     ["settings.coronaColor"] = "Corona colour",
     ["settings.coronaOpacity"] = "Corona opacity (0–1)",
     ["settings.indicatorMode"] = "Next Card Indicator",
