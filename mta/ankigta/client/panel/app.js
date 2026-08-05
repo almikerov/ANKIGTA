@@ -373,8 +373,8 @@
       primary.appendChild(
         element("span", "sub", entry.description || "")
       );
-      /* A cosmetic name replaces the model name, which is the point — but the
-       * model name is the only thing tying this row to what the player sees in
+      /* A cosmetic name replaces the editor's, which is the point — but the
+       * editor's is the only thing tying this row to what the player sees in
        * the Map Editor, so the row keeps saying it. */
       if (entry.originalName) {
         primary.appendChild(
@@ -836,9 +836,9 @@
     ]);
     if (reported !== reportedEntity) {
       reportedEntity = reported;
-      /* The name the player typed, never the model name standing in for it: a
-       * box pre-filled with "Infernus" is a box that will store "Infernus" the
-       * first time anybody touches it. */
+      /* The name the player typed, never the editor's standing in for it: a
+       * box pre-filled with "ped (1)" is a box that will store "ped (1)" as
+       * somebody's cosmetic name the first time anybody touches it. */
       name.value = entity.givenName || "";
       /* The value actually in force, whether it is this entity's own or the
        * global it follows. An empty box was meant to read as "whatever

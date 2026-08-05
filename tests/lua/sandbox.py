@@ -1986,14 +1986,29 @@ class MtaSandbox:
             if lua_type(e) == "table"
             else (self.player_dimension if e == LOCAL_PLAYER else 0)
         )
-        g.getElementModel = lambda e=None, *_r: (
-            e["model"] if lua_type(e) == "table" else 0
-        ) or 0
-        g.getElementRotation = lambda e=None, *_r: (
-            (e["rotX"] or 0, e["rotY"] or 0, e["rotZ"] or 0)
-            if lua_type(e) == "table"
-            else (0, 0, 0)
-        )
+        def get_element_model(e: Any = None, *_r: Any) -> Any:
+            # `CStaticFunctionDefinitions::GetElementModel` answers for peds,
+            # vehicles, objects and projectiles. A marker is none of them, so it
+            # answers `false` -- measured on the running server, not assumed.
+            # A double that said `0` would hide every caller that reads a model
+            # a marker does not have.
+            if lua_type(e) != "table":
+                return 0
+            if str(e["type"] or "") == "marker":
+                return False
+            return e["model"] or 0
+
+        g.getElementModel = get_element_model
+
+        def get_element_rotation(e: Any = None, *_r: Any) -> Any:
+            # The same three types, and the same `false` for a marker.
+            if lua_type(e) != "table":
+                return (0, 0, 0)
+            if str(e["type"] or "") == "marker":
+                return False
+            return (e["rotX"] or 0, e["rotY"] or 0, e["rotZ"] or 0)
+
+        g.getElementRotation = get_element_rotation
         g.getZoneName = lambda *_args: self.zone_name
         g.setElementData = lambda e, key, value, *_r: (
             e.__setitem__(str(key), value) if lua_type(e) == "table" else None

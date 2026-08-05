@@ -601,9 +601,10 @@ end
 --- The name the user typed for this entity, or "" if nobody has named it.
 --
 -- Theirs and only theirs: what a row falls back to when nobody has named it is
--- `modelName` below, and the two must not be confused. The name *box* is filled
--- from this one -- pre-filling it with a model name is how "Infernus" gets
--- stored as somebody's cosmetic name the first time they touch the field.
+-- `editorName` below, and the two must not be confused. The name *box* is
+-- filled from this one -- pre-filling it with the editor's name is how
+-- `ped (1)` gets stored as somebody's cosmetic name the first time they touch
+-- the field.
 local function givenName(entry)
     local typed = entry.metadata and entry.metadata.name
     if type(typed) ~= "string" or typed == "" then
@@ -615,56 +616,87 @@ local function givenName(entry)
     return ""
 end
 
---- Something a person can read, for a row nobody has named.
+--- What the Map Editor calls this thing, which is what the row is called.
 --
--- The prior resource walked `name`, `me:name`, `me:Name`, `me:ID` and then the
--- *model* name, and that last step is the one that matters: an object nobody
--- named reads as "Infernus" rather than as the hash that identifies it. The
--- model name is not user content, and it is not the table's either.
+-- Already stored, and stored as the identity itself: the editor's `assignID`
+-- writes `ped (1)` into the element's id, adoption reads it, and it is the
+-- `entity_id` half of the Map Entity's primary key. So the row is headed by
+-- what the player reads in the editor's own list, with nothing derived and
+-- nothing looked up.
+--
+-- Deriving one from the model instead is what this replaced, and it was wrong
+-- twice over: two peds of one skin both read `Ped skin 0` while the editor
+-- beside them said `ped (1)` and `ped (2)`, and a marker -- which has no model
+-- at all -- fell through to `Unnamed Map Entity`.
+--
+-- The model name is not lost where MTA has one: the editor has already put it
+-- inside the id, which is why `object (sw_hedstones) (1)` and
+-- `vehicle (Clover) (1)` read the way they do. Where MTA has none, nothing
+-- pretends otherwise.
+--
+-- An entity no editor named -- a freeroam vehicle, taken in by where it stands
+-- -- reads as the positional name it really has. That is honest; inventing a
+-- better-looking one would name two of them the same.
+local function editorName(entry)
+    local entityId = entry.mapEntity and entry.mapEntity.entityId
+    if type(entityId) == "string" and entityId ~= "" then
+        return entityId
+    end
+    -- Nothing at all to show. A stored Map Entity always has an `entity_id`,
+    -- so this is the guard rather than a case the player meets.
+    return ANKIGTA.Locale.text("f7.entity.unnamed")
+end
+
+--- What MTA can tell us about the model, for the filter and never for the row.
+--
+-- Not a name for the thing -- `editorName` is that -- but a fact about it, and
+-- one a player searches by: the skin number finds the ped wearing it, and
+-- "Infernus" finds the car. "" where there is nothing to be had.
 --
 -- Client-side because that is where the model tables are: the server has no
 -- `engineGetModelNameFromID`.
-local function modelName(entry)
+local function modelSearchTerms(entry)
     local mapEntity = entry.mapEntity
     local model = tonumber(mapEntity.model)
-    if not model then
-        return ANKIGTA.Locale.text("f7.entity.unnamed")
+    if not model or model <= 0 then
+        -- A marker has no model on the real server -- `getElementModel`
+        -- answers `false` -- and is stored as 0. There is nothing to ask about.
+        return {}
     end
+    -- The number itself. A ped is not *named* by its skin, but it is still
+    -- found by it, and MTA has no name for a skin to find it by instead: there
+    -- is no ped table in `CModelNames` and no API that answers for one. No
+    -- id->name table is shipped to invent one.
+    local terms = {tostring(model)}
     if mapEntity.type == "vehicle" and getVehicleNameFromModel then
         local name = getVehicleNameFromModel(model)
         if type(name) == "string" and name ~= "" then
-            return name
+            terms[#terms + 1] = name
         end
     end
     -- `engineGetModelNameFromID` reads `CModelNames`, which holds the object
     -- table and the vehicle names for 400-610 -- and no peds at all. Asked
-    -- about a ped skin it answers `false` and logs `Expected valid model ID`,
-    -- which is what filled the client log with a warning per ped per snapshot
-    -- and left every ped reading as "Unnamed Map Entity". Asked about a
-    -- vehicle it answers, so vehicles keep this as their second chance.
-    if mapEntity.type ~= "ped" and engineGetModelNameFromID then
+    -- about anything outside it, it answers `false` *and* logs `Expected valid
+    -- model ID`, which is what filled the client log with a warning per ped per
+    -- snapshot. So only the two types it can answer about are asked.
+    if (mapEntity.type == "object" or mapEntity.type == "vehicle")
+        and engineGetModelNameFromID
+    then
         local name = engineGetModelNameFromID(model)
         if type(name) == "string" and name ~= "" then
-            return name
+            terms[#terms + 1] = name
         end
     end
-    -- A ped is named by its skin, because MTA has no name for one: there is no
-    -- ped table in `CModelNames` and no API that answers for a skin at all. The
-    -- number is at least the thing itself, and it tells two peds apart. What a
-    -- ped row should be headed by instead is ticket 07's question.
-    if mapEntity.type == "ped" then
-        return ANKIGTA.Locale.format("f7.entity.pedSkin", model)
-    end
-    return ANKIGTA.Locale.text("f7.entity.unnamed")
+    return terms
 end
 
---- What the row is headed by: the name somebody gave it, or the model's.
+--- What the row is headed by: the name somebody gave it, or the editor's.
 local function readableName(entry)
     local typed = givenName(entry)
     if typed ~= "" then
         return typed
     end
-    return modelName(entry)
+    return editorName(entry)
 end
 
 --- Does this entry answer to what was typed?
@@ -674,10 +706,15 @@ end
 -- one standing in front of the player (story 51). Plain substring, not a
 -- pattern, so a name with brackets in it is searchable by its brackets.
 --
--- The model name is in here as well as the given one. Naming a thing replaces
+-- The entity id is in here as well as the given name. Naming a thing replaces
 -- what the row said, so a filter that only knew the new name would make the
 -- old one -- the one the Map Editor still shows -- unsearchable the moment it
 -- stopped being displayed.
+--
+-- And the model with them, though no row is headed by one any more. The skin a
+-- ped wears and the name of a car are facts about the thing that a player
+-- searches by, and dropping them from the row was not a reason to stop finding
+-- it by them.
 local function matches(entry, query)
     if query == "" then
         return true
@@ -690,10 +727,12 @@ local function matches(entry, query)
         mapEntity.entityId,
         mapEntity.type,
         metadata.name,
-        modelName(entry),
         metadata.entityTag,
         entry.link and entry.link.state,
     }
+    for _, term in ipairs(modelSearchTerms(entry)) do
+        haystacks[#haystacks + 1] = term
+    end
     for _, value in ipairs(haystacks) do
         if type(value) == "string"
             and string.find(string.lower(value), needle, 1, true)
@@ -816,7 +855,7 @@ local function entityRows(snapshot)
     for _, entry in ipairs(snapshot and snapshot.entities or {}) do
         local mapEntity = entry.mapEntity
         local given = givenName(entry)
-        local original = modelName(entry)
+        local original = editorName(entry)
         local metadata = type(entry.metadata) == "table" and entry.metadata or {}
         local ownRadius = tonumber(metadata.radius)
         -- `nil` where the entity says nothing of its own, which is what the
@@ -848,12 +887,12 @@ local function entityRows(snapshot)
             type = mapEntity.type,
             name = readableName(entry),
             -- What the player typed, kept apart from what the row is headed
-            -- by: the name field edits this one, and filling it with a model
-            -- name is how a model name becomes somebody's cosmetic name.
+            -- by: the name field edits this one, and filling it with the
+            -- editor's name is how `ped (1)` becomes somebody's cosmetic name.
             givenName = given,
-            -- A cosmetic name replaces the model name, which is the point --
-            -- but the model name is the only thing tying this row to what the
-            -- Map Editor shows, so a renamed row keeps saying it.
+            -- A cosmetic name replaces the editor's, which is the point -- but
+            -- the editor's is the only thing tying this row to what the Map
+            -- Editor shows, so a renamed row keeps saying it.
             originalName = given ~= "" and original ~= given and original
                 or false,
             description = entityDescription(mapEntity),

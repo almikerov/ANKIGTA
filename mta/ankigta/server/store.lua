@@ -1799,10 +1799,13 @@ function Store.adoptMapEntity(value)
     then
         return false, "invalid_map_entity"
     end
-    if value.entityType ~= "object"
-        and value.entityType ~= "vehicle"
-        and value.entityType ~= "ped"
-    then
+    -- Read from the shared table rather than listed here. Listed here, it was
+    -- the one place a marker was not a Map Entity: the schema's own CHECK has
+    -- admitted one since version 5, the world scan finds them, Pick Entity
+    -- offers them and the spatial poll follows them -- and adoption still
+    -- refused, so a marker could be pointed at and never taken in. It could
+    -- not be named, and had no row to carry a radius or a corona.
+    if not ANKIGTA.EntityTypes.supported[value.entityType] then
         return false, "target_type_not_supported"
     end
     local existing = Store.getMapEntity(value.mapId, value.entityId)

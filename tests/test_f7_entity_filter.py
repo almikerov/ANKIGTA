@@ -44,13 +44,14 @@ def entry(
     entity_tag: str = "",
     state: str = "Unlinked",
     available: bool = True,
+    model: Any = 1337,
 ) -> dict[str, Any]:
     return {
         "mapEntity": {
             "mapId": map_id,
             "entityId": entity_id,
             "type": kind,
-            "model": 1337,
+            "model": model,
             "map": {"resourceName": "ankigta", "mapName": "Map"},
             "display": {
                 "name": name,
@@ -288,6 +289,52 @@ def test_nothing_matching_is_an_empty_list_rather_than_everything(
     f7: MtaSandbox,
 ) -> None:
     assert matching(f7, [entry("a"), entry("b")], "zzz") == []
+
+
+# --- what a row is not called, but is still found by -------------------------
+#
+# Ticket 07 took the model out of the row's name: `ped (1)` is what the Map
+# Editor calls it and the skin does not appear in it. The skin did not stop
+# being a fact about the thing, so it stays a way of finding it.
+
+
+def test_a_ped_is_found_by_its_skin_number(f7: MtaSandbox) -> None:
+    """The row says `ped (1)`; typing the skin still finds the ped wearing it."""
+    entries = [
+        entry("ped (1)", kind="ped", model=105),
+        entry("ped (2)", kind="ped", model=7),
+    ]
+
+    assert matching(f7, entries, "105") == ["ped (1)"]
+
+
+def test_a_model_name_is_found_where_mta_has_one(f7: MtaSandbox) -> None:
+    """`CModelNames` holds the object table and vehicles 400-610. Where it can
+    name a model, that name is a second way to the row -- and the editor has
+    usually put it in the id as well, which is why `object (sw_hedstones) (1)`
+    reads the way it does."""
+    entries = [
+        entry("at_9d1f4c2b7a", kind="vehicle", model=411),
+        entry("at_0000000000", kind="object", model=1337),
+    ]
+
+    assert matching(f7, entries, "infernus") == ["at_9d1f4c2b7a"]
+    assert matching(f7, entries, "gate_model") == ["at_0000000000"]
+
+
+def test_a_ped_and_a_marker_are_never_asked_about_as_objects(
+    f7: MtaSandbox,
+) -> None:
+    """`engineGetModelNameFromID` answers `false` for anything outside
+    `CModelNames` *and* logs `Expected valid model ID`. A ped is outside it, and
+    so is a marker's absent model -- and this runs once per row per keystroke."""
+    entries = [
+        entry("ped (1)", kind="ped", model=105),
+        entry("marker (corona) (1)", kind="marker", model=False),
+    ]
+
+    assert matching(f7, entries, "corona") == ["marker (corona) (1)"]
+    assert f7.script_warnings == []
 
 
 # --- the window --------------------------------------------------------------
