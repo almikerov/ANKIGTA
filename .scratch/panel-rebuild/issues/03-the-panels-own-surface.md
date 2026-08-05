@@ -75,6 +75,30 @@ leave the default name exactly as it is today; 07 replaces it underneath you.
 `docs/agents/lua-testing.md` forbids by name — rewrite it against behaviour or
 delete it. `.inspector-actions` in `styles.css` is dead.
 
+**Done.** The test was rewritten: the harness now parses the real `index.html`
+into a tree, so "Save sits inside the editor" is asked of the rendered page
+rather than of the file's text. `.inspector-actions` was already gone —
+`003a3ee` took it out when the editor became its own column, and the finding
+outlived the CSS it was about.
+
+## Found while building this, and left alone
+
+Neither is on the list above and neither was touched.
+
+- **`edf:edfIsRepresentation` fails once per element per snapshot.** The live
+  client log carries `panel.lua:468: call: failed to call
+  'edf:edfIsRepresentation'` in runs of eight and sixteen, every time F7 is
+  opened. The call is inside a `pcall`, so the panel behaves correctly and MTA
+  logs the failed export anyway — which buries everything else worth reading in
+  that log. It belongs to **02**, which already owns EDF representations and the
+  stub that has to know about them.
+- **The Next Card Indicator still draws an emphasised sphere at 3.**
+  `client/indicator.lua` does `(current.sphereRadius or 3) * emphasis`, so an
+  entity that follows the global is emphasised at the shipped default rather
+  than at the radius actually in force. Unchanged by this ticket — it read 3
+  before too — but it is the same mistake this ticket removed from the panel,
+  and **04** owns what ANKIGTA draws into the world.
+
 **Runs beside ticket 02.** That one is almost entirely server-side; the two share
 `shared/locale.lua` and `shared/settings.lua`, both of which are tables each side
 appends to. **This ticket merges first**, because it rewrites `panel.lua`,
@@ -84,25 +108,53 @@ Do not merge to main yourself.
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** built on `claude/panel-surface-rebuild-c2722e`, green, not merged and
+not deployed.
 
-- [ ] A dropdown opens on a click anywhere on it, not only on the arrow
-- [ ] A choice can be made from it, and the choice reaches the server
-- [ ] The deck, the Cards/Notes switch and every Settings choice behave alike
-- [ ] No `<select>` is left on the page
-- [ ] A colour can be chosen with a picker that works in the panel as rendered
-- [ ] An unrelated state push does not close a menu that is open
-- [ ] Typing in a settings field is not thrown away by an unrelated push
-- [ ] The entity edit pane is on screen whether or not a row is selected
-- [ ] With nothing selected it says so, rather than being blank
-- [ ] A field with no override shows the global value in force
-- [ ] It is visibly inherited rather than chosen
-- [ ] Clearing a field goes back to inheriting, and does not store a copy
-- [ ] A single click on a row points the camera at it
-- [ ] A client setting turns that off, leaving the click to select only
-- [ ] Up and down move the selection, and the selection stays on screen
-- [ ] A renamed row still shows the name it had before
-- [ ] The filter matches the original name as well as the given one
-- [ ] No id→name table for ped skins is shipped — ticket 07 owns the default name
-- [ ] `app.js` is exercised by tests for each of the above
-- [ ] No test in `tests/test_panel_page.py` asserts on the text of a source file
+- [x] A dropdown opens on a click anywhere on it, not only on the arrow
+- [x] A choice can be made from it, and the choice reaches the server
+- [x] The deck, the Cards/Notes switch and every Settings choice behave alike
+- [x] No `<select>` is left on the page
+- [x] A colour can be chosen with a picker that works in the panel as rendered
+- [x] An unrelated state push does not close a menu that is open
+- [x] Typing in a settings field is not thrown away by an unrelated push
+- [x] The entity edit pane is on screen whether or not a row is selected
+- [x] With nothing selected it says so, rather than being blank
+- [x] A field with no override shows the global value in force
+- [x] It is visibly inherited rather than chosen
+- [x] Clearing a field goes back to inheriting, and does not store a copy
+- [x] A single click on a row points the camera at it
+- [x] A client setting turns that off, leaving the click to select only
+- [x] Up and down move the selection, and the selection stays on screen
+- [x] A renamed row still shows the name it had before
+- [x] The filter matches the original name as well as the given one
+- [x] No id→name table for ped skins is shipped — ticket 07 owns the default name
+- [x] `app.js` is exercised by tests for each of the above
+- [x] No test in `tests/test_panel_page.py` asserts on the text of a source file
+
+### What a person still has to look at
+
+Every line above is held by a test, and no test in this repository renders a
+frame — `docs/agents/mta-gta-reference-policy.md` says so, and the harness that
+runs `app.js` says so in its own docstring. So each of these is proven as
+behaviour and **not run** as an appearance. Open F7 on a deployed build and
+check:
+
+1. A dropdown's list is **visible** when it opens, over the rows below it rather
+   than clipped by them or by the panel's edge. This is the one that matters
+   most: the whole ticket exists because a list that opened could not be seen.
+   Settings is where to look — a choice row near the bottom of the list.
+2. The deck list scrolls rather than running off the panel when a collection has
+   more decks than fit.
+3. The colour picker: twelve swatches in a grid, each showing its own colour,
+   and the button showing the chosen one beside its hex.
+4. The entity pane no longer moves the rest of the column when a row is selected
+   or deselected.
+5. An inherited radius reads as inherited — the box is dashed and greyed and
+   says `following Settings` beside it.
+6. Arrowing down a list longer than the panel keeps the selected row in sight.
+
+Two things are worth *doing* rather than looking at, because they cross into the
+store: set the global Activation Zone radius in Settings and confirm an entity
+nobody has given a radius follows it; then type a radius on that entity, empty
+the box again, and confirm it goes back to following.
