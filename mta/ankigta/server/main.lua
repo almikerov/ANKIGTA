@@ -12,6 +12,8 @@ local SETTINGS_REQUEST_EVENT = "ankigta:requestSettings"
 local SETTINGS_SNAPSHOT_EVENT = "ankigta:settingsSnapshot"
 local SETTINGS_UPDATE_EVENT = "ankigta:updateSetting"
 local SETTINGS_REJECTED_EVENT = "ankigta:settingRejected"
+local CLEAR_ENTITY_OVERRIDES_EVENT = "ankigta:clearEntityOverrides"
+local ENTITY_OVERRIDE_COUNT_EVENT = "ankigta:entityOverrideCount"
 local COPY_DECISION_REQUEST_EVENT = "ankigta:resolveMapCopyDecision"
 local PENDING_NOTICE_EVENT = "ankigta:pendingMapSaveNotice"
 local IDENTITY_CHANGED_EVENT = "ankigta:mapIdentityChanged"
@@ -249,10 +251,17 @@ local function entityContract(row)
     -- this runs once per row inside F7's two-second envelope.
     local element =
         ANKIGTA.World.runtimeInstances(row.map_id, row.entity_id, 1)[1]
-    -- `false` where the entity says nothing of its own and its corona follows
-    -- Settings. What that looks like is the client's to resolve: the settings
-    -- value it falls back to is one the client already holds.
-    local coronaColor, coronaOpacity = ANKIGTA.Store.coronaOf(row)
+    -- Every override the schema declares, absent where the entity says nothing
+    -- of its own and follows Settings. What "follows Settings" then looks like
+    -- is the client's to resolve: the value it falls back to is one the client
+    -- already holds, and a copy resolved here would go stale the moment the
+    -- setting changed.
+    --
+    -- One table under both names. `display` and `metadata` have carried the
+    -- same answers since ticket 09 named them; building it twice is a second
+    -- walk of the schema per row, and this runs ten thousand times inside F7's
+    -- two-second envelope. Nothing mutates either of them.
+    local metadata = ANKIGTA.Store.metadataOf(row)
     return {
         mapEntity = {
             mapId = row.map_id,
@@ -263,14 +272,7 @@ local function entityContract(row)
                 resourceName = row.resource_name,
                 mapName = row.map_name,
             },
-            display = {
-                name = row.entity_name or "",
-                entityTag = row.entity_tag or "",
-                radius = tonumber(row.radius) or false,
-                showCorona = tonumber(row.show_radius) == 1,
-                coronaColor = coronaColor,
-                coronaOpacity = coronaOpacity,
-            },
+            display = metadata,
             authored = {
                 position = {
                     x = tonumber(row.authored_x),
@@ -289,14 +291,7 @@ local function entityContract(row)
             },
         },
         runtimeInstance = runtimeSnapshot(element),
-        metadata = {
-            name = row.entity_name or "",
-            entityTag = row.entity_tag or "",
-            radius = tonumber(row.radius) or false,
-            showCorona = tonumber(row.show_radius) == 1,
-            coronaColor = coronaColor,
-            coronaOpacity = coronaOpacity,
-        },
+        metadata = metadata,
         link = link,
         copyCollision = link.copyCollision == true,
     }
@@ -343,10 +338,11 @@ local function candidateContract(element, name, resourceName)
             type = getElementType(element),
             model = getElementModel(element),
             map = {resourceName = resourceName, mapName = resourceName},
-            display = {
-                name = "", entityTag = "", radius = false, showCorona = false,
-                coronaColor = false, coronaOpacity = false,
-            },
+            -- Nothing of its own about anything: it is not in the store yet, so
+            -- every global reaches it untouched. Said by leaving the overrides
+            -- out rather than by naming them, which is also what makes this row
+            -- keep its shape as the set of overridable settings grows.
+            display = {name = "", entityTag = ""},
             authored = {
                 position = {x = x or 0, y = y or 0, z = z or 0},
                 rotation = {
@@ -362,10 +358,7 @@ local function candidateContract(element, name, resourceName)
             available = true,
             referenceId = getElementID(element) or "",
         },
-        metadata = {
-            name = "", entityTag = "", radius = false, showCorona = false,
-            coronaColor = false, coronaOpacity = false,
-        },
+        metadata = {name = "", entityTag = ""},
         link = {state = "Not adopted", guidanceKey = "f7.guidance.notAdopted"},
         copyCollision = false,
         adoptable = true,
@@ -1062,6 +1055,22 @@ local function sendF7Snapshot(player)
     return true
 end
 
+local function invalidateStudyDependents(
+    player,
+    oldIdentity,
+    newIdentity,
+    reason
+)
+    -- A future session/review coordinator consumes this server-only seam.
+    triggerEvent(SESSION_INVALIDATED_EVENT,
+        resourceRoot,
+        player,
+        oldIdentity or false,
+        newIdentity or false,
+        reason
+    )
+end
+
 local function changeHistory(player, direction)
     local authorized, authorizationError = playerAuthorization(player)
     if not authorized then
@@ -1085,8 +1094,12 @@ local function changeHistory(player, direction)
         )
         return false, outcome
     end
-    local refresh = sendF7Snapshot
-    refresh(player)
+    sendF7Snapshot(player)
+    -- Undo moves whatever the entry moved, and any of it can change what may
+    -- activate: a link, an entity's own Activation type, a radius. The watched
+    -- set is rebuilt rather than reasoned about -- one round trip beats a list
+    -- of which operations matter, which is a list that goes stale.
+    invalidateStudyDependents(player, false, false, direction)
     return true, outcome
 end
 
@@ -1096,22 +1109,6 @@ end
 
 function redoChange(player)
     return changeHistory(player, "redo")
-end
-
-local function invalidateStudyDependents(
-    player,
-    oldIdentity,
-    newIdentity,
-    reason
-)
-    -- A future session/review coordinator consumes this server-only seam.
-    triggerEvent(SESSION_INVALIDATED_EVENT,
-        resourceRoot,
-        player,
-        oldIdentity or false,
-        newIdentity or false,
-        reason
-    )
 end
 
 local function recheckPendingMapSave(player, mapId, entityId)
@@ -1263,6 +1260,63 @@ addEventHandler(SETTINGS_UPDATE_EVENT, resourceRoot, function(key, value)
         return
     end
     sendSettingsSnapshot(client)
+end)
+
+--- Put every link back on the global for one setting.
+--
+-- Two messages rather than one, because clearing overrides across a world is
+-- not undone by pressing the control again: unconfirmed, this answers with how
+-- many links it would change and nothing happens; confirmed, it does it. The
+-- count comes from the side that is about to act, so it is the number of links
+-- the sweep will really touch rather than one the panel worked out earlier.
+addEvent(CLEAR_ENTITY_OVERRIDES_EVENT, true)
+addEventHandler(CLEAR_ENTITY_OVERRIDES_EVENT, resourceRoot, function(
+    settingKey, confirmed
+)
+    if not client or source ~= resourceRoot then
+        return
+    end
+    local authorized, authorizationError = playerAuthorization(client)
+    if not authorized then
+        triggerClientEvent(
+            client, F7_DENIED_EVENT, resourceRoot, authorizationError
+        )
+        return
+    end
+    if confirmed ~= true then
+        local count, countError = ANKIGTA.Store.countEntityOverrides(settingKey)
+        if not count then
+            triggerClientEvent(
+                client, SETTINGS_REJECTED_EVENT, resourceRoot,
+                settingKey, countError
+            )
+            return
+        end
+        triggerClientEvent(
+            client, ENTITY_OVERRIDE_COUNT_EVENT, resourceRoot,
+            settingKey, count
+        )
+        return
+    end
+    local cleared, clearError = ANKIGTA.Store.clearEntityOverrides(settingKey)
+    if not cleared then
+        triggerClientEvent(
+            client, SETTINGS_REJECTED_EVENT, resourceRoot,
+            settingKey, clearError
+        )
+        return
+    end
+    -- The globals are untouched -- clearing an override is not a change to the
+    -- value it was overriding -- so only the entity snapshot moved, and with it
+    -- the history the panel offers Undo from.
+    --
+    -- And the watched set, for the same reason one entity's edit moves it: a
+    -- sweep that put every entity back on `Automatic` would leave every client
+    -- still waiting for a press.
+    if cleared.cleared > 0 then
+        invalidateStudyDependents(client, false, false, "clear_entity_overrides")
+    end
+    sendF7Snapshot(client)
 end)
 
 addEvent(RECHECK_REQUEST_EVENT, true)
@@ -1773,16 +1827,20 @@ addEventHandler(ADOPT_ENTITY_REQUEST_EVENT, resourceRoot, function(
     sendF7Snapshot(client)
 end)
 
---- The Activation Zone of one Map Entity, set on the entity itself.
+--- What one Map Entity says of its own, set on the entity itself.
 --
 -- The prior resource put the radius next to the object rather than in a global
 -- setting, and it was right: how close you must stand is a property of the
--- thing, not of the player. The schema has carried `radius` and `show_radius`
--- per entity all along and activation has honoured them; nothing could set
--- them.
+-- thing, not of the player. It is not the only one -- how the card opens, on
+-- which key, and what mark the thing wears are all properties of the thing --
+-- so this takes whichever of them the message mentions and leaves the rest.
 --
--- Validated against the same rule the global setting uses, so one number
--- cannot be legal in Settings and illegal here.
+-- Which fields those are comes from the schema rather than from a list here.
+-- Six writers used to spell out their own, and the one that was missed wrote a
+-- default over whatever the entity said.
+--
+-- Validated against the same rule the global setting uses, so one value cannot
+-- be legal in Settings and illegal here.
 addEvent(ENTITY_METADATA_REQUEST_EVENT, true)
 addEventHandler(ENTITY_METADATA_REQUEST_EVENT, resourceRoot, function(
     mapId, entityId, metadata
@@ -1870,10 +1928,15 @@ addEventHandler(ENTITY_METADATA_REQUEST_EVENT, resourceRoot, function(
     end
     --- One overridable field as it will be stored, or the reason it will not be.
     --
-    -- Three answers, not two, and one rule for all three of them. A value is
-    -- an override; `false` is the field emptied, which means "follow the
+    -- Three answers, not two, and one rule for all of them. A value is an
+    -- override; `"inherit"` is the field emptied, which means "follow the
     -- global again" and stores nothing; and absent means this message is not
     -- about that field at all, so whatever the row already said stands.
+    --
+    -- `"inherit"` rather than `false`, which is what it used to be: `false` is
+    -- a value `Show corona` can hold -- "not on this one, whatever the global
+    -- says" -- so it cannot also be how a field says it holds nothing. One word
+    -- for one meaning, and it collides with no colour, key name or mode.
     --
     -- Checked against the schema's own rule for the setting it overrides,
     -- because a value cannot be legal in Settings and illegal here, and the
@@ -1882,12 +1945,13 @@ addEventHandler(ENTITY_METADATA_REQUEST_EVENT, resourceRoot, function(
     -- whatever arrived over the wire straight to the rule's own conversion,
     -- and `coronaColor` lowercases -- so a client sending `true` would take
     -- the handler down instead of being told no.
+    local INHERIT = "inherit"
     local function proposed(sent, stored, key)
         if sent == nil then
             return stored
         end
-        if sent == false then
-            return false
+        if sent == INHERIT then
+            return nil
         end
         local valid, reason = ANKIGTA.Settings.validate(key, sent)
         if not valid then
@@ -1896,42 +1960,31 @@ addEventHandler(ENTITY_METADATA_REQUEST_EVENT, resourceRoot, function(
         return ANKIGTA.Settings.normalize(key, sent)
     end
 
-    local storedColor, storedOpacity = ANKIGTA.Store.coronaOf(row)
-    local radius, radiusRefused = proposed(
-        metadata.radius, tonumber(row.radius) or false, "activationRadius"
-    )
-    local coronaColor, colorRefused = proposed(
-        metadata.coronaColor, storedColor, "coronaColor"
-    )
-    local coronaOpacity, opacityRefused = proposed(
-        metadata.coronaOpacity, storedOpacity, "coronaOpacity"
-    )
-    local refused = radiusRefused or colorRefused or opacityRefused
-    if refused then
-        triggerClientEvent(
-            client, PENDING_NOTICE_EVENT, resourceRoot,
-            "notice.entityUpdateFailed", refused
-        )
-        return
+    -- Everything the row already says, so setting one field does not quietly
+    -- erase the others -- and every override the schema declares, so one added
+    -- later is carried here by being declared rather than by this being edited.
+    local stored = ANKIGTA.Store.metadataOf(row)
+    local wanted = {
+        name = metadata.name ~= nil and metadata.name or (row.entity_name or ""),
+        entityTag = row.entity_tag or "",
+    }
+    for _, key in ipairs(ANKIGTA.Settings.entityOverridableKeys()) do
+        local field = ANKIGTA.Settings.entityOverrideField(key)
+        local value, refused = proposed(metadata[field], stored[field], key)
+        if refused then
+            triggerClientEvent(
+                client, PENDING_NOTICE_EVENT, resourceRoot,
+                "notice.entityUpdateFailed", refused
+            )
+            return
+        end
+        wanted[field] = value
     end
 
     local updated, updateError = ANKIGTA.Store.updateEntityMetadata(
         mapId,
         entityId,
-        {
-            -- Everything the row already says, so setting one field does not
-            -- quietly erase the others.
-            name = metadata.name ~= nil and metadata.name
-                or (row.entity_name or ""),
-            entityTag = row.entity_tag or "",
-            radius = radius,
-            showCorona = metadata.showCorona ~= nil
-                and metadata.showCorona == true
-                or (metadata.showCorona == nil
-                    and tonumber(row.show_radius) == 1),
-            coronaColor = coronaColor,
-            coronaOpacity = coronaOpacity,
-        }
+        wanted
     )
     if not updated then
         triggerClientEvent(
@@ -1939,6 +1992,22 @@ addEventHandler(ENTITY_METADATA_REQUEST_EVENT, resourceRoot, function(
             "notice.entityUpdateFailed", updateError
         )
         return
+    end
+    -- An override is part of what the watched set says, and the watched set is
+    -- what the client acts on: an entity told to open by a key would go on
+    -- opening by itself until the next time Anki happened to be asked.
+    --
+    -- Over the schema's fields rather than over what arrived, so a *cleared*
+    -- override counts too -- it is absent from `wanted` and present in
+    -- `stored`, which is the direction a loop over the message would miss. Only
+    -- when one really changed, so naming a thing does not cost a round trip to
+    -- the companion.
+    for _, key in ipairs(ANKIGTA.Settings.entityOverridableKeys()) do
+        local field = ANKIGTA.Settings.entityOverrideField(key)
+        if stored[field] ~= wanted[field] then
+            invalidateStudyDependents(client, false, false, "entity_metadata")
+            break
+        end
     end
     sendF7Snapshot(client)
 end)
@@ -2412,11 +2481,20 @@ addEventHandler(CARD_STATES_REFRESHED_EVENT, resourceRoot, function(
                 -- right now, which is the client's own answer -- a corona
                 -- appears when its Runtime Instance is here and goes when it
                 -- is not, and neither is something the server watches.
+                --
+                -- What the entity says of its own about how it opens travels
+                -- with it, absent where it says nothing: the client resolves
+                -- "follows the global" against the settings it already holds,
+                -- so changing a global moves every candidate without the
+                -- server sending the set again.
+                local overrides = ANKIGTA.Store.overridesOf(row)
                 local candidate = {
                     mapId = row.map_id,
                     entityId = row.entity_id,
                     cardIdentity = cardIdentity,
-                    radius = tonumber(row.radius) or false,
+                    radius = overrides.radius,
+                    activationType = overrides.activationType,
+                    activationKey = overrides.activationKey,
                     eligible = true,
                 }
                 table.insert(candidates, candidate)

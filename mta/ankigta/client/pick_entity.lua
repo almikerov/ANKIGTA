@@ -4,6 +4,18 @@ local PICK_ENTITY_RESULT_EVENT = "ankigta:pickEntityResult"
 local PICK_ENTITY_FINISHED_EVENT = "ankigta:pickEntityFinished"
 local AUTHORIZATION_EVENT = "ankigta:setAuthorized"
 
+--- The key that backs out of whatever ANKIGTA has put on screen.
+--
+-- Read from the shared schema rather than written here, so it is the same key
+-- `activationKey` refuses for being taken. The literal stands in when the
+-- schema has not loaded -- an incremental reload can hand this client one
+-- script ahead of another, and a window nobody can leave is worse than a
+-- binding made a moment early.
+local function dismissKey()
+    local schema = ANKIGTA.Settings
+    return schema and schema.reservedKeys.dismiss or "escape"
+end
+
 local SUPPORTED_ENTITY_TYPES = {
     ["object"] = true,
     ["vehicle"] = true,
@@ -136,7 +148,7 @@ local function finishPickEntity(success, reason, mapId, entityId, element)
     end
     active = false
     awaitingResponse = false
-    unbindKey("escape", "down", cancelPickEntity)
+    unbindKey(dismissKey(), "down", cancelPickEntity)
     restoreInputState()
     triggerEvent(
         PICK_ENTITY_FINISHED_EVENT,
@@ -198,7 +210,7 @@ function startPickEntity(mode)
     active = true
     awaitingResponse = false
     captureInputState()
-    bindKey("escape", "down", cancelPickEntity)
+    bindKey(dismissKey(), "down", cancelPickEntity)
     return true
 end
 

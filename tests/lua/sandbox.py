@@ -368,6 +368,8 @@ class MtaSandbox:
 
     def __init__(self, *, database_path: str = IN_MEMORY) -> None:
         self.lua = LuaRuntime(unpack_returned_tuples=True)
+        #: Lua's own identity test, built on first use. See `_same_function`.
+        self._rawequal: Any = None
         self.recorder = Recorder()
         self.database_path = database_path
         #: Milliseconds a test has pushed the tick clock forward by hand.
@@ -541,6 +543,17 @@ class MtaSandbox:
 
     def globals(self) -> Any:
         return self.lua.globals()
+
+    def _same_function(self, left: Any, right: Any) -> bool:
+        """Are these two handles the same Lua function?
+
+        Asked in Lua, because that is the only place it can be answered: lupa
+        makes a fresh wrapper per crossing, so neither `is` nor `==` sees
+        through to the function both of them stand for.
+        """
+        if self._rawequal is None:
+            self._rawequal = self.lua.eval("function(a, b) return rawequal(a, b) end")
+        return self._rawequal(left, right) is True
 
     def eval(self, expression: str) -> Any:
         return self.lua.eval(expression)
@@ -1666,7 +1679,34 @@ class MtaSandbox:
         g.bindKey = lambda key, state, handler, *_rest: self.bound_keys.setdefault(
             (str(key), str(state)), []
         ).append(handler) or True
-        g.unbindKey = lambda key, state=None, handler=None: True
+        def unbind_key(key: str, state: Any = None, handler: Any = None) -> bool:
+            # `unbindKey` matches on the exact function it was given
+            # (`CScriptKeyBinds::Remove`), so a double that forgot everything
+            # bound to the key would let one module's cleanup take another's
+            # binding. A no-op is worse still: it leaves a key looking bound
+            # after the thing that bound it let go, so "the press stopped
+            # arriving here" becomes untestable.
+            #
+            # Compared inside Lua. Lupa hands out a fresh Python wrapper for a
+            # Lua function on every crossing, and two wrappers of one function
+            # are neither `is` nor `==` each other -- so the comparison has to
+            # happen where the function is, which is what `rawequal` is for.
+            bound = self.bound_keys.get((str(key), str(state)))
+            if bound is None:
+                return False
+            if handler is None:
+                bound.clear()
+            else:
+                bound[:] = [
+                    existing
+                    for existing in bound
+                    if not self._same_function(existing, handler)
+                ]
+            if not bound:
+                del self.bound_keys[(str(key), str(state))]
+            return True
+
+        g.unbindKey = unbind_key
         g.addCommandHandler = lambda name, handler, *_rest: (
             self.commands.setdefault(str(name), []).append(handler) or True
         )
@@ -2175,6 +2215,52 @@ class MtaSandbox:
             return True
 
         g.dxDrawLine3D = dx_draw_line_3d
+
+        def get_screen_from_world_position(
+            x: Any = 0, y: Any = 0, z: Any = 0,
+            edge_tolerance: Any = 0, relative: Any = True,
+        ) -> Any:
+            # `getScreenFromWorldPosition(x, y, z, [edgeTolerance=0,
+            # relative=true])` answers `x, y, z` on success and the single
+            # boolean **false** otherwise, and it refuses two different things:
+            # a point whose projected depth is behind the viewer, and one that
+            # lands outside the viewport plus `edgeTolerance`
+            # (`CStaticFunctionDefinitions::GetScreenFromWorldPosition`). Both
+            # refusals are unconditional -- `relative` only says whether the
+            # tolerance is a fraction of the viewport or a pixel count, and
+            # neither of them is a check a caller can switch off.
+            #
+            # A double that always answered with coordinates would let a mark
+            # be drawn for an entity the player has walked past, mirrored
+            # across the middle of the screen. Confirmed against the running
+            # client: a point behind the camera answers `false` whichever way
+            # the fifth argument is passed.
+            #
+            # The projection itself is a straight one down the camera's own
+            # forward axis: what a test can honestly ask is whether something
+            # was drawn and roughly where, not the exact pixel a real
+            # projection matrix would produce.
+            camera_x, camera_y, camera_z = self.camera_matrix[0:3]
+            look_x, look_y, look_z = self.camera_matrix[3:6]
+            forward = (look_x - camera_x, look_y - camera_y, look_z - camera_z)
+            offset = (float(x) - camera_x, float(y) - camera_y, float(z) - camera_z)
+            if sum(a * b for a, b in zip(forward, offset)) <= 0:
+                return False
+            screen_x = self.screen_width / 2 + offset[0]
+            screen_y = self.screen_height / 2 - offset[2]
+            tolerance_x = float(edge_tolerance)
+            tolerance_y = float(edge_tolerance)
+            if relative is not False:
+                tolerance_x *= self.screen_width
+                tolerance_y *= self.screen_height
+            if not -tolerance_x <= screen_x <= self.screen_width + tolerance_x:
+                return False
+            if not -tolerance_y <= screen_y <= self.screen_height + tolerance_y:
+                return False
+            # Three values, the way MTA pushes them: the depth is the third.
+            return screen_x, screen_y, 1.0
+
+        g.getScreenFromWorldPosition = get_screen_from_world_position
         g.setBrowserVolume = set_browser_volume
         g.setWorldSoundEnabled = set_world_sound_enabled
         g.focusBrowser = lambda _browser=None: True

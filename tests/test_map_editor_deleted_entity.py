@@ -258,8 +258,11 @@ def test_removing_is_one_undo_away(server: MtaSandbox) -> None:
         "SELECT card_id, state FROM spatial_links"
     ).fetchall() == [(42, "active")]
     assert raw.execute(
-        "SELECT name, radius FROM map_entity_metadata"
-    ).fetchall() == [("North bin", 7.5)]
+        "SELECT name FROM map_entity_metadata"
+    ).fetchall() == [("North bin",)]
+    # `radius_override`, not `radius`: the second is the inert column nothing
+    # reads, kept only because SQLite cannot drop it from a table other tables
+    # cascade from.
     assert raw.execute(
         "SELECT radius_override FROM map_entity_metadata"
     ).fetchall() == [(7.5,)]

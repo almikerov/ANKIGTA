@@ -132,6 +132,12 @@ local function liveCandidate(link, into)
     into.entityId = link.entityId
     into.cardIdentity = link.cardIdentity
     into.radius = link.radius
+    -- What the entity says of its own about how it opens, absent where it says
+    -- nothing. Resolving it here against the globals would put a copy of a
+    -- setting into five thousand table entries, four times a second, and the
+    -- rules already read the global for whatever arrives absent.
+    into.activationType = link.activationType
+    into.activationKey = link.activationKey
     into.eligible = link.eligible ~= false
     into.present = true
     -- Whether something already marks this spot, so the Next Card Indicator
@@ -207,11 +213,25 @@ function Spatial.observe()
     }
 end
 
---- One observation. Returns the card it asked the server to open, or `false`.
+--- Ask the server to open this card.
 --
 -- Asking is all this does. The card is opened by the server through the same
 -- `openReviewModeFor` that a manual opening goes through, so there is one path
--- into Review Mode rather than a spatial one beside it.
+-- into Review Mode rather than a spatial one beside it -- and the key press
+-- takes that same path, so nothing about admission or rating depends on which
+-- of the two ways in the player used.
+local function askToOpen(decision)
+    triggerServerEvent(
+        OPEN_REQUEST_EVENT,
+        resourceRoot,
+        decision.mapId,
+        decision.entityId,
+        decision.cardIdentity
+    )
+    return decision
+end
+
+--- One observation. Returns the card it asked the server to open, or `false`.
 function Spatial.tick()
     local decision = ANKIGTA.Activation.update(
         getTickCount() / 1000,
@@ -221,14 +241,14 @@ function Spatial.tick()
     if not decision then
         return false
     end
-    triggerServerEvent(
-        OPEN_REQUEST_EVENT,
-        resourceRoot,
-        decision.mapId,
-        decision.entityId,
-        decision.cardIdentity
-    )
-    return decision
+    return askToOpen(decision)
+end
+
+-- A key press is the other thing that opens a card, and it goes out of here for
+-- the same reason the automatic one does: this is the module that talks to the
+-- server about opening, and there is one way in.
+if ANKIGTA.Activation then
+    ANKIGTA.Activation.setOpener(askToOpen)
 end
 
 function Spatial.polling()
@@ -289,6 +309,11 @@ end
 --- Adopt a link set the server sent.
 local function setLinks(links)
     local accepted, byEntity = {}, {}
+    -- Whether any entity in this set names its own activation type, decided in
+    -- the pass that adopts the set rather than in the one that runs four times
+    -- a second. The activation rules use it to know whether the speed gate may
+    -- still skip the walk: it may, whenever nothing here can be offering.
+    local anyEntityMode = false
     for _, link in ipairs(type(links) == "table" and links or {}) do
         if type(link) == "table"
             and type(link.mapId) == "string"
@@ -296,10 +321,16 @@ local function setLinks(links)
         then
             accepted[#accepted + 1] = link
             byEntity[entityKey(link.mapId, link.entityId)] = link
+            if link.activationType ~= nil then
+                anyEntityMode = true
+            end
         end
     end
     Spatial.links = accepted
     Spatial.linkByEntity = byEntity
+    if ANKIGTA.Activation then
+        ANKIGTA.Activation.noteEntityModes(anyEntityMode)
+    end
     -- The marker's entities are named out of the link set, so a new set makes
     -- the old naming meaningless rather than merely out of date.
     Spatial.bearers = {}

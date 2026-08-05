@@ -65,6 +65,15 @@ local ZONE_ALPHA = 150
 local ZONE_COLOR = {90, 200, 255}
 local ZONE_WIDTH = 2
 
+--- How far above the thing the `<KEY> to view` prompt floats, in metres.
+--
+-- Above rather than on: the offer is about the object, and text drawn at its
+-- centre is text inside whatever the object is.
+local PROMPT_HEIGHT = 1.2
+
+local PROMPT_SCALE = 1.5
+local PROMPT_COLOR = {255, 255, 255, 255}
+
 --- What a zone is drawn at when nothing says otherwise.
 --
 -- Only reached before the first settings have arrived; after that the schema's
@@ -75,6 +84,7 @@ local WorldMarks = {
     --- The client's way of looking, and the world's defaults behind an entity.
     settings = {
         drawRadius = false,
+        showCorona = false,
         coronaColor = false,
         coronaOpacity = false,
         activationRadius = false,
@@ -98,6 +108,7 @@ local function settingsDefault(key)
     return schema() and schema().default(key) or nil
 end
 
+WorldMarks.settings.showCorona = settingsDefault("showCorona") == true
 WorldMarks.settings.coronaColor = settingsDefault("coronaColor")
 WorldMarks.settings.coronaOpacity = settingsDefault("coronaOpacity")
 WorldMarks.settings.activationRadius = settingsDefault("activationRadius")
@@ -247,6 +258,57 @@ function WorldMarks.beam(x, y, z, width, color)
     return true
 end
 
+--- A line of text floating over a spot, facing the player.
+--
+-- Drawn rather than made a marker on purpose. MTA stops streaming markers in at
+-- 32 (`CClientMarker::IsLimitReached`); the coronas already share that budget,
+-- and a prompt that took one from them would put out a corona somewhere else in
+-- the world to say a word over this one.
+--
+-- Behind the camera is not a place text goes, and neither is off the edge of
+-- the screen. `getScreenFromWorldPosition` answers `false` rather than
+-- coordinates for both -- the projected depth has to be in front of the viewer
+-- and the projected point inside the viewport plus the edge tolerance, which
+-- with the default tolerance of zero is the viewport itself
+-- (`CStaticFunctionDefinitions::GetScreenFromWorldPosition`, read 2026-08-05,
+-- SHA-256 cf53771a652410c542328a42562d0217f85d44123f50ee0960cb818366d5b667).
+-- The distance rule does not catch either: the spot is near, it is just not
+-- being looked at.
+--
+-- So the refusal is the answer, and it is taken rather than worked around. The
+-- optional arguments are left at their defaults: a tolerance of zero is the
+-- rule wanted, and `relative` only says what a non-zero tolerance is measured
+-- against.
+function WorldMarks.prompt(x, y, z, text)
+    if type(text) ~= "string" or text == "" then
+        return false
+    end
+    if not WorldMarks.visible(x, y, z) then
+        return false
+    end
+    local screenX, screenY = getScreenFromWorldPosition(x, y, z + PROMPT_HEIGHT)
+    if type(screenX) ~= "number" or type(screenY) ~= "number" then
+        return false
+    end
+    dxDrawText(
+        text,
+        screenX, screenY, screenX, screenY,
+        tocolor(
+            PROMPT_COLOR[1], PROMPT_COLOR[2], PROMPT_COLOR[3], PROMPT_COLOR[4]
+        ),
+        PROMPT_SCALE,
+        "default-bold",
+        "center",
+        "center",
+        false,
+        false,
+        -- Over anything: the prompt is the whole of how the key is discovered,
+        -- and one drawn behind the HUD is one nobody finds.
+        true
+    )
+    return true
+end
+
 -- --- what to draw --------------------------------------------------------
 
 --- What the marks should be right now.
@@ -257,13 +319,16 @@ end
 -- checkable without a game running -- and the rules are the interesting part.
 --
 -- `view` is `{panelOpen, selectedMapId, selectedEntityId, drawRadius,
--- coronaColor, coronaOpacity}`; each entry of `marks` is `{mapId, entityId,
--- radius, showCorona, coronaColor, coronaOpacity, present}`.
+-- showCorona, coronaColor, coronaOpacity, offer, promptSuppressed}`; each entry
+-- of `marks` is `{mapId, entityId, radius, showCorona, coronaColor,
+-- coronaOpacity, present}`, where a `nil` field is the entity saying nothing of
+-- its own and following the global in `view`.
 function WorldMarks.plan(view, marks)
     view = type(view) == "table" and view or {}
-    local plan = {zone = false, coronas = {}}
+    local plan = {zone = false, coronas = {}, prompt = false}
     local selectedMapId = view.selectedMapId
     local selectedEntityId = view.selectedEntityId
+    local offer = type(view.offer) == "table" and view.offer or false
 
     for _, mark in ipairs(marks or {}) do
         -- A mark is drawn on a thing that is here. A Map Entity whose Runtime
@@ -287,7 +352,33 @@ function WorldMarks.plan(view, marks)
                     radius = radius,
                 }
             end
-            if mark.showCorona == true then
+            -- Whether an entity wears one at all follows the same rule its
+            -- colour does: what the entity says, or what Settings says where
+            -- the entity says nothing. `false` is a corona switched off on this
+            -- one, which is a different answer from having no answer.
+            local wearsCorona = mark.showCorona
+            if wearsCorona == nil then
+                wearsCorona = view.showCorona
+            end
+            -- The offer, and the one entity it is about. Decided here rather
+            -- than at the draw call so that whether the prompt appears is a
+            -- question about a plan -- reachable, and answerable, from outside
+            -- the frame it would be drawn in. Ticket 06's Text Labels suppress
+            -- it through `view`, because one entity shows one thing.
+            if offer
+                and mark.mapId == offer.mapId
+                and mark.entityId == offer.entityId
+                and type(offer.key) == "string"
+                and offer.key ~= ""
+                and view.promptSuppressed ~= true
+            then
+                plan.prompt = {
+                    mapId = mark.mapId,
+                    entityId = mark.entityId,
+                    key = offer.key,
+                }
+            end
+            if wearsCorona == true then
                 -- One corona per entity, whatever else is true of it: this
                 -- loop visits each Map Entity once, so being selected as well
                 -- cannot produce a second.
@@ -361,6 +452,9 @@ function WorldMarks.applySettings(values)
     if values.drawRadius ~= nil then
         WorldMarks.settings.drawRadius = values.drawRadius == true
     end
+    if values.showCorona ~= nil then
+        WorldMarks.settings.showCorona = values.showCorona == true
+    end
     if values.coronaColor ~= nil then
         WorldMarks.settings.coronaColor = values.coronaColor
     end
@@ -388,11 +482,22 @@ end
 local function look()
     local marks = panel().markable()
     local selectedMapId, selectedEntityId = panel().selection()
+    local offer = WorldMarks.currentOffer()
     local wanted = {}
     for _, mark in ipairs(marks) do
-        if mark.showCorona
+        local wearsCorona = mark.showCorona
+        if wearsCorona == nil then
+            wearsCorona = WorldMarks.settings.showCorona
+        end
+        if wearsCorona
             or (mark.mapId == selectedMapId
                 and mark.entityId == selectedEntityId)
+            -- The offered entity, which may wear no mark at all: something is
+            -- about to be drawn over it, and drawing needs the element the
+            -- resolver only looks for when it is asked.
+            or (offer
+                and mark.mapId == offer.mapId
+                and mark.entityId == offer.entityId)
         then
             wanted[#wanted + 1] = {
                 mapId = mark.mapId,
@@ -420,16 +525,48 @@ local function look()
     return marks
 end
 
+--- Something else is already drawn on this entity, so the prompt is not.
+--
+-- Registered rather than asked for by name: an entity shows a Text Label or it
+-- shows the offer, and this module does not have to know that Text Labels
+-- exist to hold the prompt back for one. Answering `true` is the whole of what
+-- ticket 06 has to do to take the entity for itself.
+local promptHeldBack = false
+
+function WorldMarks.holdPromptBackWhen(answer)
+    promptHeldBack = type(answer) == "function" and answer or false
+    return true
+end
+
+--- The card being offered right now, if anything is.
+--
+-- Asked for rather than pushed, so an offer made between two polls is drawn on
+-- the next one rather than needing the activation rules to know who draws.
+function WorldMarks.currentOffer()
+    if not ANKIGTA.Activation or not ANKIGTA.Activation.offer then
+        return false
+    end
+    local offer = ANKIGTA.Activation.offer()
+    return type(offer) == "table" and offer or false
+end
+
 --- What the player has chosen, as the planner takes it.
 local function view()
     local selectedMapId, selectedEntityId = panel().selection()
+    local offer = WorldMarks.currentOffer()
     return {
         panelOpen = panel().isOpen() == true,
         selectedMapId = selectedMapId,
         selectedEntityId = selectedEntityId,
         drawRadius = WorldMarks.settings.drawRadius == true,
+        showCorona = WorldMarks.settings.showCorona == true,
         coronaColor = WorldMarks.settings.coronaColor,
         coronaOpacity = WorldMarks.settings.coronaOpacity,
+        offer = offer,
+        promptSuppressed = offer
+            and promptHeldBack ~= false
+            and promptHeldBack(offer.mapId, offer.entityId) == true
+            or false,
     }
 end
 
@@ -594,9 +731,23 @@ end
 -- Planning walks every Map Entity the snapshot holds. What changes between one
 -- frame and the next is where things are, not which of them are marked, so the
 -- decision is made at the polling cadence and the drawing follows the element.
-local lastPlan = {zone = false, coronas = {}}
+local lastPlan = {zone = false, coronas = {}, prompt = false}
 
-function WorldMarks.render()
+--- What the prompt says, for whoever draws it.
+--
+-- The words come from the string table like every other readable line, and the
+-- key is a stored technical value substituted into it -- never looked up there.
+function WorldMarks.promptText(key)
+    if type(key) ~= "string" or key == "" then
+        return false
+    end
+    if not ANKIGTA.Locale then
+        return false
+    end
+    return ANKIGTA.Locale.format("f7.activationPrompt", string.upper(key))
+end
+
+local function renderZone()
     local zone = elementFor(lastPlan.zone)
     if not zone then
         return
@@ -606,6 +757,23 @@ function WorldMarks.render()
         return
     end
     WorldMarks.sphere(x, y, z, lastPlan.zone.radius)
+end
+
+local function renderPrompt()
+    local element = elementFor(lastPlan.prompt)
+    if not element then
+        return
+    end
+    local x, y, z = getElementPosition(element)
+    if type(x) ~= "number" then
+        return
+    end
+    WorldMarks.prompt(x, y, z, WorldMarks.promptText(lastPlan.prompt.key))
+end
+
+function WorldMarks.render()
+    renderZone()
+    renderPrompt()
 end
 
 --- Look at the world, decide, and put the coronas where the decision says.

@@ -11,6 +11,18 @@ local OPEN_SETTINGS_EVENT = "ankigta:openSettings"
 local AUTHORIZATION_EVENT = "ankigta:setAuthorized"
 
 local RATINGS = {"again", "hard", "good", "easy"}
+
+--- The key that backs out of whatever ANKIGTA has put on screen.
+--
+-- Read from the shared schema rather than written here, so it is the same key
+-- `activationKey` refuses for being taken. The literal stands in when the
+-- schema has not loaded -- an incremental reload can hand this client one
+-- script ahead of another, and a window nobody can leave is worse than a
+-- binding made a moment early.
+local function dismissKey()
+    local schema = ANKIGTA.Settings
+    return schema and schema.reservedKeys.dismiss or "escape"
+end
 local function label(key)
     -- Asked for at draw time, and the key stands in when the string table is
     -- not loaded -- which is how `test_review_mode_behavior.py` drives this
@@ -260,7 +272,7 @@ local function closeReviewMode(reason)
         -- Closing mid-drag still ends where the player left it.
         ANKIGTA.Layout.endDrag()
     end
-    unbindKey("escape", "down", requestCloseReviewMode)
+    unbindKey(dismissKey(), "down", requestCloseReviewMode)
     removeEventHandler("onClientRender", root, renderReviewMode)
     destroyBrowser()
     restoreClientState()
@@ -583,7 +595,7 @@ local function openReviewMode(payload)
         closeReviewMode("browser_unavailable")
         return false
     end
-    bindKey("escape", "down", requestCloseReviewMode)
+    bindKey(dismissKey(), "down", requestCloseReviewMode)
     addEventHandler("onClientRender", root, renderReviewMode)
     return true
 end

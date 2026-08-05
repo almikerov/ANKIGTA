@@ -218,14 +218,18 @@ function ClientSettings.receiveServerSettings(values)
             defaultRadius = accepted.activationRadius,
             delaySeconds = accepted.activationDelaySeconds,
             maxSpeedKmh = accepted.maxActivationSpeedKmh,
+            activationType = accepted.activationType,
+            activationKey = accepted.activationKey,
         })
     end
     if ANKIGTA.WorldMarks then
-        -- What a corona looks like where the entity says nothing of its own,
-        -- and the zone radius behind an entity that has none. Server-owned, so
-        -- they arrive here rather than being read out of the local file, and
-        -- reach the marks by the same path the activation rules take.
+        -- Whether an entity that says nothing wears a corona, what it looks
+        -- like, and the zone radius behind an entity that has none.
+        -- Server-owned, so they arrive here rather than being read out of the
+        -- local file, and reach the marks by the same path the activation
+        -- rules take.
         ANKIGTA.WorldMarks.applySettings({
+            showCorona = accepted.showCorona,
             coronaColor = accepted.coronaColor,
             coronaOpacity = accepted.coronaOpacity,
             activationRadius = accepted.activationRadius,

@@ -302,6 +302,17 @@ def actions(answer: dict[str, Any], name: str) -> list[dict[str, Any]]:
     return [payload for action, payload in answer["sent"] if action == name]
 
 
+def picker_button(answer: dict[str, Any], name: str) -> dict[str, Any]:
+    """The button of one drawn list, wherever on the page it was mounted."""
+    found = [
+        candidate
+        for candidate in walk(answer["tree"])
+        if candidate["attrs"].get("data-picker") == name
+    ]
+    assert len(found) == 1, f"{name}: {len(found)} pickers"
+    return found[0]
+
+
 # --- the states Lua pushes ---------------------------------------------------
 
 
@@ -345,6 +356,11 @@ def entity(**over: Any) -> dict[str, Any]:
         "radius": 3,
         "radiusInherited": True,
         "showCorona": False,
+        "showCoronaInherited": True,
+        "activationType": "automatic",
+        "activationTypeInherited": True,
+        "activationKey": "e",
+        "activationKeyInherited": True,
         "coronaColor": "#3cc8ff",
         "coronaColorInherited": True,
         "coronaOpacity": 0.6,
@@ -402,8 +418,13 @@ NUMBER_ROW = {
 BOOLEAN_ROW = {"kind": "boolean", "key": "muteGameWorld", "value": False}
 
 
-def settings(*rows: dict[str, Any]) -> dict[str, Any]:
-    return {"rows": [dict(row) for row in rows]}
+#: A setting a link can override, so the sweep's control is offered beside it.
+#: Lua says which those are; the page keeps no list of its own.
+SWEEPABLE_ROW = dict(NUMBER_ROW, clearOverrides=True)
+
+
+def settings(*rows: dict[str, Any], **over: Any) -> dict[str, Any]:
+    return {"rows": [dict(row) for row in rows], **over}
 
 
 # --- every control is drawn in the page --------------------------------------
@@ -633,6 +654,133 @@ def test_a_colour_can_also_be_typed_and_a_wrong_one_is_refused() -> None:
     assert box["attrs"]["aria-invalid"] == "true"
 
 
+# --- applying a global to everything -----------------------------------------
+
+
+def sweep_button(answer: dict[str, Any], key: str) -> dict[str, Any] | None:
+    found = [
+        candidate
+        for candidate in walk(node(answer, "settings-rows"))
+        if candidate["attrs"].get("data-apply-all") == key
+    ]
+    return found[0] if found else None
+
+
+def test_only_a_setting_a_link_can_override_offers_the_sweep() -> None:
+    """Beside the global it is about, and only there. Which globals those are is
+    Lua's answer -- the page draws the control for whichever rows say so, so a
+    setting that gains an override gains it without this file changing."""
+    answer = run_page(
+        [{"receive": state(settings=settings(SWEEPABLE_ROW, CHOICE_ROW))}]
+    )
+
+    assert sweep_button(answer, "activationRadius") is not None
+    assert sweep_button(answer, "reviewMode") is None
+
+
+def test_pressing_it_asks_rather_than_doing_it() -> None:
+    """Clearing overrides across a world is not undone by pressing the control
+    again, so the press is a question and nothing else."""
+    answer = run_page(
+        [
+            {"receive": state(settings=settings(SWEEPABLE_ROW))},
+            {"click": {"under": "settings-rows", "attr": "data-apply-all",
+                       "is": "activationRadius"}},
+        ]
+    )
+
+    assert actions(answer, "clearEntityOverrides") == [{"key": "activationRadius"}]
+    # And the confirmation is not on screen until the answer comes back.
+    assert node(answer, "bulk-dialog")["hidden"] is True
+
+
+def test_the_question_names_how_many_it_will_change() -> None:
+    """The number is the server's -- it is the side about to do it -- and the
+    page names the setting in the same words its row does."""
+    answer = run_page(
+        [
+            {
+                "receive": state(
+                    settings=settings(
+                        SWEEPABLE_ROW,
+                        pendingClear={"key": "activationRadius", "count": 3},
+                    ),
+                    locale={
+                        "settings.activationRadius": "Activation Zone radius (m)",
+                        "settings.applyToAll.question": "%d of them say %s",
+                    },
+                )
+            }
+        ]
+    )
+
+    assert node(answer, "bulk-dialog")["hidden"] is False
+    assert node(answer, "bulk-question")["text"] == (
+        "3 of them say Activation Zone radius (m)"
+    )
+    assert node(answer, "bulk-confirm")["disabled"] is False
+
+
+def test_nothing_to_clear_says_so_and_offers_no_confirmation() -> None:
+    answer = run_page(
+        [
+            {
+                "receive": state(
+                    settings=settings(
+                        SWEEPABLE_ROW,
+                        pendingClear={"key": "activationRadius", "count": 0},
+                    ),
+                    locale={"settings.applyToAll.none": "none of them"},
+                )
+            }
+        ]
+    )
+
+    assert node(answer, "bulk-question")["text"] == "none of them"
+    assert node(answer, "bulk-confirm")["disabled"] is True
+
+
+def test_confirming_names_the_setting_the_question_was_about() -> None:
+    answer = run_page(
+        [
+            {
+                "receive": state(
+                    settings=settings(
+                        SWEEPABLE_ROW,
+                        pendingClear={"key": "activationRadius", "count": 3},
+                    )
+                )
+            },
+            {"click": {"id": "bulk-confirm"}},
+        ]
+    )
+
+    assert actions(answer, "clearEntityOverrides") == [
+        {"key": "activationRadius", "confirmed": True}
+    ]
+
+
+def test_cancelling_is_a_real_answer() -> None:
+    """It leaves the world alone, and it says so to Lua rather than only
+    hiding the dialog -- the page decides nothing, including this."""
+    answer = run_page(
+        [
+            {
+                "receive": state(
+                    settings=settings(
+                        SWEEPABLE_ROW,
+                        pendingClear={"key": "activationRadius", "count": 3},
+                    )
+                )
+            },
+            {"click": {"id": "bulk-cancel"}},
+        ]
+    )
+
+    assert actions(answer, "cancelClearEntityOverrides") == [{}]
+    assert actions(answer, "clearEntityOverrides") == []
+
+
 # --- a push does not destroy what the player is doing ------------------------
 
 
@@ -759,7 +907,7 @@ def test_an_inherited_value_is_visibly_inherited_rather_than_chosen() -> None:
             {
                 "receive": selecting(
                     entity(radius=10, radiusInherited=True),
-                    locale={"f7.radiusInherited": "following Settings"},
+                    locale={"f7.inherited": "following Settings"},
                 )
             }
         ]
@@ -787,7 +935,7 @@ def test_clearing_the_field_asks_to_follow_the_global_again() -> None:
         ]
     )
 
-    assert actions(answer, "setEntityMarks") == [{"radius": False}]
+    assert actions(answer, "setEntityMarks") == [{"radius": "inherit"}]
 
 
 # --- how the entity says it is marked ----------------------------------------
@@ -796,10 +944,13 @@ def test_clearing_the_field_asks_to_follow_the_global_again() -> None:
 def test_the_pane_offers_show_corona_and_no_draw_always() -> None:
     """`Draw always` made a drawn radius permanent, which confused a way of
     looking with a property of the thing. What is on the pane is the second;
-    the first is a client setting now."""
+    the first is a client setting now.
+
+    A list rather than a checkbox, because there are three answers: on, off,
+    and following the global that ticket 05 put behind it."""
     answer = run_page([{"receive": selecting(entity(showCorona=True))}])
 
-    assert node(answer, "entity-show-corona")["checked"] is True
+    assert picker_button(answer, "entityShowCorona")["text"] == "settings.value.true"
     for gone in ("entity-draw-always", "entity-draw-now"):
         with pytest.raises(AssertionError):
             node(answer, gone)
@@ -809,12 +960,50 @@ def test_showing_a_corona_is_sent_to_the_entity() -> None:
     answer = run_page(
         [
             {"receive": selecting(entity())},
-            {"check": {"id": "entity-show-corona", "value": True}},
-            {"change": {"id": "entity-show-corona"}},
+            {
+                "click": {
+                    "under": "entity-show-corona",
+                    "attr": "data-picker",
+                    "is": "entityShowCorona",
+                }
+            },
+            {
+                "click": {
+                    "under": "entity-show-corona",
+                    "attr": "data-value",
+                    "is": "true",
+                }
+            },
         ]
     )
 
     assert actions(answer, "setEntityMarks") == [{"showCorona": True}]
+
+
+def test_an_entity_can_be_put_back_on_the_global_that_governs_it() -> None:
+    """Every list in the pane carries the way back, because a list has nowhere
+    to be empty -- which is how the number boxes say the same thing."""
+    answer = run_page(
+        [
+            {"receive": selecting(entity(showCorona=True, showCoronaInherited=False))},
+            {
+                "click": {
+                    "under": "entity-show-corona",
+                    "attr": "data-picker",
+                    "is": "entityShowCorona",
+                }
+            },
+            {
+                "click": {
+                    "under": "entity-show-corona",
+                    "attr": "data-value",
+                    "is": "inherit",
+                }
+            },
+        ]
+    )
+
+    assert actions(answer, "setEntityMarks") == [{"showCorona": "inherit"}]
 
 
 def test_a_corona_colour_is_chosen_with_the_picker_the_page_draws() -> None:
@@ -851,7 +1040,7 @@ def test_an_inherited_colour_shows_the_one_settings_holds() -> None:
             {
                 "receive": selecting(
                     entity(coronaColor="#38bdf8", coronaColorInherited=True),
-                    locale={"f7.coronaInherited": "following Settings"},
+                    locale={"f7.inherited": "following Settings"},
                 )
             }
         ]
@@ -931,7 +1120,7 @@ def test_an_emptied_opacity_asks_to_follow_settings_again() -> None:
         ]
     )
 
-    assert actions(answer, "setEntityMarks") == [{"coronaOpacity": False}]
+    assert actions(answer, "setEntityMarks") == [{"coronaOpacity": "inherit"}]
 
 
 def test_a_typed_opacity_is_sent_as_the_number_it_is() -> None:
@@ -951,7 +1140,9 @@ def test_with_nothing_selected_the_marks_controls_are_disabled() -> None:
     disabled instead of removed."""
     answer = run_page([{"receive": state()}])
 
-    assert node(answer, "entity-show-corona")["disabled"] is True
+    assert picker_button(answer, "entityShowCorona")["disabled"] is True
+    assert picker_button(answer, "entityActivationType")["disabled"] is True
+    assert picker_button(answer, "entityActivationKey")["disabled"] is True
     assert node(answer, "entity-corona-opacity")["disabled"] is True
     picker = [
         candidate
