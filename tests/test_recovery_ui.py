@@ -383,25 +383,22 @@ def test_the_screen_closes_itself_when_the_server_says_recovery_is_over() -> Non
         sandbox.close()
 
 
-def test_the_recovery_screen_follows_a_language_switch() -> None:
+def test_the_screen_words_its_controls_from_the_string_table() -> None:
+    """The screen is built once, and every control on it says what the table
+    says -- rather than a sentence this module wrote, or the key itself.
+
+    Compared against the table rather than against the English, so this stays
+    a test of where the words come from when a later ticket rewords them.
+    """
     sandbox = start_client()
     try:
-        call(
-            sandbox,
-            'function() ANKIGTA.ClientSettings.set("language", "ru") end',
-        )
         show_recovery(sandbox)
-        russian = label(sandbox, "recovery.restore")
-        assert russian in sandbox.widget_texts()
 
-        call(
-            sandbox,
-            'function() ANKIGTA.ClientSettings.set("language", "en") end',
-        )
-
-        english = sandbox.widget_texts()
-        assert "Restore selected backup" in english
-        assert russian not in english
+        texts = sandbox.widget_texts()
+        for key in ("recovery.title", "recovery.restore", "recovery.explanation"):
+            words = label(sandbox, key)
+            assert words != key, f"{key} has no words behind it"
+            assert words in texts, f"{key} never reached a control"
     finally:
         sandbox.close()
 

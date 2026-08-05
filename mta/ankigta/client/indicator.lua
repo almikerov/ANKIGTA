@@ -244,7 +244,7 @@ function Indicator.hudText()
             tonumber(counts[counter[2]]) or 0
         )
     end
-    -- The product name is not a word to translate.
+    -- The product name is not a word the table holds.
     return "ANKIGTA  " .. table.concat(parts, "   ")
 end
 

@@ -484,15 +484,9 @@ def test_every_reported_value_is_a_technical_value_rather_than_a_sentence(
             assert pair.isascii(), line
 
 
-@pytest.mark.parametrize("language", ["en", "ru"])
-def test_the_command_prints_a_translated_heading_and_the_untranslated_state(
-    language: str,
-) -> None:
+def test_the_command_prints_a_heading_from_the_table_and_a_raw_state() -> None:
     sandbox = load_client()
     try:
-        sandbox.eval("function(l) return ANKIGTA.Locale.setLanguage(l) end")(
-            language
-        )
         observe(sandbox, 0.0, [candidate("e1", x=1.0)])
 
         sandbox.commands["ankigta-diagnostics"][0]()

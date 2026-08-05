@@ -19,6 +19,7 @@ import pytest
 
 from tests.lua import MtaSandbox
 from tests.lua.sandbox import RESOURCE_ROOT
+from tests.lua.strings import locale_keys
 
 
 UUID = "11111111-1111-4111-8111-111111111111"
@@ -201,20 +202,7 @@ def test_the_page_is_given_the_string_table_rather_than_baked_text(
 
     state = last_state(client)
     assert state["locale"]["panel.title"]
-    assert state["locale"]["connection.connect"]
-    assert state["language"] in ("en", "ru")
-
-
-def test_the_language_setting_reaches_the_open_panel(client: MtaSandbox) -> None:
-    authorize(client)
-    press_f7(client)
-    page_ready(client)
-
-    client.eval('function() ANKIGTA.Locale.setLanguage("ru") end')()
-
-    state = last_state(client)
-    assert state["language"] == "ru"
-    assert state["locale"]["connection.connect"] == "Подключиться"
+    assert state["locale"]["connection.connect"] == "Connect"
 
 
 # --- the connection gate ------------------------------------------------------
@@ -467,25 +455,23 @@ def test_the_page_ships_no_readable_text_of_its_own() -> None:
     assert set(stray) == {"ANKIGTA"}, stray
 
 
-def test_every_key_the_page_asks_for_exists_in_english() -> None:
+def test_every_family_the_page_builds_a_key_from_has_words_in_it() -> None:
+    """`t("f7.linkState." + state)` needs the family to exist at all.
+
+    The keys the page names outright are checked in
+    `tests/test_panel_locale_keys.py`, against the same table read out of the
+    loaded chunk. What is left to this one is the halves: a prefix app.js
+    completes at runtime whose family the table never opened would render every
+    one of its states as its own name.
+    """
     import re
 
-    sandbox = MtaSandbox()
-    try:
-        sandbox.load("shared/locale.lua")
-        english = sandbox.eval("ANKIGTA.Locale.strings.en")
-        known = {str(key) for key in english.keys()}
-    finally:
-        sandbox.close()
+    known = locale_keys()
 
-    page = panel_file("index.html")
-    asked = set(re.findall(r'data-i18n="([^"]+)"', page))
-    assert asked, "the page asks for no keys at all"
-    assert asked <= known, asked - known
-
-    # The keys app.js builds are prefixes; both families have to exist.
     app = panel_file("app.js")
-    for prefix in re.findall(r'"([a-z][a-zA-Z.]*\.)" \+', app):
+    prefixes = re.findall(r'"([a-z][a-zA-Z.]*\.)" \+', app)
+    assert prefixes, "the page builds no keys by concatenation at all"
+    for prefix in prefixes:
         assert any(key.startswith(prefix) for key in known), prefix
 
 

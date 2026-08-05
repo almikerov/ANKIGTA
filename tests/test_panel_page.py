@@ -152,7 +152,6 @@ def state(**picker: object) -> dict[str, object]:
     """A whole panel state, as Lua pushes one."""
     return {
         "section": "entities",
-        "language": "en",
         "locale": {},
         "connection": {"state": "connected"},
         "selected": {"mapId": False, "entityId": False, "cardId": False},

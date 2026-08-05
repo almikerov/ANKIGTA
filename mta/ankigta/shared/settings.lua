@@ -95,11 +95,6 @@ Settings.schema = {
     -- only has to be a two-decimal number in range. Making the button's step a
     -- validation rule would reject 1.23, which the user is entitled to type.
     uiScale = {authority = CLIENT, default = 1, rule = numeric(0.5, 2, nil, 2)},
-    language = {
-        authority = CLIENT,
-        default = "auto",
-        rule = choice({"auto", "ru", "en"}),
-    },
     uiPlacement = {authority = CLIENT, default = {}, rule = placement()},
 
     -- The connection: owned by the add-on, overridable locally on each side.
@@ -120,11 +115,10 @@ Settings.schema = {
 }
 
 -- The schema is a hash, so it has no order of its own. The settings panel needs
--- one to lay its rows out in. Language and the companion port are the two
--- things a player needs first; the remaining world, study and presentation
--- settings follow them.
+-- one to lay its rows out in. The companion port is what a player needs first,
+-- because nothing else works until Anki is reachable; the world, study and
+-- presentation settings follow it.
 Settings.order = {
-    "language",
     "connectionPort",
     "activationRadius",
     "activationDelaySeconds",
