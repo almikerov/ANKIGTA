@@ -1,7 +1,7 @@
 # Panel rebuild
 
 Fourteen things the owner asked for after running the panel, plus what four
-parallel branches left unfinished, folded into seven tickets.
+parallel branches left unfinished, folded into eight tickets.
 
 They are grouped by the file set they open, not by how they were reported. Two
 tickets that read the same 2000 lines of `app.js` are one ticket; a ticket small
@@ -55,6 +55,11 @@ first wave got its shape.
 | 37 | `Draw always` becomes `Show corona` | 04 |
 | 38 | Markers are ordinary Map Entities, renamable | 07 |
 | 39 | A row is named `ped (1)`, the way the editor names it | 07 |
+| 40 | `Draw radius` belongs beside `Show corona` | 08 |
+| 41 | The map shows ANKIGTA's objects, coloured by state | 08 |
+| 42 | UI Scale is the first setting | 08 |
+| 43 | Corona opacity reads `0.60000002` | 08 |
+| 44 | Settings should not outlive the window it was opened in | 08 |
 
 **07 turned out to be the cheapest of the seven.** The editor's name for an
 entity is already its `entity_id` in ANKIGTA's own store — `ped (1)`,
