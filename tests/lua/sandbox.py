@@ -1736,6 +1736,24 @@ class MtaSandbox:
 
         g.engineGetModelNameFromID = engine_get_model_name_from_id
 
+        def get_vehicle_name_from_model(model: Any = None, *_rest: Any) -> Any:
+            # `CVehicleNames::GetVehicleName` indexes `VehicleNames[model-400]`
+            # and answers "" outside the range, which
+            # `CStaticFunctionDefinitions::GetVehicleNameFromModel` turns into
+            # `false`. Unlike `engineGetModelNameFromID` it logs nothing for an
+            # id it does not know -- only a bad argument is logged. Read off the
+            # same table because `CModelNames::InitializeMaps` fills 400-610
+            # from `CVehicleNames` itself.
+            try:
+                key = int(model)
+            except (TypeError, ValueError):
+                return False
+            if not 400 <= key <= 611:
+                return False
+            return self.model_names.get(key) or False
+
+        g.getVehicleNameFromModel = get_vehicle_name_from_model
+
         # --- camera, radio ---------------------------------------------------
         g.getCameraTarget = lambda *_args: self.camera_target
         g.setCameraTarget = lambda target, *_rest: (
@@ -1986,13 +2004,27 @@ class MtaSandbox:
             if lua_type(e) == "table"
             else (self.player_dimension if e == LOCAL_PLAYER else 0)
         )
+        def is_marker(e: Any) -> bool:
+            # `CStaticFunctionDefinitions::GetElementModel` and
+            # `GetElementRotation` both answer for peds, vehicles and objects
+            # and neither knows a marker, so both hand back `false` -- measured
+            # on the running server, not assumed. A double that said `0` would
+            # hide every caller reading a model a marker does not have.
+            return lua_type(e) == "table" and str(e["type"] or "") == "marker"
+
         g.getElementModel = lambda e=None, *_r: (
-            e["model"] if lua_type(e) == "table" else 0
-        ) or 0
+            False
+            if is_marker(e)
+            else ((e["model"] or 0) if lua_type(e) == "table" else 0)
+        )
         g.getElementRotation = lambda e=None, *_r: (
-            (e["rotX"] or 0, e["rotY"] or 0, e["rotZ"] or 0)
-            if lua_type(e) == "table"
-            else (0, 0, 0)
+            False
+            if is_marker(e)
+            else (
+                (e["rotX"] or 0, e["rotY"] or 0, e["rotZ"] or 0)
+                if lua_type(e) == "table"
+                else (0, 0, 0)
+            )
         )
         g.getZoneName = lambda *_args: self.zone_name
         g.setElementData = lambda e, key, value, *_r: (

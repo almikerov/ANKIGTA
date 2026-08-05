@@ -1262,7 +1262,7 @@ def test_the_arrow_keys_leave_a_field_being_typed_in_alone() -> None:
 
 
 def test_a_renamed_row_still_shows_the_name_it_had_before() -> None:
-    """The cosmetic name replaces the model name, which is the point -- but it
+    """The cosmetic name replaces the Map Editor's, which is the point -- but it
     also hides the only thing tying the row to what the Map Editor shows."""
     answer = run_page(
         [
@@ -1272,7 +1272,7 @@ def test_a_renamed_row_still_shows_the_name_it_had_before() -> None:
                         entity(
                             name="North gate",
                             givenName="North gate",
-                            originalName="Infernus",
+                            originalName="object (gate) (1)",
                         )
                     ],
                     locale={"f7.entity.originalName": "originally %s"},
@@ -1285,11 +1285,11 @@ def test_a_renamed_row_still_shows_the_name_it_had_before() -> None:
     assert [n["text"] for n in descendants(row, tag="STRONG")] == ["North gate"]
     assert [
         candidate["text"] for candidate in descendants(row, cls="original-name")
-    ] == ["originally Infernus"]
+    ] == ["originally object (gate) (1)"]
 
 
 def test_a_row_nobody_renamed_says_its_name_once() -> None:
-    answer = run_page([{"receive": state(entities=[entity(name="Infernus")])}])
+    answer = run_page([{"receive": state(entities=[entity(name="object (gate) (1)")])}])
 
     row = one(node(answer, "rows"), cls="row")
     assert descendants(row, cls="original-name") == []

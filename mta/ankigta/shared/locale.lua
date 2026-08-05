@@ -208,11 +208,12 @@ Locale.strings = {
     ["f7.teleport"] = "Teleport",
     ["f7.activation"] = "Activation Zone",
     ["f7.name"] = "Name",
+    -- The guard, not a case the player meets: a row is headed by the name the
+    -- Map Editor gave it, which is the `entity_id` it is stored under, and a
+    -- stored Map Entity always has one.
     ["f7.entity.unnamed"] = "Unnamed Map Entity",
-    -- MTA has no name for a ped skin, so the skin itself is the name.
-    ["f7.entity.pedSkin"] = "Ped skin %d",
-    -- A cosmetic name replaces the model name, which is the point -- but the
-    -- model name is the only thing tying the row to what the Map Editor shows,
+    -- A cosmetic name replaces the editor's, which is the point -- but the
+    -- editor's is the only thing tying the row to what the Map Editor shows,
     -- so the row keeps saying it.
     ["f7.entity.originalName"] = "originally %s",
     -- The pane is on screen whether or not a row is selected, so it has to say

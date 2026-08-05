@@ -663,6 +663,226 @@ def test_naming_something_the_list_only_offered_takes_it_in(
     assert links[0] == 0
 
 
+def test_a_marker_is_taken_in_and_settled_like_every_other_type(
+    server: MtaSandbox,
+) -> None:
+    """A marker is a Map Entity everywhere -- `shared/entity_types.lua`, the
+    world scan, Pick Entity, the spatial poll, and the database's own CHECK
+    constraint since version 5. Adoption alone still listed the other three by
+    hand, so a marker could be pointed at, offered and never taken: it could
+    not be named, and had no row to carry a radius or a corona.
+
+    A marker also has no model at all -- `getElementModel` answers `false` on
+    the real server -- so it is the type that finds every place a model was
+    assumed to be there.
+    """
+    known = install_resource_world(
+        server, current_resource="current-map", duplicate_entity_id="already-here"
+    )
+    offered = server.add_world_element(
+        "marker", map_id="marker (corona) (1)"
+    )
+    offered["__parent"] = known["__parent"]
+    player = server.add_study_player()
+    player["x"], player["y"], player["z"] = 0, 0, 0
+
+    server.trigger(
+        "ankigta:updateEntityMetadata",
+        server.lua.globals().resourceRoot,
+        "current-map",
+        "marker (corona) (1)",
+        server.lua.table_from({"name": "Chapter three", "radius": 7.5}),
+        client=player,
+    )
+
+    stored = server.connection.raw.execute(
+        "SELECT entity_type, model FROM map_entities WHERE entity_id = ?",
+        ("marker (corona) (1)",),
+    ).fetchone()
+    assert stored is not None, "a marker was offered and could not be taken in"
+    assert stored[0] == "marker"
+    # `model` is NOT NULL and a marker has none, so it is stored as 0 -- which
+    # is also why nothing may derive a name or a search term from it.
+    assert stored[1] == 0
+
+    settings = server.connection.raw.execute(
+        "SELECT name, radius_override FROM map_entity_metadata"
+        " WHERE entity_id = ?",
+        ("marker (corona) (1)",),
+    ).fetchone()
+    assert settings is not None
+    assert settings[0] == "Chapter three"
+    assert settings[1] == 7.5
+
+
+def test_a_marker_carries_every_per_entity_setting_the_others_do(
+    server: MtaSandbox,
+) -> None:
+    """Not only a name and a radius. Once a marker is an ordinary Map Entity,
+    nothing about it needs a special case, so it answers about its corona and
+    its activation the way an object does."""
+    known = install_resource_world(
+        server, current_resource="current-map", duplicate_entity_id="already-here"
+    )
+    offered = server.add_world_element("marker", map_id="marker (corona) (1)")
+    offered["__parent"] = known["__parent"]
+    player = server.add_study_player()
+    player["x"], player["y"], player["z"] = 0, 0, 0
+
+    server.trigger(
+        "ankigta:updateEntityMetadata",
+        server.lua.globals().resourceRoot,
+        "current-map",
+        "marker (corona) (1)",
+        server.lua.table_from(
+            {
+                "showCorona": True,
+                "coronaColor": "#ff8800",
+                "activationType": "key",
+                "activationKey": "e",
+            }
+        ),
+        client=player,
+    )
+
+    row = next(
+        entry
+        for entry in request_snapshot(server)["entities"]
+        if entry["mapEntity"]["entityId"] == "marker (corona) (1)"
+    )
+
+    assert row["metadata"]["showCorona"] is True
+    assert row["metadata"]["coronaColor"] == "#ff8800"
+    assert row["metadata"]["activationType"] == "key"
+    assert row["metadata"]["activationKey"] == "e"
+
+
+def test_taking_an_editor_element_in_stores_the_editors_own_name(
+    server: MtaSandbox,
+) -> None:
+    """The whole of ticket 07's premise, asked of the store.
+
+    `assignID` in the stock editor writes `ped (1)` into the element's id --
+    `editor_main/server/IDhandler.lua` sets it three ways at once, `setElementID`
+    among them -- and MTA fills the same id in from the `<ped id="...">` of a
+    saved `.map`. Adoption reads it, so the name is already the `entity_id` half
+    of the Map Entity's primary key. Nothing is captured, migrated, or added to
+    the schema for this ticket, and this is what says so.
+    """
+    known = install_resource_world(
+        server, current_resource="current-map", duplicate_entity_id="already-here"
+    )
+    before = server.connection.raw.execute(
+        "SELECT version FROM schema_meta WHERE singleton = 1"
+    ).fetchone()[0]
+    placed = server.add_world_element("ped", map_id="ped (1)", model=0)
+    placed["__parent"] = known["__parent"]
+    player = server.add_study_player()
+    player["x"], player["y"], player["z"] = 0, 0, 0
+
+    server.trigger(
+        "ankigta:updateEntityMetadata",
+        server.lua.globals().resourceRoot,
+        "current-map",
+        "ped (1)",
+        server.lua.table_from({"radius": 5}),
+        client=player,
+    )
+
+    stored = server.connection.raw.execute(
+        "SELECT entity_id FROM map_entities WHERE entity_type = 'ped'"
+    ).fetchall()
+    assert [row[0] for row in stored] == ["ped (1)"]
+    # And it took no new shape to hold it.
+    after = server.connection.raw.execute(
+        "SELECT version FROM schema_meta WHERE singleton = 1"
+    ).fetchone()[0]
+    assert after == before
+
+
+def test_the_row_a_player_reads_says_what_the_editor_wrote(
+    server: MtaSandbox, panel_client: MtaSandbox
+) -> None:
+    """The two halves joined: the server's own snapshot, handed to the client's
+    own list. Each half asserted alone would let the name be right in the store
+    and derived again on the way to the screen, which is the defect this ticket
+    is about."""
+    known = install_resource_world(
+        server, current_resource="current-map", duplicate_entity_id="already-here"
+    )
+    player = server.add_study_player()
+    player["x"], player["y"], player["z"] = 0, 0, 0
+    for kind, name, model in (
+        ("ped", "ped (1)", 0),
+        ("ped", "ped (2)", 0),
+        ("marker", "marker (corona) (1)", 0),
+    ):
+        placed = server.add_world_element(kind, map_id=name, model=model)
+        placed["__parent"] = known["__parent"]
+        server.trigger(
+            "ankigta:updateEntityMetadata",
+            server.lua.globals().resourceRoot,
+            "current-map",
+            name,
+            server.lua.table_from({"radius": 5}),
+            client=player,
+        )
+
+    snapshot = request_snapshot(server)
+    push_client_snapshot(panel_client, entities=snapshot["entities"])
+
+    named = {row["name"] for row in panel_client.pushed_panel_state()["entities"]}
+    assert {"ped (1)", "ped (2)", "marker (corona) (1)"} <= named
+    assert "Unnamed Map Entity" not in named
+    assert panel_client.script_warnings == []
+
+
+def test_taking_an_editor_element_in_writes_nothing_into_the_editor(
+    server: MtaSandbox,
+) -> None:
+    """ADR 0025 keeps the stock Map Editor stock. Adoption writes ANKIGTA's own
+    stamp onto the element and one row into ANKIGTA's own database -- no file
+    anywhere, and none of the editor's own element data touched."""
+    known = install_resource_world(
+        server, current_resource="current-map", duplicate_entity_id="already-here"
+    )
+    placed = server.add_world_element(
+        "object",
+        map_id="object (sw_hedstones) (1)",
+        model=12961,
+    )
+    placed["__parent"] = known["__parent"]
+    placed["id"] = "object (sw_hedstones) (1)"
+    placed["me:ID"] = "object (sw_hedstones) (1)"
+
+    def files_but_our_own() -> dict[str, bytes]:
+        """Everything on disk except the one file ANKIGTA owns."""
+        return {
+            path: content
+            for path, content in dict(server.files).items()
+            if path != "ankigta.sqlite"
+        }
+
+    files_before = files_but_our_own()
+    player = server.add_study_player()
+    player["x"], player["y"], player["z"] = 0, 0, 0
+
+    server.trigger(
+        "ankigta:updateEntityMetadata",
+        server.lua.globals().resourceRoot,
+        "current-map",
+        "object (sw_hedstones) (1)",
+        server.lua.table_from({"name": "The headstone"}),
+        client=player,
+    )
+
+    assert files_but_our_own() == files_before, "adoption wrote somebody's file"
+    assert placed["id"] == "object (sw_hedstones) (1)"
+    assert placed["me:ID"] == "object (sw_hedstones) (1)"
+    # Its own stamp, which is ANKIGTA's key and nobody else's.
+    assert placed["ankigtaEntityId"] == "object (sw_hedstones) (1)"
+
+
 def test_an_entity_stored_under_one_map_is_written_to_from_another(
     server: MtaSandbox,
 ) -> None:
@@ -777,38 +997,117 @@ def test_a_panel_row_describes_position_and_location_not_identity(
     assert "availabilityKey" not in row
 
 
-def test_an_unnamed_row_uses_words_instead_of_its_identifier(
+def test_a_row_with_no_identity_at_all_uses_words(
     panel_client: MtaSandbox,
 ) -> None:
+    """The one case with nothing to show. A stored Map Entity always has an
+    `entity_id` -- it is half of its primary key -- so this is the guard rather
+    than a case the player meets."""
     entry = panel_entry(name="")
+    entry["mapEntity"]["entityId"] = ""
     entry["mapEntity"]["model"] = False
     push_client_snapshot(panel_client, entities=[entry])
 
     row = panel_client.pushed_panel_state()["entities"][0]
 
     assert row["name"] == "Unnamed Map Entity"
-    assert row["entityId"] not in row["name"]
 
 
-def test_a_ped_is_named_by_its_skin_and_never_asked_about_as_an_object(
+def test_a_row_is_called_what_the_map_editor_calls_it(
     panel_client: MtaSandbox,
 ) -> None:
-    """`engineGetModelNameFromID` reads `CModelNames`, which holds objects.
+    """The editor's own name is already the `entity_id` ANKIGTA stored.
 
-    Asked about a ped skin it answers `false` and logs `Expected valid model
-    ID` -- a warning per ped per snapshot, which both left every ped reading as
-    "Unnamed Map Entity" and buried anything else worth reading in the client
-    log. MTA has no name for a ped skin at all, so the skin is the name.
+    It is what the player reads beside the panel in the Map Editor, so it is
+    what the row says. Deriving a name from the model told two peds of one skin
+    apart from nothing and told a marker apart from nothing at all.
     """
-    entry = panel_entry(name="")
+    entry = panel_entry(entity_id="ped (1)", name="")
     entry["mapEntity"]["type"] = "ped"
-    entry["mapEntity"]["model"] = 7
+    entry["mapEntity"]["model"] = 0
     push_client_snapshot(panel_client, entities=[entry])
 
     row = panel_client.pushed_panel_state()["entities"][0]
 
-    assert row["name"] == "Ped skin 7"
+    assert row["name"] == "ped (1)"
+    # `engineGetModelNameFromID` reads `CModelNames`, which holds the object
+    # table and vehicles 400-610 and no peds at all. Asked about a ped it
+    # answers `false` and logs `Expected valid model ID` -- a warning per ped
+    # per snapshot, which buried everything else worth reading in the log.
     assert panel_client.script_warnings == []
+
+
+def test_two_peds_of_one_skin_are_two_different_rows(
+    panel_client: MtaSandbox,
+) -> None:
+    """The defect reported as item 39: both read `Ped skin 0`, and the editor
+    standing beside them said `ped (1)` and `ped (2)`."""
+    rows = []
+    for name in ("ped (1)", "ped (2)"):
+        entry = panel_entry(entity_id=name, name="")
+        entry["mapEntity"]["type"] = "ped"
+        entry["mapEntity"]["model"] = 0
+        rows.append(entry)
+    push_client_snapshot(panel_client, entities=rows)
+
+    named = [row["name"] for row in panel_client.pushed_panel_state()["entities"]]
+
+    assert sorted(named) == ["ped (1)", "ped (2)"]
+
+
+def test_a_marker_is_named_from_the_same_place_as_every_other_type(
+    panel_client: MtaSandbox,
+) -> None:
+    """Reported as item 38. A marker has no model, so a name derived from one
+    fell straight through to `Unnamed Map Entity` -- while the editor beside it
+    called the same thing `marker (corona) (1)`."""
+    entry = panel_entry(entity_id="marker (corona) (1)", name="")
+    entry["mapEntity"]["type"] = "marker"
+    entry["mapEntity"]["model"] = False
+    push_client_snapshot(panel_client, entities=[entry])
+
+    row = panel_client.pushed_panel_state()["entities"][0]
+
+    assert row["name"] == "marker (corona) (1)"
+    assert panel_client.script_warnings == []
+
+
+def test_an_entity_no_editor_named_reads_as_what_it_actually_is(
+    panel_client: MtaSandbox,
+) -> None:
+    """Not every Map Entity comes out of the editor. A freeroam vehicle is
+    adopted by where it stands, and its `entity_id` is that positional name --
+    which the row says rather than dressing it up as something it is not."""
+    entry = panel_entry(entity_id="at_9d1f4c2b7a", name="")
+    entry["mapEntity"]["type"] = "vehicle"
+    entry["mapEntity"]["model"] = 411
+    push_client_snapshot(panel_client, entities=[entry])
+
+    row = panel_client.pushed_panel_state()["entities"][0]
+
+    assert row["name"] == "at_9d1f4c2b7a"
+    # And not the model's name, which is a fact about the car rather than about
+    # which car this is.
+    assert "Infernus" not in row["name"]
+
+
+@pytest.mark.parametrize(
+    ("kind", "model"),
+    [("ped", 0), ("ped", 264), ("object", 1337), ("vehicle", 411), ("marker", False)],
+)
+def test_what_a_row_is_called_does_not_depend_on_its_model(
+    panel_client: MtaSandbox, kind: str, model: Any
+) -> None:
+    """No id->name table for ped skins is shipped, and none can be: the name is
+    a function of the `entity_id` alone. `object (sw_hedstones) (1)` keeps the
+    model name because the editor put it there, not because ANKIGTA looked one
+    up."""
+    entry = panel_entry(entity_id="thing (1)", name="")
+    entry["mapEntity"]["type"] = kind
+    entry["mapEntity"]["model"] = model
+    push_client_snapshot(panel_client, entities=[entry])
+
+    assert panel_client.pushed_panel_state()["entities"][0]["name"] == "thing (1)"
 
 
 def test_a_card_linked_to_another_map_names_that_map(
@@ -1337,21 +1636,24 @@ def test_undo_puts_back_a_radius_that_was_following_the_global(
 def test_a_renamed_row_carries_the_name_it_had_before(
     panel_client: MtaSandbox,
 ) -> None:
-    """The cosmetic name replaces the model name, which is the point -- but the
-    model name is the only thing tying this row to what the Map Editor shows."""
-    push_client_snapshot(panel_client, entities=[panel_entry(name="North gate")])
+    """The cosmetic name replaces the editor's, which is the point -- but the
+    editor's is the only thing tying this row to what the Map Editor shows."""
+    push_client_snapshot(
+        panel_client,
+        entities=[panel_entry(entity_id="object (gate) (1)", name="North gate")],
+    )
 
     row = panel_client.pushed_panel_state()["entities"][0]
 
     assert row["name"] == "North gate"
     assert row["givenName"] == "North gate"
-    assert row["originalName"] == "gate_model"
+    assert row["originalName"] == "object (gate) (1)"
 
 
 def test_a_row_nobody_named_has_no_earlier_name_to_show(
     panel_client: MtaSandbox,
 ) -> None:
-    """Saying "originally gate_model" under a row headed the same is noise."""
+    """Saying "originally gate-17" under a row headed the same is noise."""
     push_client_snapshot(panel_client, entities=[panel_entry(name="")])
 
     row = panel_client.pushed_panel_state()["entities"][0]
@@ -1360,17 +1662,20 @@ def test_a_row_nobody_named_has_no_earlier_name_to_show(
     assert row["originalName"] is False
 
 
-def test_the_default_name_a_row_carries_is_unchanged(
+def test_a_renamed_marker_still_says_what_the_editor_called_it(
     panel_client: MtaSandbox,
 ) -> None:
-    """What a ped row should be headed by is ticket 07's question, not this
-    one's: the skin is still the name, and the row still says so."""
-    entry = panel_entry(name="")
-    entry["mapEntity"]["type"] = "ped"
-    entry["mapEntity"]["model"] = 7
+    """A marker had no default name to keep, so renaming one used to lose the
+    only thread back to the editor's list."""
+    entry = panel_entry(entity_id="marker (corona) (1)", name="Chapter three")
+    entry["mapEntity"]["type"] = "marker"
+    entry["mapEntity"]["model"] = False
     push_client_snapshot(panel_client, entities=[entry])
 
-    assert panel_client.pushed_panel_state()["entities"][0]["name"] == "Ped skin 7"
+    row = panel_client.pushed_panel_state()["entities"][0]
+
+    assert row["name"] == "Chapter three"
+    assert row["originalName"] == "marker (corona) (1)"
 
 
 def test_the_filter_matches_the_name_a_row_had_before_it_was_renamed(
@@ -1381,17 +1686,17 @@ def test_the_filter_matches_the_name_a_row_had_before_it_was_renamed(
     push_client_snapshot(
         panel_client,
         entities=[
-            panel_entry(entity_id="gate-17", name="North gate"),
-            panel_entry(entity_id="gate-18", name="South gate"),
+            panel_entry(entity_id="object (gate) (17)", name="North gate"),
+            panel_entry(entity_id="object (gate) (18)", name="South gate"),
         ],
     )
 
-    panel_action(panel_client, "filter", {"text": "gate_model"})
+    panel_action(panel_client, "filter", {"text": "object (gate)"})
     assert len(panel_client.pushed_panel_state()["entities"]) == 2
 
     panel_action(panel_client, "filter", {"text": "North"})
     kept = panel_client.pushed_panel_state()["entities"]
-    assert [row["entityId"] for row in kept] == ["gate-17"]
+    assert [row["entityId"] for row in kept] == ["object (gate) (17)"]
 
 
 # --- pointing the camera is the player's answer -------------------------------
