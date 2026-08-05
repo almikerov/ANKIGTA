@@ -351,29 +351,10 @@ local function ensureChangeHistorySchema()
                 return false, alterError
             end
         end
-        if not present.radius_override then
-            local altered, alterError = execute(
-                Store.connection,
-                "ALTER TABLE map_entity_metadata ADD COLUMN radius_override REAL"
-            )
-            if not altered then
-                return false, alterError
-            end
-            -- Every radius already on disk becomes an override of itself. A
-            -- stored 3 might be a number somebody chose or the copy the old
-            -- write path made, and nothing on disk can tell them apart -- so
-            -- the reading that changes nothing is the one to take. Clearing
-            -- the field puts a row back on the global, one row at a time,
-            -- which is the player's call rather than an upgrade's.
-            local backfilled, backfillError = execute(
-                Store.connection,
-                "UPDATE map_entity_metadata SET radius_override = radius"
-                    .. " WHERE radius_override IS NULL"
-            )
-            if not backfilled then
-                return false, backfillError
-            end
-        end
+        -- `radius_override` is *not* repaired here. It rewrites rows, and
+        -- `docs/operations/backups-and-recovery.md` wants a verified copy
+        -- before anything that does -- which only the migration path takes.
+        -- See `activation_radius_override` in `MIGRATIONS`.
     end
     Store.historyReady = created == true
     return created, errorMessage
@@ -755,6 +736,54 @@ end
 -- A step with no `to` is a shape repair rather than a version step. It bumps
 -- nothing, and its `needed` probe both decides whether it runs and, once it has
 -- run, terminates the loop.
+--- Is there a `map_entity_metadata` that cannot yet say "no radius of my own"?
+--
+-- The table is created by `ensureChangeHistorySchema`, which runs *after*
+-- migrations, so a database that has never had it needs nothing here: it will
+-- be created with the column already on it, and `PRAGMA table_info` of a table
+-- that does not exist answers with no rows.
+local function needsRadiusOverride()
+    local ok, columns = execute(
+        Store.connection,
+        "PRAGMA table_info(map_entity_metadata)"
+    )
+    if not ok or #columns == 0 then
+        return false
+    end
+    for _, column in ipairs(columns) do
+        if column.name == "radius_override" then
+            return false
+        end
+    end
+    return true
+end
+
+--- Give every metadata row somewhere to say it has no radius of its own.
+--
+-- `radius` is NOT NULL, so it could not hold that -- and naming an entity
+-- therefore wrote a copy of the shipped default onto it and the global stopped
+-- reaching it. SQLite cannot drop NOT NULL without rebuilding the table, and
+-- this one is the child of a foreign key with ON DELETE CASCADE, so the column
+-- beside it is the cheaper answer; `radius` is left inert.
+--
+-- Every number already on disk becomes an override of itself. A stored 3 might
+-- be a number somebody chose or the copy the old write path made, and nothing
+-- on disk can tell them apart -- so the reading that changes nothing is the one
+-- to take. Putting a row back on the global is then one row at a time, which is
+-- the player's call rather than an upgrade's.
+--
+-- A migration rather than a shape fixup beside `presence_state`, because it
+-- rewrites rows and only this path takes a verified copy first.
+local function migrateRadiusOverride()
+    return transaction(Store.connection, {
+        {"ALTER TABLE map_entity_metadata ADD COLUMN radius_override REAL"},
+        {
+            "UPDATE map_entity_metadata SET radius_override = radius"
+                .. " WHERE radius_override IS NULL",
+        },
+    })
+end
+
 local MIGRATIONS = {
     {
         id = "rotation_columns",
@@ -799,6 +828,15 @@ local MIGRATIONS = {
         from = 5,
         to = 6,
         apply = migrateVersionSix,
+    },
+    -- A shape repair, and last: it probes the shape rather than the number, so
+    -- it applies to any database whose metadata table predates the column and
+    -- clears itself once it has run.
+    {
+        id = "activation_radius_override",
+        from = 1,
+        needed = needsRadiusOverride,
+        apply = migrateRadiusOverride,
     },
 }
 
@@ -2286,6 +2324,13 @@ function Store.relinkEntity(value)
                 value.targetEntityId,
             },
         },
+        -- Relink moves the entity's metadata, and "it follows the global" is
+        -- part of that metadata. Without this the forward path silently drops
+        -- an override while Redo -- which replays the recorded state -- puts it
+        -- back, so the two disagreed about the same relink.
+        radiusOverrideStep(
+            value.targetMapId, value.targetEntityId, source.radius
+        ),
         {
             [[
                 INSERT INTO spatial_links (
@@ -2315,10 +2360,13 @@ function Store.relinkEntity(value)
     }
     local committed, errorMessage = historyTransaction(
         "relink_entity",
-        {
-            mapId = value.sourceMapId,
-            entityId = value.sourceEntityId,
-        },
+        -- `historyTarget`, not the table itself. Every other caller encodes it
+        -- and `historySteps` binds this straight into `change_history.target`,
+        -- so a raw table failed the bind, rolled the whole transaction back and
+        -- made `Relink entity` return `relink_transaction_failed` every single
+        -- time. Nothing caught it because the two tests that mention relinking
+        -- read the function's *source text* for the word `historyTransaction`.
+        historyTarget(value.sourceMapId, value.sourceEntityId),
         before,
         after,
         steps

@@ -1523,3 +1523,137 @@ def test_the_client_setting_is_what_turns_that_off(
     push_client_snapshot(panel_client, entities=[panel_entry()])
 
     assert panel_client.pushed_panel_state()["focusOnSelect"] is False
+
+
+# --- a relink moves what the entity said about its own zone -------------------
+
+
+def relink(server: MtaSandbox, *, source: str, target: str) -> Any:
+    """One value back, so a refusal cannot read as a success.
+
+    `Store.relinkEntity` answers `false, reason`, and a two-value return
+    arrives here as a tuple -- which is truthy however it went.
+    """
+    return server.eval(
+        """
+        function(sourceId, targetId)
+            local ok, reason = ANKIGTA.Store.relinkEntity({
+                sourceMapId = "current-map-id",
+                sourceEntityId = sourceId,
+                targetMapId = "current-map-id",
+                targetEntityId = targetId,
+            })
+            if not ok then
+                return tostring(reason)
+            end
+            return true
+        end
+        """
+    )(source, target)
+
+
+def override_of(server: MtaSandbox, entity_id: str) -> Any:
+    row = server.connection.raw.execute(
+        "SELECT radius_override FROM map_entity_metadata WHERE entity_id = ?",
+        (entity_id,),
+    ).fetchone()
+    return None if row is None else row[0]
+
+
+def seed_pair(server: MtaSandbox) -> Any:
+    for entity_id in ("gate-17", "gate-18"):
+        seed_entity(
+            server,
+            map_id="current-map-id",
+            resource_name="current-map",
+            entity_id=entity_id,
+        )
+    server.connection.raw.execute(
+        "INSERT INTO spatial_links (map_id, entity_id, collection_uuid, card_id,"
+        " state, verified_map_sha256) VALUES (?, ?, ?, ?, 'active', ?)",
+        ("current-map-id", "gate-17", "collection-a", 42, "a" * 64),
+    )
+    server.connection.raw.commit()
+    return server.add_study_player()
+
+
+def make_source_missing(server: MtaSandbox) -> None:
+    """Relink exists for an entity whose Runtime Instance is gone, so the
+    source has to actually be in that state for the call to do anything."""
+    server.connection.raw.execute(
+        "UPDATE map_entity_metadata SET presence_state = 'entity_missing'"
+        " WHERE entity_id = 'gate-17'"
+    )
+    server.connection.raw.commit()
+
+
+def test_a_relink_carries_a_radius_that_was_chosen(server: MtaSandbox) -> None:
+    """Relink moves the entity's metadata, and a radius of its own is part of
+    that. Dropping it would put the entity back on the global without anyone
+    saying so."""
+    player = seed_pair(server)
+    write_metadata(server, player, {"radius": 7.5})
+    assert override_of(server, "gate-17") == 7.5
+    make_source_missing(server)
+
+    assert relink(server, source="gate-17", target="gate-18") is True
+
+    assert override_of(server, "gate-18") == 7.5
+
+
+def test_a_relink_carries_the_absence_of_one(server: MtaSandbox) -> None:
+    """And the other way: an entity that followed the global must not arrive at
+    its new home pinned to a number nobody chose.
+
+    The target here already has a radius of its own, so a relink that writes
+    nothing would leave that number in force under the source's identity.
+    """
+    player = seed_pair(server)
+    server.trigger(
+        "ankigta:updateEntityMetadata",
+        server.lua.globals().resourceRoot,
+        "current-map-id",
+        "gate-18",
+        server.lua.table_from({"radius": 12}),
+        client=player,
+    )
+    write_metadata(server, player, {"name": "North gate"})
+    assert override_of(server, "gate-17") is None
+    make_source_missing(server)
+
+    assert relink(server, source="gate-17", target="gate-18") is True
+
+    assert override_of(server, "gate-18") is None
+
+
+def test_relinking_an_entity_commits_at_all(server: MtaSandbox) -> None:
+    """It did not, on the trunk this branch came from.
+
+    `Store.relinkEntity` handed `historyTransaction` a raw Lua table where every
+    other caller hands it `historyTarget(...)`. `historySteps` binds that value
+    straight into `change_history.target`, so the bind failed, the transaction
+    rolled back and `Relink entity` answered `relink_transaction_failed` every
+    single time. The two tests that mention relinking read the function's
+    *source text* for the word `historyTransaction`, which is exactly the kind
+    of test `docs/agents/lua-testing.md` says proves nothing about behaviour.
+    """
+    player = seed_pair(server)
+    write_metadata(server, player, {"name": "North gate"})
+    make_source_missing(server)
+
+    assert relink(server, source="gate-17", target="gate-18") is True
+
+    moved = server.connection.raw.execute(
+        "SELECT entity_id FROM spatial_links WHERE state = 'active'"
+    ).fetchall()
+    assert moved == [("gate-18",)]
+    # And it is one entry in Change History, so one Undo puts it back.
+    recorded = server.connection.raw.execute(
+        "SELECT operation, target FROM change_history ORDER BY history_id DESC"
+        " LIMIT 1"
+    ).fetchone()
+    assert recorded[0] == "relink_entity"
+    # `toJSON` serialises its argument *list*, so one table comes back wrapped.
+    assert json.loads(recorded[1]) == [
+        {"mapId": "current-map-id", "entityId": "gate-17"}
+    ]

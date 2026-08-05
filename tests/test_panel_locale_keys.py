@@ -39,10 +39,15 @@ PANEL_LUA = REPO / "mta" / "ankigta" / "client" / "panel.lua"
 
 
 def html_keys() -> set[str]:
+    """Every key the markup names, whichever part of a control it fills.
+
+    Read as one family rather than one attribute at a time: `applyLocale` walks
+    `data-i18n`, `data-i18n-placeholder` and `data-i18n-title`, and a fourth
+    added there with no line added here would leave its strings looking like
+    words nothing asks for.
+    """
     source = (PANEL / "index.html").read_text(encoding="utf-8")
-    keys = set(re.findall(r'data-i18n="([^"]+)"', source))
-    keys |= set(re.findall(r'data-i18n-placeholder="([^"]+)"', source))
-    return keys
+    return set(re.findall(r'data-i18n(?:-[a-z]+)?="([^"]+)"', source))
 
 
 def js_literal_keys() -> set[str]:

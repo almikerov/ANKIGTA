@@ -69,6 +69,12 @@ function mk(tag) {
     getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; },
     addEventListener(t, f) { (this.listeners[t] = this.listeners[t] || []).push(f); },
     scrollIntoView() { scrolled.push(this.id || this.attrs["data-row"] || ""); },
+    /* One fixed box per node. The page only needs somewhere to open from, and
+       a real layout is what the stub cannot have. `bottom` is chosen so a list
+       has room below it; the test that wants none moves it. */
+    getBoundingClientRect() {
+      return this._rect || { left: 40, top: 100, right: 180, bottom: 130, width: 140, height: 30 };
+    },
     select() {},
     closest(selector) {
       const wanted = selector.split(",").map((s) => s.trim().toUpperCase());
@@ -114,6 +120,7 @@ function parse(source) {
       if (name === "value") node.value = value;
       if (name === "type") node.type = value;
       if (name === "placeholder") node.placeholder = value;
+      if (name === "title") node.title = value;
     }
     stack[stack.length - 1].appendChild(node);
     if (VOID.indexOf(match[2].toLowerCase()) === -1 && !match[4]) {
@@ -161,6 +168,8 @@ global.document = {
   },
 };
 global.window = {
+  innerWidth: 1180,
+  innerHeight: 700,
   mta: { triggerEvent(_evt, action, payload) { sent.push([action, JSON.parse(payload)]); } },
 };
 
@@ -198,6 +207,7 @@ for (const step of script) {
   if (step.input) fire(locate(step.input), "input");
   if (step.set) locate(step.set).value = String(step.set.value);
   if (step.check) locate(step.check).checked = step.check.value;
+  if (step.rect) locate(step.rect)._rect = step.rect.box;
   if (step.docclick) {
     for (const handler of documentListeners["click"] || []) handler({});
   }
@@ -1093,6 +1103,59 @@ def test_an_edit_survives_the_editor_being_shut_and_reopened() -> None:
     )
 
     assert node(answer, "save-note")["disabled"] is False
+
+
+# --- an open list is not clipped by whatever it opened inside ----------------
+
+
+def test_a_list_opens_against_the_window_not_inside_the_scroller() -> None:
+    """`.settings-rows` scrolls, and an absolutely positioned list is clipped by
+    any scroller between it and its containing block.
+
+    So a choice near the bottom of Settings would have opened a list that was
+    cut off -- which is the defect this whole component exists to remove,
+    rebuilt in CSS. The list is placed against the window instead.
+    """
+    answer = run_page(
+        [
+            {"receive": state(settings=settings(CHOICE_ROW))},
+            {"click": {"under": "settings-rows", "attr": "data-picker", "is": "reviewMode"}},
+        ]
+    )
+
+    panel = one(node(answer, "settings-rows"), cls="picker-panel")
+    assert panel["hidden"] is False
+    assert panel["style"]["left"] == "40px"
+    # Below the control it belongs to, and no taller than the room left there.
+    assert panel["style"]["top"] == "132px"
+    assert panel["style"]["maxHeight"] == "562px"
+
+
+def test_a_list_with_no_room_below_it_opens_upwards() -> None:
+    """The panel is a window inside a game, so a control near its foot is the
+    ordinary case rather than the awkward one."""
+    answer = run_page(
+        [
+            {"receive": state(settings=settings(CHOICE_ROW))},
+            {
+                "rect": {
+                    "under": "settings-rows",
+                    "attr": "data-picker",
+                    "is": "reviewMode",
+                    "box": {
+                        "left": 40, "top": 640, "right": 180, "bottom": 670,
+                        "width": 140, "height": 30,
+                    },
+                }
+            },
+            {"click": {"under": "settings-rows", "attr": "data-picker", "is": "reviewMode"}},
+        ]
+    )
+
+    panel = one(node(answer, "settings-rows"), cls="picker-panel")
+    assert panel["style"]["top"] == ""
+    assert panel["style"]["bottom"] == "62px"
+    assert panel["style"]["maxHeight"] == "632px"
 
 
 if __name__ == "__main__":

@@ -34,6 +34,10 @@
     for (var j = 0; j < hints.length; j += 1) {
       hints[j].placeholder = t(hints[j].getAttribute("data-i18n-placeholder"));
     }
+    var titles = document.querySelectorAll("[data-i18n-title]");
+    for (var k = 0; k < titles.length; k += 1) {
+      titles[k].title = t(titles[k].getAttribute("data-i18n-title"));
+    }
   }
 
   var selected = {mapId: false, entityId: false, cardId: false};
@@ -81,6 +85,11 @@
    * Escape closes it rather than the panel behind it. */
   var openPopup = null;
 
+  /* How much room a list keeps clear of the window's edge, and how little room
+   * below is too little to open into. */
+  var MENU_MARGIN = 8;
+  var MENU_MIN_ROOM = 120;
+
   function closeOpenPopup() {
     if (openPopup) openPopup.open(false);
   }
@@ -101,6 +110,36 @@
     root.appendChild(button);
     root.appendChild(panel);
 
+    /* Placed against the window rather than against the button's own box.
+     *
+     * An absolutely positioned list is clipped by any scroller between it and
+     * its containing block, and `.settings-rows` is exactly that — so a choice
+     * near the bottom of Settings would have opened a list that was cut off,
+     * which is the defect this whole component exists to remove, rebuilt in
+     * CSS. `position: fixed` has the window for a containing block, and no
+     * ancestor here creates one for it (no transform, filter or contain).
+     *
+     * It opens downwards where there is room and upwards where there is not:
+     * the panel is a window inside a game, so "there is not" is common. */
+    function place() {
+      if (!button.getBoundingClientRect) return;
+      var rect = button.getBoundingClientRect();
+      var height = (window.innerHeight || 0);
+      var below = height - rect.bottom - MENU_MARGIN;
+      var above = rect.top - MENU_MARGIN;
+      panel.style.left = rect.left + "px";
+      panel.style.minWidth = rect.width + "px";
+      if (below < MENU_MIN_ROOM && above > below) {
+        panel.style.top = "";
+        panel.style.bottom = (height - rect.top + 2) + "px";
+        panel.style.maxHeight = above + "px";
+      } else {
+        panel.style.bottom = "";
+        panel.style.top = (rect.bottom + 2) + "px";
+        panel.style.maxHeight = below + "px";
+      }
+    }
+
     var popup = {
       root: root,
       button: button,
@@ -113,6 +152,7 @@
         panel.hidden = !open;
         button.setAttribute("aria-expanded", String(!!open));
         if (open) {
+          place();
           openPopup = popup;
         } else if (openPopup === popup) {
           openPopup = null;
@@ -614,14 +654,14 @@
     var drawNow = document.getElementById("entity-draw-now");
     var drawAlways = document.getElementById("entity-draw-always");
 
-    empty.textContent = t("f7.noSelection");
+    /* What these three say comes from `applyLocale`, like every other fixed
+     * word on the page; what this decides is which of them are on screen and
+     * whether the fields can be typed into. */
     empty.hidden = !!entity;
     name.disabled = !entity;
     radius.disabled = !entity;
     drawNow.disabled = !entity;
     drawAlways.disabled = !entity;
-    radius.title = t("f7.radiusClearHint");
-    mark.textContent = t("f7.radiusInherited");
 
     if (!entity) {
       reportedEntity = null;

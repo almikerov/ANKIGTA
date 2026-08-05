@@ -106,16 +106,46 @@ appends to. **This ticket merges first**, because it rewrites `panel.lua`,
 re-applying ten lines onto a finished panel is work; re-applying a rewrite is not.
 Do not merge to main yourself.
 
+**It did not stay out of 02's files, and could not have.** "Clearing a field goes
+back to inheriting, and does not store a copy" is on the list above, and the only
+place a copy can be *not* stored is the store: `map_entity_metadata.radius` is NOT
+NULL, so there was nowhere to say "this entity has none". So `server/store.lua`
+gains a nullable column beside it, a migration that fills it, and the write and
+Change-History paths that carry it; `server/main.lua` gains the three-way answer
+(a number, `false` for cleared, absent for "this message is not about the
+radius"). 02 will have to rebase over that. The alternative was to tick the line
+with a panel that shows inheritance it cannot store.
+
+**And it found `Relink entity` broken on the trunk** while carrying the override
+through it. `Store.relinkEntity` handed `historyTransaction` a raw Lua table where
+every other caller hands it `historyTarget(...)`; `historySteps` binds that value
+straight into a column, so the bind failed, the whole transaction rolled back, and
+relinking answered `relink_transaction_failed` every time. Fixed here — a one-line
+change and three tests — because the override could not be verified through a path
+that never committed. It survived because the only two tests naming relink read
+the function's *source text*.
+
 **Blocked by:** 01.
 
 **Status:** built on `claude/panel-surface-rebuild-c2722e`, green, not merged and
 not deployed.
 
-- [x] A dropdown opens on a click anywhere on it, not only on the arrow
+Ticked where a test holds the claim. Three are left unticked on purpose: their
+words are about how something *appears*, nothing here renders a frame, and
+`docs/agents/mta-gta-reference-policy.md` says an observed-runtime item stays
+`not run` rather than being marked passed by the seam underneath it.
+
+- [ ] A dropdown opens on a click anywhere on it, not only on the arrow —
+      **not run.** The click is held by a test; that the list is then *visible*
+      is not, and is the whole reason this ticket exists. See 1 below.
 - [x] A choice can be made from it, and the choice reaches the server
 - [x] The deck, the Cards/Notes switch and every Settings choice behave alike
 - [x] No `<select>` is left on the page
-- [x] A colour can be chosen with a picker that works in the panel as rendered
+- [ ] A colour can be chosen with a picker that works in the panel as rendered —
+      **not run, and not runnable yet.** The picker is built and exercised, but
+      nothing in the schema is a colour until ticket 04 adds one, so no colour
+      control appears on a deployed panel and there is nothing for a person to
+      open. 04 inherits this line.
 - [x] An unrelated state push does not close a menu that is open
 - [x] Typing in a settings field is not thrown away by an unrelated push
 - [x] The entity edit pane is on screen whether or not a row is selected
@@ -125,7 +155,10 @@ not deployed.
 - [x] Clearing a field goes back to inheriting, and does not store a copy
 - [x] A single click on a row points the camera at it
 - [x] A client setting turns that off, leaving the click to select only
-- [x] Up and down move the selection, and the selection stays on screen
+- [ ] Up and down move the selection, and the selection stays on screen —
+      **half not run.** The keys move it and the page asks for the row to be
+      scrolled to, both under test; whether the row is then on screen depends
+      on a layout no harness here has.
 - [x] A renamed row still shows the name it had before
 - [x] The filter matches the original name as well as the given one
 - [x] No id→name table for ped skins is shipped — ticket 07 owns the default name
@@ -134,27 +167,31 @@ not deployed.
 
 ### What a person still has to look at
 
-Every line above is held by a test, and no test in this repository renders a
-frame — `docs/agents/mta-gta-reference-policy.md` says so, and the harness that
-runs `app.js` says so in its own docstring. So each of these is proven as
-behaviour and **not run** as an appearance. Open F7 on a deployed build and
-check:
+Open F7 on a deployed build and check:
 
-1. A dropdown's list is **visible** when it opens, over the rows below it rather
-   than clipped by them or by the panel's edge. This is the one that matters
-   most: the whole ticket exists because a list that opened could not be seen.
-   Settings is where to look — a choice row near the bottom of the list.
+1. **A list is visible when it opens** — over the rows below it, not clipped by
+   them or by the panel's edge. The whole ticket exists because a list that
+   opened could not be seen, and the first build of this one put it back: an
+   absolutely positioned list is clipped by any scroller between it and its
+   containing block, and `.settings-rows` is one. It is placed against the
+   window now and opens upwards where there is no room below. **Look at a choice
+   row near the foot of Settings**, which is the case that was broken.
 2. The deck list scrolls rather than running off the panel when a collection has
    more decks than fit.
-3. The colour picker: twelve swatches in a grid, each showing its own colour,
-   and the button showing the chosen one beside its hex.
-4. The entity pane no longer moves the rest of the column when a row is selected
+3. The entity pane no longer moves the rest of the column when a row is selected
    or deselected.
-5. An inherited radius reads as inherited — the box is dashed and greyed and
+4. An inherited radius reads as inherited — the box is dashed and greyed and
    says `following Settings` beside it.
-6. Arrowing down a list longer than the panel keeps the selected row in sight.
+5. Arrowing down a list longer than the panel keeps the selected row in sight.
 
-Two things are worth *doing* rather than looking at, because they cross into the
-store: set the global Activation Zone radius in Settings and confirm an entity
-nobody has given a radius follows it; then type a radius on that entity, empty
-the box again, and confirm it goes back to following.
+And two worth *doing* rather than looking at, because they cross into the store.
+**Both need an entity with no radius of its own**, and on the owner's database
+that is not the same as an entity nobody has touched: the upgrade turns every
+radius already stored into an override of itself, and four of the five metadata
+rows there carry one. So empty the radius box on whichever row you pick first,
+then:
+
+- set the global Activation Zone radius in Settings and confirm that row follows
+  it — the box shows the new number, marked as following;
+- type a radius on that row, then empty the box again, and confirm it goes back
+  to following rather than keeping today's number.

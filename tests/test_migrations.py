@@ -415,18 +415,40 @@ def test_a_migration_is_preceded_by_a_verified_pre_migration_backup(
         sandbox.close()
 
 
-def test_a_database_already_current_takes_no_pre_migration_backup(
+def test_a_database_with_nothing_left_to_do_takes_no_pre_migration_backup(
     workspace: Path,
 ) -> None:
-    sandbox = migrated(workspace, SHIPPED_VERSIONS[-1])
+    """A copy per start would rotate the useful ones out within a day.
+
+    "Nothing left to do" is asked of the *shape*, not of the version number:
+    some steps here are shape repairs that bump nothing, so a database can sit
+    at the current version and still be owed one. That is why this opens twice
+    and looks at the second open -- the first is entitled to whatever it finds.
+    """
+    first = migrated(workspace, SHIPPED_VERSIONS[-1])
+    first.close()
+
+    sandbox = server(workspace)
     try:
-        listed = sandbox.to_python(
+        assert opened(sandbox) is True
+        before = sandbox.to_python(
             call(sandbox, "function() return ANKIGTA.Backup.list() end")
         )
-
-        assert [entry for entry in listed if entry["kind"] == "premigration"] == []
+        taken = [entry for entry in before if entry["kind"] == "premigration"]
     finally:
         sandbox.close()
+
+    again = server(workspace)
+    try:
+        assert opened(again) is True
+        after = sandbox.to_python(
+            call(again, "function() return ANKIGTA.Backup.list() end")
+        )
+        assert [
+            entry for entry in after if entry["kind"] == "premigration"
+        ] == taken
+    finally:
+        again.close()
 
 
 # --- a radius of an entity's own, and the absence of one ----------------------
@@ -504,3 +526,43 @@ def test_opening_a_database_twice_does_not_backfill_a_cleared_radius(
         assert cleared[0]["radius"] == 7.5
     finally:
         second.close()
+
+
+def test_adding_the_radius_column_takes_a_verified_copy_first(
+    workspace: Path,
+) -> None:
+    """`docs/operations/backups-and-recovery.md`: a copy before every schema
+    migration, because a failure part-way has nothing else to fall back on.
+
+    This one rewrites rows as well as adding a column, so it is a migration
+    rather than one of the shape fixups `ensureChangeHistorySchema` does on
+    every open -- those run outside the gate that takes the copy.
+    """
+    database = workspace / "ankigta.sqlite"
+    shipped_schemas.build(database, "v6", history=True)
+
+    sandbox = server(workspace)
+    try:
+        assert opened(sandbox) is True
+
+        listed = sandbox.to_python(
+            call(sandbox, "function() return ANKIGTA.Backup.list() end")
+        )
+        premigration = [
+            entry for entry in listed if entry["kind"] == "premigration"
+        ]
+        assert len(premigration) == 1
+        assert premigration[0]["verified"] is True
+    finally:
+        sandbox.close()
+
+    # And the copy is of the database as it was *before*: no column on it.
+    copied = workspace / premigration[0]["path"]
+    columns = {
+        row[1]
+        for row in sqlite3.connect(copied)
+        .execute("PRAGMA table_info(map_entity_metadata)")
+        .fetchall()
+    }
+    assert "radius_override" not in columns
+    assert "radius" in columns

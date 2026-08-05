@@ -283,12 +283,17 @@ label {
   text-align: left;
 }
 .picker-button[aria-expanded="true"] { border-color: var(--accent); }
+/* Placed against the window, not against the button: an absolutely positioned
+   list is clipped by any scroller between it and its containing block, and
+   `.settings-rows` is one — so a choice near the bottom of Settings would open
+   a list that was cut off, which is the defect this component exists to remove.
+   `app.js` writes `left`/`top`/`bottom` when it opens; the fallbacks here are
+   only for the frame before it does. */
 .picker-panel {
-  position: absolute;
-  z-index: 20;
-  top: calc(100% + 2px);
+  position: fixed;
+  z-index: 40;
+  top: 0;
   left: 0;
-  min-width: 100%;
   max-height: 40vh;
   overflow-y: auto;
   display: flex;
