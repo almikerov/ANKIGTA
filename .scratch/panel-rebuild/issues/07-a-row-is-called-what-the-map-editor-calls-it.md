@@ -1,61 +1,68 @@
 # 07 — A row is called what the Map Editor calls it
 
-**What to build:** a Map Entity's default name is the name the Map Editor gave
-it, not a name ANKIGTA invents from a model number.
+**What to build:** show the name ANKIGTA already stores, instead of deriving a
+worse one from the model number.
 
-Reported items 38 and 39. They arrived as two and are one fix.
+Reported items 38 and 39. They arrived as two and are one fix, and the fix is
+smaller than either of them sounds.
 
-## What is wrong
+## The name is already in the database
 
-Place two peds and both rows read `Ped skin 0`. The name is derived from the
-model, so two of the same model are two rows with the same name and nothing
-tells them apart. The Map Editor, standing right there, calls them `ped (1)` and
-`ped (2)`.
+Checked against the owner's running server and a copy of the live store. Every
+Map Entity's `entity_id` **is** the Map Editor's own name for it:
 
-The same derivation is why a **marker** has no name at all. `entityLabel` in
-`client/panel.lua` starts with `tonumber(mapEntity.model)` and gives up when
-there is not one; a marker has no model, so every marker row is
-`Unnamed Map Entity`. Markers are otherwise a supported type everywhere —
-`shared/entity_types.lua`, the world scan, `pick_entity.lua`,
-`spatial.lua`, and the database's own CHECK constraint all list them. Naming is
-the whole of what is missing.
+```
+('editor_test', 'ped (1)',                       'ped',     0)
+('editor_test', 'object (sw_hedstones) (1)',     'object',  12961)
+('editor_test', 'vehicle (Clover) (1)',          'vehicle', 542)
+('editor_dump', 'object (vgsSstairs04_lvs) (1)', 'object',  8615)
+('editor_test', 'vehicle (Glendale Damaged) (1)','vehicle', 604)
+```
 
-## The name already exists — it just is not kept
+The editor publishes it as element data under the key **`id`** — every element
+carries one, `marker (corona) (1)` included — and adoption already copies it into
+`ankigtaEntityId` and stores it. Nothing needs to be captured, migrated or added
+to the schema.
 
-The editor writes its element id into element data under `me:ID`, and
-`server/map_identity.lua:575` already reads it: `editorElementId =
-getElementData(objectElement, "me:ID")`. It is used transiently, to match a
-pending save back to its authored node, and then dropped. `map_entities` has no
-column for it.
+**`me:ID` is not the key.** Only the editor's own EDF representation carries
+`me:ID`, and only sometimes: of eleven elements in the running world, one had it.
+`server/map_identity.lua:575` reads `me:ID`, which is why it works transiently and
+for one case. If this ticket touches that read at all, `id` is the key that is
+actually there.
 
-So the work is: keep it, and use it.
+## What is wrong is only the display
 
-**Read, do not derive.** A counter of our own would produce `ped (1)` and
-`ped (2)` that agree with the editor right up until an entity is deleted and
-another added, after which they disagree silently and the player trusts the
-wrong one. ADR 0025 stands: reading the editor's element data is reading, not
-writing.
+`entityLabel` in `client/panel.lua` starts from `tonumber(mapEntity.model)` and
+builds a name out of the model:
 
-**An entity adopted with no editor id still needs a name.** Fall back to what
-happens today — the model name for an object or vehicle — and to something
-honest for the rest. A fallback that looks like an editor id would be a lie
-about where the name came from.
+- two peds of the same skin become `Ped skin 0` twice, telling nothing apart,
+  while the editor beside them says `ped (1)` and `ped (2)`;
+- a **marker** has no model at all, so it falls straight through to
+  `Unnamed Map Entity` — even though the editor calls it `marker (corona) (1)`
+  and markers are a supported type everywhere else in the resource
+  (`shared/entity_types.lua`, the world scan, `pick_entity.lua`, `spatial.lua`,
+  and the database's own CHECK constraint).
+
+Show `entity_id`. Both defects go at once, for every type.
 
 ## A ped is not named by its skin, but is still found by it
 
-Do **not** ship an id→name table for skins. The row says `ped (1)`; the skin
-does not appear in it.
+Do **not** ship an id→name table for skins. The row says `ped (1)`; the skin does
+not appear in it. This supersedes the plan ticket 03 originally carried.
 
-The skin stays a **search** criterion: filtering by the skin number finds the
-ped. If a name for the skin can be had at all, that is a second search
-criterion — but it is not what the row is called. This supersedes the earlier
-plan to name peds from a shipped table.
+The skin stays a **search** criterion: filtering by the skin number finds the ped.
+If a name for the skin can be had at all, that is a second search criterion — but
+it is not what the row is called.
+
+Note what the editor already does for the types MTA can name: `object
+(sw_hedstones) (1)` and `vehicle (Clover) (1)` carry the model name inside the id.
+So showing `entity_id` keeps the model name where one exists and drops it where
+none does, which is the behaviour asked for without a rule of our own.
 
 ## A marker is an ordinary Map Entity
 
-Named like the rest, renamed like the rest, and carrying the same per-link
-settings as the rest. Nothing about a marker should need a special case in the
-panel once it has a name.
+Named like the rest, renamed like the rest, carrying the same per-link settings as
+the rest. Once it has a name, nothing about a marker should need a special case.
 
 ## What ticket 03 already did
 
@@ -63,18 +70,17 @@ panel once it has a name.
 shows what it was called before, and the filter matches either. That mechanism
 does not change — this ticket changes what "what it was called before" *is*.
 
-**Blocked by:** 02, 03 — 02 owns `store.lua` and the migration lands there; 03
-owns the row and the filter.
+**Blocked by:** 03 — it owns `panel.lua`'s row and the filter, and this edits the
+same function. No longer blocked by 02: there is no migration.
 
 **Status:** ready-for-agent
 
-- [ ] The editor's element id is persisted with the Map Entity
-- [ ] A database written before this opens, migrates, and keeps its entities
-- [ ] A row's default name is the editor's id: `ped (1)`, `object (4)`
-- [ ] Two entities of the same model read as two different rows
-- [ ] A marker has a name, and it comes from the same place as every other type
-- [ ] A marker can be renamed, and carries the same per-link settings as the rest
-- [ ] An entity with no editor id still gets an honest name, not a fake one
+- [ ] A row's default name is its `entity_id`, as the editor wrote it
+- [ ] Two peds of one skin read as `ped (1)` and `ped (2)`
+- [ ] A marker has a name, from the same place as every other type
+- [ ] A marker can be renamed and carries the same per-link settings as the rest
+- [ ] No schema change and no migration: the value is already stored
+- [ ] An entity whose `entity_id` is not an editor name still reads honestly
 - [ ] A given name still replaces the default, and the original is still shown
 - [ ] The filter matches a ped by its skin number
 - [ ] The filter matches a skin name where one can be had

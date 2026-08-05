@@ -41,6 +41,18 @@ it dumps into and play-tests from. They ended up in ANKIGTA's store as maps, and
 an entity adopted out of a play-test is a Spatial Link pointing at a copy that
 stops existing when the test does.
 
+This is not hypothetical. A read of the owner's live store on 2026-08-05 found
+**every stored Map Entity on one or the other** — nothing has been adopted from a
+real map at all:
+
+```
+('editor_test', 'ped (1)',                       'ped')
+('editor_test', 'object (sw_hedstones) (1)',     'object')
+('editor_test', 'vehicle (Clover) (1)',          'vehicle')
+('editor_test', 'vehicle (Glendale Damaged) (1)','vehicle')
+('editor_dump', 'object (vgsSstairs04_lvs) (1)', 'object')
+```
+
 Not adopting from them again is the fix. What to do about the ones already stored
 is a decision, and it is not deletion: a Map Entity carries a link the player made
 deliberately and may have made against an object they still have. Report them as

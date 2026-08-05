@@ -56,6 +56,12 @@ first wave got its shape.
 | 38 | Markers are ordinary Map Entities, renamable | 07 |
 | 39 | A row is named `ped (1)`, the way the editor names it | 07 |
 
+**07 turned out to be the cheapest of the seven.** The editor's name for an
+entity is already its `entity_id` in ANKIGTA's own store — `ped (1)`,
+`marker (corona) (1)`, `object (sw_hedstones) (1)` — verified against the live
+database. The panel derives a name from the model number instead of showing the
+one it holds. No schema change, no migration.
+
 Two more, carried from the previous wave and not in the owner's numbered list:
 the Map Entity list's ergonomics (single-click camera, arrow keys, a renamed
 entity still showing its original name) are in **03**; `Review mode: Show text`
