@@ -308,6 +308,18 @@ def test_a_ped_is_found_by_its_skin_number(f7: MtaSandbox) -> None:
     assert matching(f7, entries, "105") == ["ped (1)"]
 
 
+def test_skin_zero_is_a_skin_like_any_other(f7: MtaSandbox) -> None:
+    """Skin 0 is CJ, and it is the skin every ped in the owner's own store
+    wears. A marker's absent model is stored as 0 too, so a guard written as
+    `model > 0` reads the two as one thing and makes that ped unfindable."""
+    entries = [
+        entry("ped (1)", kind="ped", model=0),
+        entry("ped (2)", kind="ped", model=7),
+    ]
+
+    assert matching(f7, entries, "0") == ["ped (1)"]
+
+
 def test_a_model_name_is_found_where_mta_has_one(f7: MtaSandbox) -> None:
     """`CModelNames` holds the object table and vehicles 400-610. Where it can
     name a model, that name is a second way to the row -- and the editor has
@@ -320,6 +332,30 @@ def test_a_model_name_is_found_where_mta_has_one(f7: MtaSandbox) -> None:
 
     assert matching(f7, entries, "infernus") == ["at_9d1f4c2b7a"]
     assert matching(f7, entries, "gate_model") == ["at_0000000000"]
+
+
+def test_mta_has_no_name_for_a_ped_skin_to_be_searched_by(f7: MtaSandbox) -> None:
+    """"Where one can be had" is the whole of the ticket's second search
+    criterion, and for a ped there is none to be had.
+
+    Both doubles follow the MTA source: `CModelNames::InitializeMaps` loads the
+    object table, vehicles 400-610 and the clothes tables and no peds at all,
+    and `CVehicleNames::GetVehicleName` indexes `VehicleNames[model - 400]`. So
+    the skin *number* is the whole of what a ped can be found by, and nothing is
+    shipped to invent a word for it.
+    """
+    answers = f7.eval(
+        """
+        function(skin)
+            return {
+                engine = engineGetModelNameFromID(skin),
+                vehicle = getVehicleNameFromModel(skin),
+            }
+        end
+        """
+    )(105)
+
+    assert f7.to_python(answers) == {"engine": False, "vehicle": False}
 
 
 def test_a_ped_and_a_marker_are_never_asked_about_as_objects(

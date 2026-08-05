@@ -647,42 +647,59 @@ local function editorName(entry)
     return ANKIGTA.Locale.text("f7.entity.unnamed")
 end
 
+--- Which MTA call, if any, can put a name to this type's model.
+--
+-- One table rather than a type test at each call, because the two answers are
+-- one fact -- what `CModelNames` holds -- and stating it twice is how the two
+-- come to disagree. A type absent from here has no name to be had: MTA has none
+-- for a ped skin at all, there is no ped table in `CModelNames`, and no id->name
+-- table is shipped to invent one.
+--
+-- Named at call time rather than captured: an incremental client reload can
+-- hand this script to a client before the engine functions are in scope.
+local MODEL_NAME_SOURCE = {
+    -- 400-611, which is the vehicle range and a little past what `CModelNames`
+    -- knows.
+    vehicle = function(model)
+        return getVehicleNameFromModel and getVehicleNameFromModel(model)
+    end,
+    -- `CModelNames` holds the object table, and answers `false` *and* logs
+    -- `Expected valid model ID` for anything outside it -- which is what filled
+    -- the client log with a warning per ped per snapshot when every type was
+    -- asked.
+    object = function(model)
+        return engineGetModelNameFromID and engineGetModelNameFromID(model)
+    end,
+}
+
 --- What MTA can tell us about the model, for the filter and never for the row.
 --
 -- Not a name for the thing -- `editorName` is that -- but a fact about it, and
 -- one a player searches by: the skin number finds the ped wearing it, and
--- "Infernus" finds the car. "" where there is nothing to be had.
+-- "Infernus" finds the car. Empty where there is nothing to be had.
 --
 -- Client-side because that is where the model tables are: the server has no
 -- `engineGetModelNameFromID`.
 local function modelSearchTerms(entry)
     local mapEntity = entry.mapEntity
-    local model = tonumber(mapEntity.model)
-    if not model or model <= 0 then
-        -- A marker has no model on the real server -- `getElementModel`
-        -- answers `false` -- and is stored as 0. There is nothing to ask about.
+    -- A marker has no model at all: `getElementModel` answers `false` on the
+    -- real server, and the NOT NULL column stores that as 0. Asked by type
+    -- rather than by the number, because **skin 0 is a real ped** -- it is the
+    -- skin in the owner's own store -- and a guard on `model > 0` would have
+    -- made exactly that ped unfindable.
+    if mapEntity.type == "marker" then
         return {}
     end
-    -- The number itself. A ped is not *named* by its skin, but it is still
-    -- found by it, and MTA has no name for a skin to find it by instead: there
-    -- is no ped table in `CModelNames` and no API that answers for one. No
-    -- id->name table is shipped to invent one.
-    local terms = {tostring(model)}
-    if mapEntity.type == "vehicle" and getVehicleNameFromModel then
-        local name = getVehicleNameFromModel(model)
-        if type(name) == "string" and name ~= "" then
-            terms[#terms + 1] = name
-        end
+    local model = tonumber(mapEntity.model)
+    if not model then
+        return {}
     end
-    -- `engineGetModelNameFromID` reads `CModelNames`, which holds the object
-    -- table and the vehicle names for 400-610 -- and no peds at all. Asked
-    -- about anything outside it, it answers `false` *and* logs `Expected valid
-    -- model ID`, which is what filled the client log with a warning per ped per
-    -- snapshot. So only the two types it can answer about are asked.
-    if (mapEntity.type == "object" or mapEntity.type == "vehicle")
-        and engineGetModelNameFromID
-    then
-        local name = engineGetModelNameFromID(model)
+    local terms = {tostring(model)}
+    local source = MODEL_NAME_SOURCE[mapEntity.type]
+    -- Model 0 is not in `CModelNames` under any type, so asking about one is
+    -- the warning again for no answer.
+    if source and model > 0 then
+        local name = source(model)
         if type(name) == "string" and name ~= "" then
             terms[#terms + 1] = name
         end

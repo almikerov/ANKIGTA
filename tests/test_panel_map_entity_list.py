@@ -701,6 +701,9 @@ def test_a_marker_is_taken_in_and_settled_like_every_other_type(
     ).fetchone()
     assert stored is not None, "a marker was offered and could not be taken in"
     assert stored[0] == "marker"
+    # `model` is NOT NULL and a marker has none, so it is stored as 0 -- which
+    # is also why nothing may derive a name or a search term from it.
+    assert stored[1] == 0
 
     settings = server.connection.raw.execute(
         "SELECT name, radius_override FROM map_entity_metadata"
@@ -807,6 +810,8 @@ def test_the_row_a_player_reads_says_what_the_editor_wrote(
     known = install_resource_world(
         server, current_resource="current-map", duplicate_entity_id="already-here"
     )
+    player = server.add_study_player()
+    player["x"], player["y"], player["z"] = 0, 0, 0
     for kind, name, model in (
         ("ped", "ped (1)", 0),
         ("ped", "ped (2)", 0),
@@ -814,8 +819,6 @@ def test_the_row_a_player_reads_says_what_the_editor_wrote(
     ):
         placed = server.add_world_element(kind, map_id=name, model=model)
         placed["__parent"] = known["__parent"]
-        player = server.add_study_player()
-        player["x"], player["y"], player["z"] = 0, 0, 0
         server.trigger(
             "ankigta:updateEntityMetadata",
             server.lua.globals().resourceRoot,

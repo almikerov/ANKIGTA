@@ -1805,6 +1805,13 @@ function Store.adoptMapEntity(value)
     -- offers them and the spatial poll follows them -- and adoption still
     -- refused, so a marker could be pointed at and never taken in. It could
     -- not be named, and had no row to carry a radius or a corona.
+    --
+    -- Read here rather than hoisted to a `local` at the top of the file, which
+    -- is what every other consumer does. `meta.xml` loads
+    -- `shared/entity_types.lua` before this file, so the table is always there
+    -- by the time anything calls this -- but this store is also loaded on its
+    -- own, by whoever wants a database and nothing else, and a top-level read
+    -- would fail the whole chunk for them rather than this one call.
     if not ANKIGTA.EntityTypes.supported[value.entityType] then
         return false, "target_type_not_supported"
     end
