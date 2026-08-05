@@ -488,3 +488,91 @@ def test_every_setting_is_writable_by_exactly_one_side_unless_local(
             assert set(writers) >= {"server", "client"}, name
         else:
             assert len(writers) == 1, f"{name} writable by {writers}"
+
+
+# --- a colour is a value the schema knows about ------------------------------
+#
+# Nothing in the schema is a colour yet: tickets 04 and 06 each add one. The
+# rule ships here because the picker that chooses one does, and because a rule
+# added alongside its first setting would be a rule written twice. Until then
+# it is exercised against a schema entry the test adds, which is exactly what
+# those tickets will add for real.
+
+
+def with_a_colour(sandbox: MtaSandbox, **definition: Any) -> None:
+    sandbox.eval(
+        """
+        function(key, default)
+            ANKIGTA.Settings.schema[key] = {
+                authority = ANKIGTA.Settings.SERVER,
+                default = default,
+                rule = {kind = "color"},
+            }
+        end
+        """
+    )(definition["key"], definition["default"])
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["#000000", "#ffffff", "#38bdf8", "#FFAA00"],
+)
+def test_a_colour_is_accepted_as_six_hex_digits(
+    settings: MtaSandbox, value: str
+) -> None:
+    with_a_colour(settings, key="coronaColor", default="#38bdf8")
+
+    assert validate(settings, "coronaColor", value) is True
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["#38bdf", "38bdf8", "#38bdf8f", "#3z3z3z", "rebeccapurple", 16711680, ""],
+)
+def test_anything_that_is_not_a_colour_is_refused_with_a_reason(
+    settings: MtaSandbox, value: Any
+) -> None:
+    """Half a hex code is not a colour, and a control that quietly picks black
+    on a typo is worse than one that says no."""
+    with_a_colour(settings, key="coronaColor", default="#38bdf8")
+
+    ok, why = validate(settings, "coronaColor", value)
+
+    assert ok is False
+    assert why == "settings.error.not_a_color"
+
+
+def test_a_colour_is_stored_under_one_spelling(settings: MtaSandbox) -> None:
+    """`#FFAA00` and `#ffaa00` compared as text are two stored values for one
+    colour, which is a comparison that starts reporting changes nobody made."""
+    with_a_colour(settings, key="coronaColor", default="#38bdf8")
+
+    normalized = settings.eval(
+        "function(k, v) return ANKIGTA.Settings.normalize(k, v) end"
+    )("coronaColor", "#FFAA00")
+
+    assert normalized == "#ffaa00"
+
+
+def test_the_reason_a_colour_is_refused_has_words_behind_it(
+    locale: MtaSandbox,
+) -> None:
+    """A reason the user cannot read is not a reason."""
+    words = locale.eval(
+        "function(k) return ANKIGTA.Locale.text(k) end"
+    )("settings.error.not_a_color")
+
+    assert words != "settings.error.not_a_color"
+
+
+def test_the_camera_setting_belongs_to_the_player_and_is_on_by_default(
+    settings: MtaSandbox,
+) -> None:
+    """Selecting a row and looking at it are the same intention almost every
+    time, and where one player's camera goes is one player's machine's answer.
+    """
+    assert can_write(settings, "client", "focusOnSelect") is True
+    assert can_write(settings, "server", "focusOnSelect") is not True
+    assert settings.eval(
+        "function() return ANKIGTA.Settings.default('focusOnSelect') end"
+    )() is True

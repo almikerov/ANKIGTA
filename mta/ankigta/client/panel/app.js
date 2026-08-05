@@ -34,6 +34,10 @@
     for (var j = 0; j < hints.length; j += 1) {
       hints[j].placeholder = t(hints[j].getAttribute("data-i18n-placeholder"));
     }
+    var titles = document.querySelectorAll("[data-i18n-title]");
+    for (var k = 0; k < titles.length; k += 1) {
+      titles[k].title = t(titles[k].getAttribute("data-i18n-title"));
+    }
   }
 
   var selected = {mapId: false, entityId: false, cardId: false};
@@ -64,9 +68,253 @@
     return node;
   }
 
+  /* --- everything that offers a choice is drawn in the page ---------------
+   *
+   * A `<select>` opens a *native* popup, and this page has nowhere to put one:
+   * MTA blits CEF's popup surface only while it fits inside the browser
+   * rectangle and drops it whole otherwise, so the list vanishes exactly when
+   * it grows. That is what "clicking a dropdown shows nothing" was, and it is
+   * the same wall `<input type="color">` hit.
+   *
+   * So: one component, used by the deck, the Cards/Notes switch and every
+   * choice in Settings. Two dropdowns where one is native and one is drawn
+   * would look and behave differently for no reason a player could name.
+   */
+
+  /* The one popup that is open, if any. Opening a second closes the first, and
+   * Escape closes it rather than the panel behind it. */
+  var openPopup = null;
+
+  /* How much room a list keeps clear of the window's edge, and how little room
+   * below is too little to open into. */
+  var MENU_MARGIN = 8;
+  var MENU_MIN_ROOM = 120;
+
+  function closeOpenPopup() {
+    if (openPopup) openPopup.open(false);
+  }
+
+  /** A button and the surface it opens, drawn inside the page. */
+  function drawnPopup(name) {
+    var root = element("div", "picker");
+    /* The control *is* the button, so a click anywhere on it opens the list.
+     * The defect this replaces is one that opened only where a native widget
+     * happened to draw its arrow. */
+    var button = element("button", "picker-button");
+    button.type = "button";
+    button.setAttribute("aria-haspopup", "listbox");
+    button.setAttribute("aria-expanded", "false");
+    button.setAttribute("data-picker", name);
+    var panel = element("div", "picker-panel");
+    panel.hidden = true;
+    root.appendChild(button);
+    root.appendChild(panel);
+
+    /* Placed against the window rather than against the button's own box.
+     *
+     * An absolutely positioned list is clipped by any scroller between it and
+     * its containing block, and `.settings-rows` is exactly that — so a choice
+     * near the bottom of Settings would have opened a list that was cut off,
+     * which is the defect this whole component exists to remove, rebuilt in
+     * CSS. `position: fixed` has the window for a containing block, and no
+     * ancestor here creates one for it (no transform, filter or contain).
+     *
+     * It opens downwards where there is room and upwards where there is not:
+     * the panel is a window inside a game, so "there is not" is common. */
+    function place() {
+      if (!button.getBoundingClientRect) return;
+      var rect = button.getBoundingClientRect();
+      var height = (window.innerHeight || 0);
+      var below = height - rect.bottom - MENU_MARGIN;
+      var above = rect.top - MENU_MARGIN;
+      panel.style.left = rect.left + "px";
+      panel.style.minWidth = rect.width + "px";
+      if (below < MENU_MIN_ROOM && above > below) {
+        panel.style.top = "";
+        panel.style.bottom = (height - rect.top + 2) + "px";
+        panel.style.maxHeight = above + "px";
+      } else {
+        panel.style.bottom = "";
+        panel.style.top = (rect.bottom + 2) + "px";
+        panel.style.maxHeight = below + "px";
+      }
+    }
+
+    var popup = {
+      root: root,
+      button: button,
+      panel: panel,
+      isOpen: function () {
+        return panel.hidden !== true;
+      },
+      open: function (open) {
+        if (open && openPopup && openPopup !== popup) closeOpenPopup();
+        panel.hidden = !open;
+        button.setAttribute("aria-expanded", String(!!open));
+        if (open) {
+          place();
+          openPopup = popup;
+        } else if (openPopup === popup) {
+          openPopup = null;
+        }
+      }
+    };
+    button.addEventListener("click", function (event) {
+      if (event && event.stopPropagation) event.stopPropagation();
+      popup.open(!popup.isOpen());
+    });
+    /* A click inside the surface is the choice being made, not a reason to
+     * close the thing it is being made in. */
+    panel.addEventListener("click", function (event) {
+      if (event && event.stopPropagation) event.stopPropagation();
+    });
+    return popup;
+  }
+
+  /** A list of values, drawn in the page. */
+  function drawnMenu(spec) {
+    var popup = drawnPopup(spec.name);
+    popup.panel.className = "picker-panel picker-menu";
+    popup.panel.setAttribute("role", "listbox");
+
+    var menu = {
+      root: popup.root,
+      button: popup.button,
+      options: [],
+      value: undefined
+    };
+
+    function optionNode(option) {
+      var node = element("button", "picker-option", option.label);
+      node.type = "button";
+      node.setAttribute("role", "option");
+      node.setAttribute("data-value", String(option.value));
+      node.addEventListener("click", function () {
+        popup.open(false);
+        menu.setValue(option.value);
+        spec.onChoose(option.value);
+      });
+      return node;
+    }
+
+    menu.setValue = function (value) {
+      menu.value = value;
+      var label = spec.emptyLabel === undefined ? "" : spec.emptyLabel;
+      for (var i = 0; i < menu.options.length; i += 1) {
+        var chosen = menu.options[i].value === value;
+        if (chosen) label = menu.options[i].label;
+        popup.panel.children[i].setAttribute("aria-selected", String(chosen));
+      }
+      popup.button.textContent = label;
+    };
+
+    /* Rebuilding throws away the surface the player may have open, so callers
+     * do it only when the values themselves changed. */
+    menu.setOptions = function (options) {
+      menu.options = options;
+      popup.panel.textContent = "";
+      for (var i = 0; i < options.length; i += 1) {
+        popup.panel.appendChild(optionNode(options[i]));
+      }
+      menu.setValue(menu.value);
+    };
+
+    return menu;
+  }
+
+  /* Swatches enough to pick from at a glance, and a hex box for everything
+   * else. Drawn here for the same reason the lists are: an `<input
+   * type="color">` opens a native dialog that has nowhere to appear over a
+   * page rendered offscreen into a game window. */
+  var SWATCHES = [
+    "#ffffff", "#f8fafc", "#94a3b8", "#020617",
+    "#38bdf8", "#2563eb", "#22c55e", "#84cc16",
+    "#fbbf24", "#f97316", "#ef4444", "#a855f7"
+  ];
+
+  function isColor(value) {
+    return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value);
+  }
+
+  /** A colour, chosen the same way a value from a list is. */
+  function colorPicker(spec) {
+    var popup = drawnPopup(spec.name);
+    popup.panel.className = "picker-panel picker-colors";
+    var swatch = element("span", "swatch");
+    var shown = element("span", "picker-color-value");
+    popup.button.appendChild(swatch);
+    popup.button.appendChild(shown);
+
+    var picker = {root: popup.root, button: popup.button, value: false};
+
+    function choose(value) {
+      if (!isColor(value)) {
+        /* Refused rather than guessed at: half a hex code is not a colour, and
+         * a control that quietly picks black on a typo is worse than one that
+         * says no. */
+        hex.setAttribute("aria-invalid", "true");
+        return;
+      }
+      hex.setAttribute("aria-invalid", "false");
+      picker.setValue(value);
+      popup.open(false);
+      spec.onChoose(picker.value);
+    }
+
+    function swatchNode(value) {
+      var node = element("button", "swatch-option");
+      node.type = "button";
+      node.setAttribute("data-value", value);
+      node.style.background = value;
+      node.addEventListener("click", function () {
+        choose(value);
+      });
+      return node;
+    }
+
+    var grid = element("div", "swatch-grid");
+    for (var i = 0; i < SWATCHES.length; i += 1) {
+      grid.appendChild(swatchNode(SWATCHES[i]));
+    }
+    popup.panel.appendChild(grid);
+
+    var hexLabel = element("label", "picker-hex");
+    hexLabel.appendChild(element("span", null, t("settings.colorHex")));
+    var hex = document.createElement("input");
+    hex.type = "text";
+    hex.setAttribute("data-color-hex", spec.name);
+    hex.addEventListener("change", function () {
+      choose(hex.value);
+    });
+    hexLabel.appendChild(hex);
+    popup.panel.appendChild(hexLabel);
+
+    picker.setValue = function (value) {
+      picker.value = isColor(value) ? String(value).toLowerCase() : false;
+      swatch.style.background = picker.value || "transparent";
+      shown.textContent = picker.value || t("common.empty");
+      if (hex.value !== picker.value) hex.value = picker.value || "";
+      popup.button.setAttribute("data-value", picker.value || "");
+    };
+    picker.setValue(spec.value);
+    return picker;
+  }
+
+  /* --- the Map Entity list ---------------------------------------------- */
+
+  /* The rows as they are on screen, in the order they are drawn. Kept so the
+   * arrow keys can step from one to the next without asking Lua which row is
+   * where. */
+  var rowNodes = [];
+
+  /* Whether selecting a row also points the camera at it. The player's, and
+   * pushed with the state like everything else here. */
+  var focusOnSelect = true;
+
   function renderRows(entities) {
     var host = document.getElementById("rows");
     host.textContent = "";
+    rowNodes = [];
     if (!entities || entities.length === 0) {
       host.appendChild(element("p", "empty", t("panel.entities.empty")));
       return;
@@ -84,6 +332,18 @@
       primary.appendChild(
         element("span", "sub", entry.description || "")
       );
+      /* A cosmetic name replaces the model name, which is the point — but the
+       * model name is the only thing tying this row to what the player sees in
+       * the Map Editor, so the row keeps saying it. */
+      if (entry.originalName) {
+        primary.appendChild(
+          element(
+            "span",
+            "sub original-name",
+            t("f7.entity.originalName").replace("%s", entry.originalName)
+          )
+        );
+      }
       row.appendChild(primary);
 
       row.appendChild(element("span", "type", entry.type));
@@ -101,7 +361,20 @@
         row.className = "row selected";
       }
       bindSelect(row, entry);
+      rowNodes.push({entry: entry, node: row});
       host.appendChild(row);
+    }
+  }
+
+  /* Selecting a row and looking at it are the same intention almost every
+   * time: the reason to select a row is to decide something about the thing it
+   * names, and that decision needs the thing on screen. Because "almost every
+   * time" is not "every time", `focusOnSelect` turns the camera half off and
+   * leaves the click selecting. */
+  function selectRow(entry) {
+    send("select", {mapId: entry.mapId, entityId: entry.entityId});
+    if (focusOnSelect) {
+      send("focusEntity", {mapId: entry.mapId, entityId: entry.entityId});
     }
   }
 
@@ -110,69 +383,110 @@
    * quietly start pointing at a different Map Entity. */
   function bindSelect(row, entry) {
     row.addEventListener("click", function () {
-      send("select", {mapId: entry.mapId, entityId: entry.entityId});
-    });
-    row.addEventListener("dblclick", function () {
-      send("focusEntity", {mapId: entry.mapId, entityId: entry.entityId});
+      selectRow(entry);
     });
   }
 
+  function selectedRowIndex() {
+    for (var i = 0; i < rowNodes.length; i += 1) {
+      if (rowNodes[i].entry.mapId === selected.mapId
+          && rowNodes[i].entry.entityId === selected.entityId) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /* Up and down move the selection, and the row moved onto is brought back
+   * into sight. A list reachable only by pointing gets slower the longer it
+   * is, and this one is meant to grow. */
+  function moveSelection(step) {
+    if (rowNodes.length === 0) return;
+    var index = selectedRowIndex();
+    var next = index === -1
+      ? (step > 0 ? 0 : rowNodes.length - 1)
+      : Math.min(rowNodes.length - 1, Math.max(0, index + step));
+    var target = rowNodes[next];
+    if (target.node.scrollIntoView) {
+      target.node.scrollIntoView({block: "nearest"});
+    }
+    selectRow(target.entry);
+  }
+
+  /* --- the Card Picker --------------------------------------------------- */
+
   /* A deck is chosen, not typed. The chosen value lives here rather than on a
-   * control, because the control is a button and a list of buttons now. */
+   * control, because the control is a drawn list now. */
   var chosenDeck = "";
   var lastDeckList = null;
 
-  function deckMenuOpen(open) {
-    document.getElementById("deck-menu").hidden = !open;
-    document.getElementById("deck").setAttribute("aria-expanded", String(!!open));
-  }
-
-  function chooseDeck(name) {
-    chosenDeck = name;
-    document.getElementById("deck").textContent = name || t("cardPicker.anyDeck");
-    deckMenuOpen(false);
-  }
+  var deckMenu = drawnMenu({
+    name: "deck",
+    emptyLabel: "",
+    onChoose: function (name) {
+      chosenDeck = name;
+      submitSearch();
+    }
+  });
+  document.getElementById("deck-picker").appendChild(deckMenu.root);
 
   function renderDecks(picker) {
     var decks = (picker && picker.decks) || [];
-    var signature = JSON.stringify(decks);
+    /* The words matter as well as the names: the first state carries both the
+     * deck list and the string table, and a signature over the names alone
+     * would leave "Every deck" reading as its own key forever. */
+    var signature = JSON.stringify([decks, t("cardPicker.anyDeck")]);
     /* Rebuilt only when the list actually changed, so an open menu is not
      * yanked shut by an unrelated redraw. */
-    if (signature === lastDeckList) return;
-    lastDeckList = signature;
-
-    var menu = document.getElementById("deck-menu");
-    menu.textContent = "";
-    var names = [""].concat(decks);
-    for (var i = 0; i < names.length; i += 1) {
-      menu.appendChild(deckOption(names[i]));
+    if (signature !== lastDeckList) {
+      lastDeckList = signature;
+      var options = [{value: "", label: t("cardPicker.anyDeck")}];
+      for (var i = 0; i < decks.length; i += 1) {
+        options.push({value: decks[i], label: decks[i]});
+      }
+      deckMenu.setOptions(options);
     }
     /* What the server says the filter is beats what was left in the control:
      * they disagree only when somebody else changed it. */
     chooseDeck((picker && picker.deckFilter) || chosenDeck || "");
   }
 
-  function deckOption(name) {
-    var option = element("button", "picklist-option", name || t("cardPicker.anyDeck"));
-    option.type = "button";
-    option.setAttribute("role", "option");
-    option.setAttribute("data-deck", name);
-    option.addEventListener("click", function () {
-      chooseDeck(name);
-      submitSearch();
-    });
-    return option;
+  function chooseDeck(name) {
+    chosenDeck = name;
+    deckMenu.setValue(name);
   }
 
-  /* Cards or notes is one of two, so it is a switch rather than a list to open.
-   * The button says which it currently is, as every other toggle here does. */
+  /* Cards or notes is one of two, and it is a drawn list for the same reason
+   * the deck is: a switch and a dropdown side by side are two controls the
+   * player has to learn separately. */
   var chosenScope = "cards";
+  var scopeLabels = null;
+
+  var scopeMenu = drawnMenu({
+    name: "scope",
+    onChoose: function (scope) {
+      chooseScope(scope);
+      submitSearch();
+    }
+  });
+  document.getElementById("scope-picker").appendChild(scopeMenu.root);
+
+  function refreshScopeOptions() {
+    var labels = JSON.stringify([
+      t("cardPicker.scope.cards"),
+      t("cardPicker.scope.notes")
+    ]);
+    if (labels === scopeLabels) return;
+    scopeLabels = labels;
+    scopeMenu.setOptions([
+      {value: "cards", label: t("cardPicker.scope.cards")},
+      {value: "notes", label: t("cardPicker.scope.notes")}
+    ]);
+  }
 
   function chooseScope(scope) {
     chosenScope = scope === "notes" ? "notes" : "cards";
-    var button = document.getElementById("scope");
-    button.textContent = t("cardPicker.scope." + chosenScope);
-    button.setAttribute("aria-pressed", String(chosenScope === "notes"));
+    scopeMenu.setValue(chosenScope);
   }
 
   /* The expression the rows are an answer to, and whether a row is a card or
@@ -198,6 +512,7 @@
 
   function renderCards(picker) {
     selectedCardLabel = "";
+    refreshScopeOptions();
     renderSearch(picker);
     renderDecks(picker);
     var host = document.getElementById("cards");
@@ -321,6 +636,74 @@
     return null;
   }
 
+  /* --- the pane that edits the selected Map Entity ----------------------- */
+
+  /* What Lua last reported about the selected row, so a redraw reporting the
+   * same thing does not wipe what is half-typed into these boxes. */
+  var reportedEntity = null;
+
+  /* On screen whether or not a row is selected. It used to appear with the
+   * selection and vanish with it, so the panel jumped every time the player
+   * moved down the list; the fields are disabled rather than removed, which
+   * keeps their place, and the pane says why it is empty. */
+  function renderEntityPane(entity) {
+    var empty = document.getElementById("entity-empty");
+    var name = document.getElementById("entity-name");
+    var radius = document.getElementById("entity-radius");
+    var mark = document.getElementById("entity-radius-inherited");
+    var drawNow = document.getElementById("entity-draw-now");
+    var drawAlways = document.getElementById("entity-draw-always");
+
+    /* What these three say comes from `applyLocale`, like every other fixed
+     * word on the page; what this decides is which of them are on screen and
+     * whether the fields can be typed into. */
+    empty.hidden = !!entity;
+    name.disabled = !entity;
+    radius.disabled = !entity;
+    drawNow.disabled = !entity;
+    drawAlways.disabled = !entity;
+
+    if (!entity) {
+      reportedEntity = null;
+      name.value = "";
+      radius.value = "";
+      radius.setAttribute("data-inherited", "false");
+      mark.hidden = true;
+      drawNow.checked = false;
+      drawAlways.checked = false;
+      return;
+    }
+
+    var reported = JSON.stringify([
+      entity.mapId,
+      entity.entityId,
+      entity.givenName || "",
+      entity.radius,
+      entity.radiusInherited === true
+    ]);
+    if (reported !== reportedEntity) {
+      reportedEntity = reported;
+      /* The name the player typed, never the model name standing in for it: a
+       * box pre-filled with "Infernus" is a box that will store "Infernus" the
+       * first time anybody touches it. */
+      name.value = entity.givenName || "";
+      /* The value actually in force, whether it is this entity's own or the
+       * global it follows. An empty box was meant to read as "whatever
+       * Settings says" and reads as no value at all. */
+      radius.value = entity.radius;
+    }
+    /* Shown, and said: a number that came from Settings looks exactly like a
+     * number somebody chose. */
+    radius.setAttribute("data-inherited", String(entity.radiusInherited === true));
+    mark.hidden = entity.radiusInherited !== true;
+    drawNow.checked = entity.drawNow === true;
+    /* Independent of the look: "always" is a standing answer about the entity,
+     * so it can be given without first asking to see the zone. */
+    drawAlways.checked = entity.showAlways === true;
+  }
+
+  /* --- the card editor --------------------------------------------------- */
+
   /* The note behind the selected card: what it says, and what the player has
    * typed into it. Rebuilt only when a different note arrives, so typing is
    * not thrown away by an unrelated redraw -- a state push happens whenever
@@ -440,14 +823,44 @@
     node.hidden = false;
   }
 
-  /* One row per setting, built from what Lua sent rather than from a list
-   * kept here: a setting added to the schema appears by existing. */
+  /* --- settings ---------------------------------------------------------- */
+
+  /* One row per setting, built from what Lua sent rather than from a list kept
+   * here: a setting added to the schema appears by existing.
+   *
+   * Rebuilt only when the *shape* changes. A state push happens whenever
+   * anything at all changes, and rebuilding on each of them took an open list
+   * down with the row it was in and wiped whatever was half-typed into the
+   * field beside it. */
+  var settingsShape = null;
+  var settingsControls = {};
+
+  function settingsSignature(rows) {
+    return JSON.stringify(rows.map(function (row) {
+      return [
+        row.kind, row.key, row.mapId || "", row.labelKey || "",
+        row.labelText || "", row.options || false,
+        row.min, row.max, row.step
+      ];
+    }));
+  }
+
   function renderSettings(settings) {
-    var host = document.getElementById("settings-rows");
-    host.textContent = "";
     var rows = (settings && settings.rows) || [];
-    for (var i = 0; i < rows.length; i += 1) {
-      host.appendChild(settingRow(rows[i]));
+    var signature = settingsSignature(rows);
+    if (signature !== settingsShape) {
+      settingsShape = signature;
+      settingsControls = {};
+      var host = document.getElementById("settings-rows");
+      host.textContent = "";
+      for (var i = 0; i < rows.length; i += 1) {
+        host.appendChild(settingRow(rows[i]));
+      }
+      return;
+    }
+    for (var j = 0; j < rows.length; j += 1) {
+      var control = settingsControls[settingId(rows[j])];
+      if (control) control.apply(rows[j]);
     }
   }
 
@@ -462,8 +875,23 @@
     return t(row.labelKey || "settings." + row.key);
   }
 
+  function settingClass(row) {
+    return (row.mapId ? "setting per-map" : "setting")
+      + (row.error ? " invalid" : "");
+  }
+
   function settingRow(row) {
-    var wrap = element("div", "setting");
+    /* A group's heading and the line that says there is nothing under it are
+     * text, not controls: giving them a label and an empty field would offer
+     * something to change where there is nothing. */
+    if (row.kind === "heading") {
+      return element("h3", "setting-heading", settingLabel(row));
+    }
+    if (row.kind === "note") {
+      return element("p", "setting-note", settingLabel(row));
+    }
+    var wrap = element("div", settingClass(row));
+    wrap.setAttribute("data-setting", row.key);
     var label = element("label", "setting-label");
     label.setAttribute("for", settingId(row));
     label.appendChild(element("span", null, settingLabel(row)));
@@ -475,45 +903,99 @@
       );
     }
     wrap.appendChild(label);
-    wrap.appendChild(settingControl(row));
 
     /* The reason sits under the field it belongs to, and announces itself:
      * a red border is not a message a screen reader receives. */
-    var error = element("p", "field-error", row.error ? t(row.error) : "");
+    var error = element("p", "field-error", "");
     error.setAttribute("role", "alert");
-    error.hidden = !row.error;
+
+    var control = settingControl(row, wrap, error);
+    wrap.appendChild(control.node);
     wrap.appendChild(error);
-    if (row.error) wrap.className += " invalid";
+    settingsControls[settingId(row)] = control;
+    control.apply(row);
     return wrap;
   }
 
-  function settingControl(row) {
+  function settingControl(row, wrap, error) {
+    /* The row as last reported. Every handler reads it from here rather than
+     * closing over the row it was built with, so a control still sends the
+     * current value after a redraw that did not rebuild it. */
+    var control = {row: row};
+
+    function applyCommon(next) {
+      control.row = next;
+      wrap.className = settingClass(next);
+      error.textContent = next.error ? t(next.error) : "";
+      error.hidden = !next.error;
+    }
+
     if (row.kind === "boolean") {
       var toggle = element("button", "toggle");
       toggle.type = "button";
       toggle.id = settingId(row);
-      toggle.textContent = t("settings.value." + String(row.value));
-      toggle.setAttribute("aria-pressed", String(row.value === true));
       toggle.addEventListener("click", function () {
-        send("setSetting", {key: row.key, value: !row.value});
+        /* The map travels with the change: a per-map setting written without
+         * one is a global value that nothing reads. */
+        send("setSetting", {
+          key: control.row.key,
+          value: !control.row.value,
+          mapId: control.row.mapId
+        });
       });
-      return toggle;
+      control.node = toggle;
+      control.apply = function (next) {
+        applyCommon(next);
+        toggle.textContent = t("settings.value." + String(next.value));
+        toggle.setAttribute("aria-pressed", String(next.value === true));
+      };
+      return control;
     }
+
     if (row.kind === "choice") {
-      var select = document.createElement("select");
-      select.id = settingId(row);
-      for (var i = 0; i < row.options.length; i += 1) {
-        var option = document.createElement("option");
-        option.value = row.options[i];
-        option.textContent = t("settings.value." + row.options[i]);
-        if (row.options[i] === row.value) option.selected = true;
-        select.appendChild(option);
-      }
-      select.addEventListener("change", function () {
-        send("setSetting", {key: row.key, value: select.value});
+      var menu = drawnMenu({
+        name: row.key,
+        onChoose: function (value) {
+          send("setSetting", {
+            key: control.row.key,
+            value: value,
+            mapId: control.row.mapId
+          });
+        }
       });
-      return select;
+      menu.button.id = settingId(row);
+      menu.setOptions((row.options || []).map(function (value) {
+        return {value: value, label: t("settings.value." + value)};
+      }));
+      control.node = menu.root;
+      control.apply = function (next) {
+        applyCommon(next);
+        menu.setValue(next.value);
+      };
+      return control;
     }
+
+    if (row.kind === "color") {
+      var picker = colorPicker({
+        name: row.key,
+        value: row.value,
+        onChoose: function (value) {
+          send("setSetting", {
+            key: control.row.key,
+            value: value,
+            mapId: control.row.mapId
+          });
+        }
+      });
+      picker.button.id = settingId(row);
+      control.node = picker.root;
+      control.apply = function (next) {
+        applyCommon(next);
+        picker.setValue(next.value);
+      };
+      return control;
+    }
+
     var input = document.createElement("input");
     input.id = settingId(row);
     input.type = row.kind === "number" ? "number" : "text";
@@ -522,16 +1004,33 @@
       input.max = row.max;
       input.step = row.step;
     }
-    input.value = row.value === false || row.value === undefined ? "" : row.value;
     /* Validated on blur rather than only on submit: there is no submit here,
      * and finding out on the way out is finding out too late. */
     input.addEventListener("change", function () {
       send("setSetting", {
-        key: row.key,
-        value: row.kind === "number" ? parseFloat(input.value) : input.value
+        key: control.row.key,
+        value: control.row.kind === "number"
+          ? parseFloat(input.value)
+          : input.value,
+        mapId: control.row.mapId
       });
     });
-    return input;
+    /* What Lua last reported for this field. A push that reports the same
+     * thing leaves the box alone, so typing survives every redraw that is not
+     * about this setting. */
+    var reported;
+    control.node = input;
+    control.apply = function (next) {
+      applyCommon(next);
+      var value = next.value === false || next.value === undefined
+        ? ""
+        : String(next.value);
+      if (value !== reported) {
+        reported = value;
+        input.value = value;
+      }
+    };
+    return control;
   }
 
   function show(section) {
@@ -546,6 +1045,7 @@
     applyLocale();
     renderConnection(state.connection || {state: "disconnected"});
     selected = state.selected || {mapId: false, entityId: false, cardId: false};
+    focusOnSelect = state.focusOnSelect !== false;
     renderStudy(state.study || {active: false, resumable: false});
     renderSettings(state.settings);
     lastEntities = state.entities || [];
@@ -601,18 +1101,7 @@
      * writing to it is what takes it into the store. A form that appears only
      * after a card has been linked makes naming a thing a statement about a
      * card. */
-    var settings = document.getElementById("entity-settings");
-    settings.hidden = !entity;
-    if (!settings.hidden) {
-      document.getElementById("entity-name").value = entity.name || "";
-      document.getElementById("entity-radius").value = entity.radius;
-      document.getElementById("entity-draw-now").checked =
-        entity.drawNow === true;
-      /* Independent of the look: "always" is a standing answer about the
-       * entity, so it can be given without first asking to see the zone. */
-      document.getElementById("entity-draw-always").checked =
-        entity.showAlways === true;
-    }
+    renderEntityPane(entity);
 
     renderInspector(state);
     show(state.section);
@@ -688,10 +1177,13 @@
   });
 
   /* The Activation Zone of the selected entity, sent when the field is left
-   * rather than on every keystroke: a half-typed number is not a radius. */
+   * rather than on every keystroke: a half-typed number is not a radius.
+   * Emptied means "follow Settings again" rather than "no radius": nothing is
+   * stored, so a later change to the global moves this entity with it. */
   document.getElementById("entity-radius").addEventListener("change", function () {
+    var typed = document.getElementById("entity-radius").value;
     send("setEntityRadius", {
-      radius: parseFloat(document.getElementById("entity-radius").value)
+      radius: String(typed) === "" ? false : parseFloat(typed)
     });
   });
   document.getElementById("entity-name").addEventListener("change", function () {
@@ -759,18 +1251,7 @@
     event.preventDefault();
     submitSearch();
   });
-  /* A chosen deck and a chosen row-kind apply themselves. Both are dropdowns
-   * whose whole meaning is which rows are below them, and picking a value that
-   * changes nothing until a second button is pressed reads as a broken filter.
-   * The expression keeps the button: it is typed, and searching per keystroke
-   * would ask Anki a question after every letter. */
-  document.getElementById("deck").addEventListener("click", function () {
-    deckMenuOpen(document.getElementById("deck-menu").hidden);
-  });
-  document.getElementById("scope").addEventListener("click", function () {
-    chooseScope(chosenScope === "notes" ? "cards" : "notes");
-    submitSearch();
-  });
+
   function applyConnection() {
     var portText = document.getElementById("port").value;
     var port = portText === "" ? null : Number(portText);
@@ -819,18 +1300,37 @@
     send("dragEnd");
   });
 
-  /* Escape closes, because a panel that traps the cursor and cannot be left is
-   * the defect this replaces. */
+  /* Clicking away from an open list closes it, the way a native one behaved.
+   * The list and the button that opens it stop their own clicks here. */
+  document.addEventListener("click", function () {
+    closeOpenPopup();
+  });
+
+  function typingInto(target) {
+    var tag = target && target.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA";
+  }
+
   document.addEventListener("keydown", function (event) {
-    /* An open menu is what Escape closes first: closing the whole panel out
-     * from under someone who only wanted to back out of a list is not what
-     * they pressed it for. */
-    if (event.key !== "Escape") return;
-    if (!document.getElementById("deck-menu").hidden) {
-      deckMenuOpen(false);
+    /* Escape closes, because a panel that traps the cursor and cannot be left
+     * is the defect this replaces. An open list is what it closes first:
+     * closing the whole panel out from under someone who only wanted to back
+     * out of a list is not what they pressed it for. */
+    if (event.key === "Escape") {
+      if (openPopup) {
+        closeOpenPopup();
+        return;
+      }
+      send("close");
       return;
     }
-    send("close");
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    /* Not while the caret is in a field: down inside a number box is the box's
+     * own, and inside a note field it is the next line. */
+    if (typingInto(event.target)) return;
+    if (document.getElementById("section-entities").hidden) return;
+    if (event.preventDefault) event.preventDefault();
+    moveSelection(event.key === "ArrowDown" ? 1 : -1);
   });
 
   window.ANKIGTA = {receive: receive};

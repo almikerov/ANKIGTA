@@ -88,9 +88,12 @@ def seed_linked_entity(
         (entity_id,),
     )
     connection.execute(
+        # `radius_override` is the one anything reads; `radius` is the NOT NULL
+        # column it was split out of. Seeding only the second would describe an
+        # entity that follows the global, which is not what this fixture means.
         "INSERT OR REPLACE INTO map_entity_metadata (map_id, entity_id, name,"
-        " entity_tag, radius, show_radius, presence_state)"
-        " VALUES ('mymap', ?, 'North bin', 'yard', 7.5, 1, 'identified')",
+        " entity_tag, radius, radius_override, show_radius, presence_state)"
+        " VALUES ('mymap', ?, 'North bin', 'yard', 7.5, 7.5, 1, 'identified')",
         (entity_id,),
     )
     connection.execute(
@@ -257,6 +260,30 @@ def test_removing_is_one_undo_away(server: MtaSandbox) -> None:
     assert raw.execute(
         "SELECT name, radius FROM map_entity_metadata"
     ).fetchall() == [("North bin", 7.5)]
+    assert raw.execute(
+        "SELECT radius_override FROM map_entity_metadata"
+    ).fetchall() == [(7.5,)]
+
+
+def test_undoing_a_removal_puts_back_following_the_global(
+    server: MtaSandbox,
+) -> None:
+    """An entity that had no radius of its own must not come back pinned to
+    whatever the global said at the moment it was removed."""
+    editor_with_map(server)
+    seed_linked_entity(server)
+    raw = server.connection.raw
+    raw.execute("UPDATE map_entity_metadata SET radius_override = NULL")
+    player = study_player(server)
+
+    server.eval(
+        'function(p) return forgetMapEntity(p, "mymap", "object (bin) (1)") end'
+    )(player)
+    server.eval("function() return ANKIGTA.Store.undo() end")()
+
+    assert raw.execute(
+        "SELECT radius_override FROM map_entity_metadata"
+    ).fetchall() == [(None,)]
 
 
 # --- the panel's half ---------------------------------------------------------

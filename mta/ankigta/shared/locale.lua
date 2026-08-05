@@ -34,6 +34,7 @@ Locale.strings = {
         "Open cards when speed lower than:",
     ["settings.reviewMode"] = "Review mode",
     ["settings.indicatorMode"] = "Next Card Indicator",
+    ["settings.focusOnSelect"] = "Look at a Map Entity when I select it",
     ["settings.reviewProtection"] = "Review Protection",
     ["settings.disablePlayerControls"] = "Disable player controls",
     ["settings.closeAfterRating"] = "Close cards after rating",
@@ -48,6 +49,9 @@ Locale.strings = {
     ["settings.connectionSettings"] = "Connection settings…",
     ["settings.value.true"] = "On",
     ["settings.value.false"] = "Off",
+    -- A colour is chosen from swatches drawn in the page, and typed as hex for
+    -- anything the swatches do not offer.
+    ["settings.colorHex"] = "Hex",
     ["settings.value.sphere_and_minimap"] = "Sphere and minimap",
     ["settings.value.minimap_only"] = "Minimap only",
     ["settings.value.none"] = "No marker",
@@ -63,6 +67,7 @@ Locale.strings = {
     ["settings.error.not_a_boolean"] = "Choose on or off",
     ["settings.error.not_a_choice"] = "Choose one of the offered options",
     ["settings.error.not_a_string"] = "Enter text",
+    ["settings.error.not_a_color"] = "Enter a colour as #rrggbb",
     ["settings.error.secret_not_readable"] =
         "This value is never shown again after it is saved",
     ["settings.error.not_a_placement"] =
@@ -175,7 +180,19 @@ Locale.strings = {
     ["f7.entity.unnamed"] = "Unnamed Map Entity",
     -- MTA has no name for a ped skin, so the skin itself is the name.
     ["f7.entity.pedSkin"] = "Ped skin %d",
+    -- A cosmetic name replaces the model name, which is the point -- but the
+    -- model name is the only thing tying the row to what the Map Editor shows,
+    -- so the row keeps saying it.
+    ["f7.entity.originalName"] = "originally %s",
+    -- The pane is on screen whether or not a row is selected, so it has to say
+    -- why it is empty rather than being blank.
+    ["f7.noSelection"] = "Select a Map Entity to name it,"
+        .. " or to say how close you must stand to it.",
     ["f7.radius"] = "Radius (m)",
+    -- No radius of its own: what the box shows is the global, and it says so
+    -- rather than leaving the player to guess whether it was chosen.
+    ["f7.radiusInherited"] = "following Settings",
+    ["f7.radiusClearHint"] = "Empty the box to follow Settings again",
     ["f7.showRadius"] = "Draw radius",
     -- The standing answer, kept on the entity: the world shows it
     -- whether or not F7 is open.

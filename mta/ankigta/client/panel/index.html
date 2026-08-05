@@ -71,25 +71,39 @@
           <button type="button" id="unlink" data-i18n="f7.unlink"></button>
           <button type="button" id="relink" data-i18n="f7.relink"></button>
         </div>
-        <div class="entity-settings" id="entity-settings" hidden>
-          <label class="inline entity-name-control">
-            <span data-i18n="f7.name"></span>
-            <input type="text" id="entity-name" />
-          </label>
-          <h3 data-i18n="f7.activation"></h3>
-          <label class="inline">
-            <span data-i18n="f7.radius"></span>
-            <input type="number" id="entity-radius" min="0.5" max="100"
-                   step="0.5" />
-          </label>
-          <label class="inline check">
-            <input type="checkbox" id="entity-draw-now" />
-            <span data-i18n="f7.showRadius"></span>
-          </label>
-          <label class="inline check">
-            <input type="checkbox" id="entity-draw-always" />
-            <span data-i18n="f7.drawAlways"></span>
-          </label>
+        <!-- On screen whether or not a row is selected. It used to appear with
+             the selection and vanish with it, so the right-hand side of the
+             panel jumped every time the player moved down the list. What it
+             says with nothing selected is `#entity-empty`; the fields below
+             are disabled rather than removed, so their place is kept. -->
+        <div class="entity-settings" id="entity-settings">
+          <p class="empty" id="entity-empty" data-i18n="f7.noSelection"></p>
+          <div class="entity-fields" id="entity-fields">
+            <label class="inline entity-name-control">
+              <span data-i18n="f7.name"></span>
+              <input type="text" id="entity-name" />
+            </label>
+            <h3 data-i18n="f7.activation"></h3>
+            <label class="inline">
+              <span data-i18n="f7.radius"></span>
+              <input type="number" id="entity-radius" min="0.5" max="100"
+                     step="0.5" data-inherited="false"
+                     data-i18n-title="f7.radiusClearHint" />
+              <!-- Shown when the entity has no radius of its own: the box then
+                   holds the global that is actually in force, and this says
+                   that is what it is. -->
+              <span class="inherited-mark" id="entity-radius-inherited"
+                    data-i18n="f7.radiusInherited" hidden></span>
+            </label>
+            <label class="inline check">
+              <input type="checkbox" id="entity-draw-now" />
+              <span data-i18n="f7.showRadius"></span>
+            </label>
+            <label class="inline check">
+              <input type="checkbox" id="entity-draw-always" />
+              <span data-i18n="f7.drawAlways"></span>
+            </label>
+          </div>
         </div>
 
         <!-- Deleted from the map, so it is not a Map Entity any more. The
@@ -119,20 +133,19 @@
         <!-- The expression goes to Anki as written, so the field says so
              rather than inviting a phrase. The switch beside the deck is the
              one Anki's own browser has: it changes what a row below is. -->
-        <!-- The deck list is drawn in the page, not as a native <select>.
+        <!-- Every list here is drawn in the page, not as a native <select>.
              MTA blits CEF's popup surface only while it fits inside the
              browser rectangle and drops it whole otherwise (CWebView.cpp), so
              a native dropdown disappears exactly when it grows — which is to
-             say, as soon as a collection has enough decks to need one. -->
+             say, as soon as a collection has enough decks to need one. The
+             deck and the Cards/Notes switch are mount points rather than
+             markup: one component in `app.js` builds all of them, because two
+             dropdowns that behave differently is the thing being fixed. -->
         <form class="search" id="search">
           <input type="text" id="search-query"
                  data-i18n-placeholder="cardPicker.queryHint" />
-          <div class="picklist">
-            <button type="button" id="deck" aria-haspopup="listbox"
-                    aria-expanded="false"></button>
-            <div class="picklist-menu" id="deck-menu" role="listbox" hidden></div>
-          </div>
-          <button type="button" id="scope" class="toggle"></button>
+          <div id="deck-picker"></div>
+          <div id="scope-picker"></div>
           <button type="submit" class="primary" data-i18n="cardPicker.search"></button>
         </form>
         <div class="rows" id="cards" role="list"></div>

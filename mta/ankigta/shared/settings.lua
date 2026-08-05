@@ -90,6 +90,12 @@ Settings.schema = {
         default = "none",
         rule = choice({"sphere_and_minimap", "minimap_only", "none"}),
     },
+    -- Selecting a row and looking at it are the same intention almost every
+    -- time, so a click does both. "Almost every time" is not "every time" --
+    -- arrowing down fifty rows with the camera flying to each is not a way to
+    -- read a list -- so this is the way to say no. The player's own machine
+    -- decides where the player's own camera goes, hence CLIENT.
+    focusOnSelect = {authority = CLIENT, default = true, rule = toggle()},
     reviewProtection = {authority = CLIENT, default = true, rule = toggle()},
     disablePlayerControls = {authority = CLIENT, default = true, rule = toggle()},
     closeAfterRating = {authority = CLIENT, default = true, rule = toggle()},
@@ -129,6 +135,7 @@ Settings.order = {
     "maxActivationSpeedKmh",
     "reviewMode",
     "indicatorMode",
+    "focusOnSelect",
     "reviewProtection",
     "disablePlayerControls",
     "closeAfterRating",
@@ -340,6 +347,19 @@ function Settings.validate(key, value)
         return true
     end
 
+    -- `#rrggbb`, because that is what the page draws with and what the picker
+    -- it is chosen in hands back. No alpha: opacity is its own setting where
+    -- anything has one, so a colour carrying a fourth channel would be two
+    -- answers to one question.
+    if rule.kind == "color" then
+        if type(value) ~= "string"
+            or not string.find(value, "^#%x%x%x%x%x%x$")
+        then
+            return false, "settings.error.not_a_color"
+        end
+        return true
+    end
+
     if rule.kind == "placement" then
         if type(value) ~= "table" then
             return false, "settings.error.not_a_placement"
@@ -371,6 +391,14 @@ function Settings.normalize(key, value)
     local definition = Settings.schema[key]
     if definition and definition.rule.kind == "number" then
         return tonumber(value)
+    end
+    if definition and definition.rule.kind == "color" then
+        -- One spelling for one colour: `#FFAA00` and `#ffaa00` compared as
+        -- text are two different stored values for the same thing.
+        if type(value) ~= "string" then
+            return value
+        end
+        return string.lower(value)
     end
     if definition and definition.rule.kind == "placement" then
         -- Rebuilt rather than passed through: a placement read back out of

@@ -766,6 +766,7 @@ def test_the_client_may_not_write_a_setting_the_server_owns(
 
 CLIENT_VALUES = {
     "indicatorMode": "sphere_and_minimap",
+    "focusOnSelect": False,
     "reviewProtection": False,
     "disablePlayerControls": False,
     "closeAfterRating": False,

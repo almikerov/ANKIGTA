@@ -230,6 +230,30 @@ local function historyTransaction(operation, target, before, after, steps)
     return true
 end
 
+--- Record whether this entity has an Activation Zone radius of its own.
+--
+-- A statement of its own rather than a column in the insert beside it, because
+-- "it has none" is SQL NULL and `dbExec` takes a parameter *list*: a nil in the
+-- middle of one truncates it and `false` binds as 0, which is a radius of zero
+-- rather than the absence of one. A literal NULL in the statement has neither
+-- problem, and every write of a metadata row goes through here so none of them
+-- can forget the question.
+local function radiusOverrideStep(mapId, entityId, radius)
+    local number = tonumber(radius)
+    if number == nil then
+        return {
+            "UPDATE map_entity_metadata SET radius_override = NULL"
+                .. " WHERE map_id = ? AND entity_id = ?",
+            {mapId, entityId},
+        }
+    end
+    return {
+        "UPDATE map_entity_metadata SET radius_override = ?"
+            .. " WHERE map_id = ? AND entity_id = ?",
+        {number, mapId, entityId},
+    }
+end
+
 local function ensureChangeHistorySchema()
     local created, errorMessage = transaction(Store.connection, {
         {
@@ -262,7 +286,19 @@ local function ensureChangeHistorySchema()
                     entity_id TEXT NOT NULL,
                     name TEXT NOT NULL DEFAULT '',
                     entity_tag TEXT NOT NULL DEFAULT '',
+                    -- Inert. `radius` could not hold "this entity has no
+                    -- radius of its own", because it is NOT NULL -- so naming
+                    -- an entity wrote a copy of the shipped default onto it,
+                    -- and the global it should have been following stopped
+                    -- reaching it. SQLite cannot drop NOT NULL from a column
+                    -- without rebuilding the table, and this one is the child
+                    -- of a foreign key with ON DELETE CASCADE; the column
+                    -- beside it is the cheaper answer and the one this table
+                    -- already grew `presence_state` by.
                     radius REAL NOT NULL DEFAULT 3,
+                    -- NULL means the entity follows the global. Every read
+                    -- goes through this one.
+                    radius_override REAL,
                     show_radius INTEGER NOT NULL DEFAULT 0,
                     presence_state TEXT NOT NULL DEFAULT 'identified'
                         CHECK (presence_state IN ('identified', 'entity_missing')),
@@ -289,14 +325,11 @@ local function ensureChangeHistorySchema()
         if not ok then
             return false, "metadata_schema_read_failed"
         end
-        local hasPresenceState = false
+        local present = {}
         for _, column in ipairs(columns) do
-            if column.name == "presence_state" then
-                hasPresenceState = true
-                break
-            end
+            present[column.name] = true
         end
-        if not hasPresenceState then
+        if not present.presence_state then
             local altered, alterError = execute(
                 Store.connection,
                 [[
@@ -308,6 +341,10 @@ local function ensureChangeHistorySchema()
                 return false, alterError
             end
         end
+        -- `radius_override` is *not* repaired here. It rewrites rows, and
+        -- `docs/operations/backups-and-recovery.md` wants a verified copy
+        -- before anything that does -- which only the migration path takes.
+        -- See `activation_radius_override` in `MIGRATIONS`.
     end
     Store.historyReady = created == true
     return created, errorMessage
@@ -731,6 +768,54 @@ end
 -- A step with no `to` is a shape repair rather than a version step. It bumps
 -- nothing, and its `needed` probe both decides whether it runs and, once it has
 -- run, terminates the loop.
+--- Is there a `map_entity_metadata` that cannot yet say "no radius of my own"?
+--
+-- The table is created by `ensureChangeHistorySchema`, which runs *after*
+-- migrations, so a database that has never had it needs nothing here: it will
+-- be created with the column already on it, and `PRAGMA table_info` of a table
+-- that does not exist answers with no rows.
+local function needsRadiusOverride()
+    local ok, columns = execute(
+        Store.connection,
+        "PRAGMA table_info(map_entity_metadata)"
+    )
+    if not ok or #columns == 0 then
+        return false
+    end
+    for _, column in ipairs(columns) do
+        if column.name == "radius_override" then
+            return false
+        end
+    end
+    return true
+end
+
+--- Give every metadata row somewhere to say it has no radius of its own.
+--
+-- `radius` is NOT NULL, so it could not hold that -- and naming an entity
+-- therefore wrote a copy of the shipped default onto it and the global stopped
+-- reaching it. SQLite cannot drop NOT NULL without rebuilding the table, and
+-- this one is the child of a foreign key with ON DELETE CASCADE, so the column
+-- beside it is the cheaper answer; `radius` is left inert.
+--
+-- Every number already on disk becomes an override of itself. A stored 3 might
+-- be a number somebody chose or the copy the old write path made, and nothing
+-- on disk can tell them apart -- so the reading that changes nothing is the one
+-- to take. Putting a row back on the global is then one row at a time, which is
+-- the player's call rather than an upgrade's.
+--
+-- A migration rather than a shape fixup beside `presence_state`, because it
+-- rewrites rows and only this path takes a verified copy first.
+local function migrateRadiusOverride()
+    return transaction(Store.connection, {
+        {"ALTER TABLE map_entity_metadata ADD COLUMN radius_override REAL"},
+        {
+            "UPDATE map_entity_metadata SET radius_override = radius"
+                .. " WHERE radius_override IS NULL",
+        },
+    })
+end
+
 local MIGRATIONS = {
     {
         id = "rotation_columns",
@@ -781,6 +866,15 @@ local MIGRATIONS = {
         from = 6,
         to = 7,
         apply = migrateVersionSeven,
+    },
+    -- A shape repair, and last: it probes the shape rather than the number, so
+    -- it applies to any database whose metadata table predates the column and
+    -- clears itself once it has run.
+    {
+        id = "activation_radius_override",
+        from = 1,
+        needed = needsRadiusOverride,
+        apply = migrateRadiusOverride,
     },
 }
 
@@ -1243,7 +1337,10 @@ function Store.forgetMapEntity(mapId, entityId)
         metadata = {
             name = row.entity_name or "",
             entityTag = row.entity_tag or "",
-            radius = tonumber(row.radius) or 3,
+            -- Absent, not 3, when the entity has no radius of its own: `or 3`
+            -- would record "it followed the global" as "it was pinned at the
+            -- global's current value", and Undo would put back the second.
+            radius = tonumber(row.radius),
             showRadius = tonumber(row.show_radius) == 1,
             presenceState = row.entity_state or "identified",
         },
@@ -1522,6 +1619,9 @@ local function applyHistoryStateSteps(operation, target, state)
                         sourceRow.entity_state or "entity_missing",
                     },
                 })
+                table.insert(steps, radiusOverrideStep(
+                    sourceMapId, sourceEntityId, sourceRow.radius
+                ))
             end
             if targetRow.entity_id or targetRow.entityId then
                 table.insert(steps, {
@@ -1541,6 +1641,9 @@ local function applyHistoryStateSteps(operation, target, state)
                         targetRow.entity_state or "identified",
                     },
                 })
+                table.insert(steps, radiusOverrideStep(
+                    targetMapId, targetEntityId, targetRow.radius
+                ))
             end
             local sourceIdentity = sourceRow.collection_uuid and {
                 collectionUuid = sourceRow.collection_uuid,
@@ -1604,6 +1707,9 @@ local function applyHistoryStateSteps(operation, target, state)
                     targetRow.showRadius and 1 or 0,
                 },
             })
+            table.insert(steps, radiusOverrideStep(
+                targetMapId, targetEntityId, targetRow.radius
+            ))
             table.insert(steps, {
                 "UPDATE map_entity_metadata SET presence_state = 'entity_missing' "
                     .. "WHERE map_id = ? AND entity_id = ?",
@@ -1694,6 +1800,12 @@ local function applyHistoryStateSteps(operation, target, state)
                     metadata.presenceState or "identified",
                 },
             })
+            -- The insert above fills the NOT NULL legacy column; this is the
+            -- one anything reads. Without it, undoing a removal brings the
+            -- entity back following the global, whatever radius it had.
+            table.insert(steps, radiusOverrideStep(
+                target.mapId, target.entityId, metadata.radius
+            ))
         end
         local link = state.link
         if type(link) == "table" then
@@ -1752,6 +1864,12 @@ local function applyHistoryStateSteps(operation, target, state)
                     state.presenceState or "identified",
                 },
             })
+            -- Undo has to put back "it followed the global" as faithfully as
+            -- it puts back a number, or one Undo quietly pins an entity to
+            -- whatever the global happened to say.
+            table.insert(steps, radiusOverrideStep(
+                target.mapId, target.entityId, state.radius
+            ))
         end
     elseif operation == "user_setting" then
         if type(target) ~= "table" or type(target.settingKey) ~= "string"
@@ -2122,7 +2240,10 @@ function Store.listMapEntities()
                 map_entities.dimension,
                 COALESCE(map_entity_metadata.name, '') AS entity_name,
                 COALESCE(map_entity_metadata.entity_tag, '') AS entity_tag,
-                COALESCE(map_entity_metadata.radius, 3) AS radius,
+                -- Not coalesced to 3: absent is a fact about the entity --
+                -- that it follows the global -- and inventing a number here
+                -- is what made every row look like a decision somebody took.
+                map_entity_metadata.radius_override AS radius,
                 COALESCE(map_entity_metadata.show_radius, 0) AS show_radius,
                 spatial_links.collection_uuid,
                 spatial_links.card_id,
@@ -2250,7 +2371,7 @@ function Store.getMapEntity(mapId, entityId)
                 map_entities.dimension,
                 map_entity_metadata.name AS entity_name,
                 map_entity_metadata.entity_tag AS entity_tag,
-                map_entity_metadata.radius AS radius,
+                map_entity_metadata.radius_override AS radius,
                 map_entity_metadata.show_radius AS show_radius,
                 spatial_links.collection_uuid,
                 spatial_links.card_id,
@@ -2353,7 +2474,7 @@ function Store.relinkEntity(value)
             state = "active",
             entityName = source.entity_name or "",
             entityTag = source.entity_tag or "",
-            radius = tonumber(source.radius) or 3,
+            radius = tonumber(source.radius) or false,
             showRadius = tonumber(source.show_radius) == 1,
             collectionUuid = source.collection_uuid,
             cardId = tonumber(source.card_id),
@@ -2392,6 +2513,13 @@ function Store.relinkEntity(value)
                 value.targetEntityId,
             },
         },
+        -- Relink moves the entity's metadata, and "it follows the global" is
+        -- part of that metadata. Without this the forward path silently drops
+        -- an override while Redo -- which replays the recorded state -- puts it
+        -- back, so the two disagreed about the same relink.
+        radiusOverrideStep(
+            value.targetMapId, value.targetEntityId, source.radius
+        ),
         {
             [[
                 INSERT INTO spatial_links (
@@ -2421,9 +2549,12 @@ function Store.relinkEntity(value)
     }
     local committed, errorMessage = historyTransaction(
         "relink_entity",
-        -- Encoded, like every other history target. A bare table reached
-        -- `dbQuery` as a parameter SQLite cannot bind, so every relink failed
-        -- with a transaction error nobody had ever executed to see.
+        -- `historyTarget`, not the table itself. Every other caller encodes it
+        -- and `historySteps` binds this straight into `change_history.target`,
+        -- so a raw table failed the bind, rolled the whole transaction back and
+        -- made `Relink entity` return `relink_transaction_failed` every single
+        -- time. Nothing caught it because the two tests that mention relinking
+        -- read the function's *source text* for the word `historyTransaction`.
         historyTarget(value.sourceMapId, value.sourceEntityId),
         before,
         after,
@@ -2441,7 +2572,7 @@ function Store.relinkEntity(value)
         metadata = {
             name = source.entity_name or "",
             entityTag = source.entity_tag or "",
-            radius = tonumber(source.radius) or 3,
+            radius = tonumber(source.radius) or false,
             showRadius = tonumber(source.show_radius) == 1,
         },
         link = {
@@ -2895,7 +3026,10 @@ function Store.updateEntityMetadata(mapId, entityId, metadata)
         exists = metadataRows[1] ~= nil,
         name = existing.entity_name or "",
         entityTag = existing.entity_tag or "",
-        radius = tonumber(existing.radius) or 3,
+        -- `false` is "this entity follows the global", which is a different
+        -- answer from 3 and has to survive a round trip through Change
+        -- History as itself.
+        radius = tonumber(existing.radius) or false,
         showRadius = tonumber(existing.show_radius) == 1,
         presenceState = existing.entity_state or "identified",
     }
@@ -2903,7 +3037,7 @@ function Store.updateEntityMetadata(mapId, entityId, metadata)
         exists = true,
         name = tostring(metadata.name or ""),
         entityTag = tostring(metadata.entityTag or ""),
-        radius = tonumber(metadata.radius) or 3,
+        radius = tonumber(metadata.radius) or false,
         showRadius = metadata.showRadius == true,
         presenceState = metadata.presenceState or existing.entity_state or "identified",
     }
@@ -2925,11 +3059,14 @@ function Store.updateEntityMetadata(mapId, entityId, metadata)
                     entityId,
                     after.name,
                     after.entityTag,
-                    after.radius,
+                    -- The inert column, kept fed because it is NOT NULL. What
+                    -- the entity actually says is the step below.
+                    after.radius or 3,
                     after.showRadius and 1 or 0,
                     after.presenceState,
                 },
             },
+            radiusOverrideStep(mapId, entityId, after.radius),
         }
     )
     if not committed then

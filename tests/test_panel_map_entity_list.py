@@ -1248,3 +1248,413 @@ def test_an_entity_change_refreshes_an_open_panel(panel_client: MtaSandbox) -> N
         for event in panel_client.recorder.server_events
         if event.name == "ankigta:requestF7"
     ]
+
+
+# --- what a row inherits, and what it was told --------------------------------
+
+
+def follows_the_global(**over: Any) -> dict[str, Any]:
+    """A panel entry that has never been told a radius of its own."""
+    entry = panel_entry(**over)
+    entry["metadata"].pop("radius")
+    return entry
+
+
+def announce_global(sandbox: MtaSandbox, **values: Any) -> None:
+    sandbox.eval(
+        """
+        function(values)
+            triggerEvent("ankigta:settingsSnapshot", resourceRoot,
+                {values = values})
+        end
+        """
+    )(to_lua(sandbox, values))
+
+
+def test_a_row_with_no_radius_of_its_own_shows_the_global_in_force(
+    panel_client: MtaSandbox,
+) -> None:
+    """An override left unset used to arrive as the shipped default, so every
+    row looked like a decision somebody had taken -- and turning the global up
+    appeared to do nothing at all."""
+    announce_global(panel_client, activationRadius=10)
+    push_client_snapshot(panel_client, entities=[follows_the_global()])
+
+    row = panel_client.pushed_panel_state()["entities"][0]
+
+    assert row["radius"] == 10
+    assert row["radiusInherited"] is True
+
+
+def test_a_row_with_its_own_radius_says_it_was_chosen(
+    panel_client: MtaSandbox,
+) -> None:
+    announce_global(panel_client, activationRadius=10)
+    entry = panel_entry()
+    entry["metadata"]["radius"] = 7.5
+    push_client_snapshot(panel_client, entities=[entry])
+
+    row = panel_client.pushed_panel_state()["entities"][0]
+
+    assert row["radius"] == 7.5
+    assert row["radiusInherited"] is False
+
+
+def test_a_zone_is_drawn_at_the_radius_actually_in_force(
+    panel_client: MtaSandbox,
+) -> None:
+    """A ring drawn at 3 while the setting says 10 is a ring that lies about
+    where the card will open."""
+    announce_global(panel_client, activationRadius=10)
+    shown = follows_the_global()
+    shown["metadata"]["showRadius"] = True
+    push_client_snapshot(panel_client, entities=[shown])
+
+    panel_client.trigger("onClientRender")
+
+    x, y = 10.25, -20.5
+    distances = {
+        round(((p["startX"] - x) ** 2 + (p["startY"] - y) ** 2) ** 0.5, 3)
+        for p in panel_client.drawn_lines_3d
+    }
+    assert distances == {10.0}
+
+
+def test_emptying_the_radius_asks_the_server_to_stop_holding_one(
+    panel_client: MtaSandbox,
+) -> None:
+    """An emptied box is a different answer both from a number and from this
+    message not being about the radius at all, so it travels as its own."""
+    push_client_snapshot(panel_client, entities=[panel_entry()])
+    panel_action(
+        panel_client, "select", {"mapId": "current-map-id", "entityId": "gate-17"}
+    )
+
+    panel_action(panel_client, "setEntityRadius", {"radius": False})
+
+    sent = [
+        event
+        for event in panel_client.recorder.server_events
+        if event.name == "ankigta:updateEntityMetadata"
+    ]
+    assert len(sent) == 1
+    assert panel_client.to_python(sent[0].args[2])["radius"] is False
+
+
+def write_metadata(
+    server: MtaSandbox, player: Any, metadata: dict[str, Any]
+) -> None:
+    server.trigger(
+        "ankigta:updateEntityMetadata",
+        server.lua.globals().resourceRoot,
+        "current-map-id",
+        "gate-17",
+        server.lua.table_from(metadata),
+        client=player,
+    )
+
+
+def stored_override(server: MtaSandbox) -> Any:
+    row = server.connection.raw.execute(
+        "SELECT radius_override FROM map_entity_metadata WHERE entity_id = ?",
+        ("gate-17",),
+    ).fetchone()
+    return None if row is None else row[0]
+
+
+def test_naming_an_entity_leaves_its_radius_following_the_global(
+    server: MtaSandbox,
+) -> None:
+    """The bug in the owner's own database: three of five metadata rows carry a
+    radius of 3 that nobody chose, written by the act of naming the thing or of
+    ticking Draw always. Every one of them stopped following the global the
+    moment it was written."""
+    seed_entity(
+        server,
+        map_id="current-map-id",
+        resource_name="current-map",
+        entity_id="gate-17",
+    )
+    player = server.add_study_player()
+
+    write_metadata(server, player, {"name": "North gate"})
+
+    stored = server.connection.raw.execute(
+        "SELECT name, radius_override FROM map_entity_metadata WHERE entity_id = ?",
+        ("gate-17",),
+    ).fetchone()
+    assert stored == ("North gate", None)
+
+
+def test_a_radius_that_was_chosen_is_stored_and_can_be_given_back(
+    server: MtaSandbox,
+) -> None:
+    seed_entity(
+        server,
+        map_id="current-map-id",
+        resource_name="current-map",
+        entity_id="gate-17",
+    )
+    player = server.add_study_player()
+
+    write_metadata(server, player, {"radius": 7.5})
+    assert stored_override(server) == 7.5
+
+    # Another field is not an answer about the radius, so the radius stands.
+    write_metadata(server, player, {"name": "North gate"})
+    assert stored_override(server) == 7.5
+
+    write_metadata(server, player, {"radius": False})
+    assert stored_override(server) is None
+
+
+def test_undo_puts_back_a_radius_that_was_following_the_global(
+    server: MtaSandbox,
+) -> None:
+    """Undo has to restore "it followed the global" as faithfully as it
+    restores a number, or one Undo quietly pins an entity to whatever the
+    global happened to say."""
+    seed_entity(
+        server,
+        map_id="current-map-id",
+        resource_name="current-map",
+        entity_id="gate-17",
+    )
+    player = server.add_study_player()
+    write_metadata(server, player, {"radius": 7.5})
+    assert stored_override(server) == 7.5
+
+    server.trigger("ankigta:undo", server.lua.globals().resourceRoot, client=player)
+
+    assert stored_override(server) is None
+
+
+# --- a renamed row still says what it was -------------------------------------
+
+
+def test_a_renamed_row_carries_the_name_it_had_before(
+    panel_client: MtaSandbox,
+) -> None:
+    """The cosmetic name replaces the model name, which is the point -- but the
+    model name is the only thing tying this row to what the Map Editor shows."""
+    push_client_snapshot(panel_client, entities=[panel_entry(name="North gate")])
+
+    row = panel_client.pushed_panel_state()["entities"][0]
+
+    assert row["name"] == "North gate"
+    assert row["givenName"] == "North gate"
+    assert row["originalName"] == "gate_model"
+
+
+def test_a_row_nobody_named_has_no_earlier_name_to_show(
+    panel_client: MtaSandbox,
+) -> None:
+    """Saying "originally gate_model" under a row headed the same is noise."""
+    push_client_snapshot(panel_client, entities=[panel_entry(name="")])
+
+    row = panel_client.pushed_panel_state()["entities"][0]
+
+    assert row["givenName"] == ""
+    assert row["originalName"] is False
+
+
+def test_the_default_name_a_row_carries_is_unchanged(
+    panel_client: MtaSandbox,
+) -> None:
+    """What a ped row should be headed by is ticket 07's question, not this
+    one's: the skin is still the name, and the row still says so."""
+    entry = panel_entry(name="")
+    entry["mapEntity"]["type"] = "ped"
+    entry["mapEntity"]["model"] = 7
+    push_client_snapshot(panel_client, entities=[entry])
+
+    assert panel_client.pushed_panel_state()["entities"][0]["name"] == "Ped skin 7"
+
+
+def test_the_filter_matches_the_name_a_row_had_before_it_was_renamed(
+    panel_client: MtaSandbox,
+) -> None:
+    """Naming a thing must not make it unfindable by what the Map Editor still
+    calls it."""
+    push_client_snapshot(
+        panel_client,
+        entities=[
+            panel_entry(entity_id="gate-17", name="North gate"),
+            panel_entry(entity_id="gate-18", name="South gate"),
+        ],
+    )
+
+    panel_action(panel_client, "filter", {"text": "gate_model"})
+    assert len(panel_client.pushed_panel_state()["entities"]) == 2
+
+    panel_action(panel_client, "filter", {"text": "North"})
+    kept = panel_client.pushed_panel_state()["entities"]
+    assert [row["entityId"] for row in kept] == ["gate-17"]
+
+
+# --- pointing the camera is the player's answer -------------------------------
+
+
+def test_the_page_is_told_to_point_the_camera_at_what_it_selects(
+    panel_client: MtaSandbox,
+) -> None:
+    push_client_snapshot(panel_client, entities=[panel_entry()])
+
+    assert panel_client.pushed_panel_state()["focusOnSelect"] is True
+
+
+def test_the_client_setting_is_what_turns_that_off(
+    panel_client: MtaSandbox,
+) -> None:
+    """Arrowing through fifty rows with the camera flying to each is not a way
+    to read a list, so the player can say no -- on their own machine, because
+    it is their own camera."""
+    panel_client.eval(
+        """
+        function()
+            ANKIGTA.ClientSettings = {
+                get = function(key)
+                    if key == "focusOnSelect" then return false end
+                    return nil
+                end,
+            }
+        end
+        """
+    )()
+    push_client_snapshot(panel_client, entities=[panel_entry()])
+
+    assert panel_client.pushed_panel_state()["focusOnSelect"] is False
+
+
+# --- a relink moves what the entity said about its own zone -------------------
+
+
+def relink(server: MtaSandbox, *, source: str, target: str) -> Any:
+    """One value back, so a refusal cannot read as a success.
+
+    `Store.relinkEntity` answers `false, reason`, and a two-value return
+    arrives here as a tuple -- which is truthy however it went.
+    """
+    return server.eval(
+        """
+        function(sourceId, targetId)
+            local ok, reason = ANKIGTA.Store.relinkEntity({
+                sourceMapId = "current-map-id",
+                sourceEntityId = sourceId,
+                targetMapId = "current-map-id",
+                targetEntityId = targetId,
+            })
+            if not ok then
+                return tostring(reason)
+            end
+            return true
+        end
+        """
+    )(source, target)
+
+
+def override_of(server: MtaSandbox, entity_id: str) -> Any:
+    row = server.connection.raw.execute(
+        "SELECT radius_override FROM map_entity_metadata WHERE entity_id = ?",
+        (entity_id,),
+    ).fetchone()
+    return None if row is None else row[0]
+
+
+def seed_pair(server: MtaSandbox) -> Any:
+    for entity_id in ("gate-17", "gate-18"):
+        seed_entity(
+            server,
+            map_id="current-map-id",
+            resource_name="current-map",
+            entity_id=entity_id,
+        )
+    server.connection.raw.execute(
+        "INSERT INTO spatial_links (map_id, entity_id, collection_uuid, card_id,"
+        " state, verified_map_sha256) VALUES (?, ?, ?, ?, 'active', ?)",
+        ("current-map-id", "gate-17", "collection-a", 42, "a" * 64),
+    )
+    server.connection.raw.commit()
+    return server.add_study_player()
+
+
+def make_source_missing(server: MtaSandbox) -> None:
+    """Relink exists for an entity whose Runtime Instance is gone, so the
+    source has to actually be in that state for the call to do anything."""
+    server.connection.raw.execute(
+        "UPDATE map_entity_metadata SET presence_state = 'entity_missing'"
+        " WHERE entity_id = 'gate-17'"
+    )
+    server.connection.raw.commit()
+
+
+def test_a_relink_carries_a_radius_that_was_chosen(server: MtaSandbox) -> None:
+    """Relink moves the entity's metadata, and a radius of its own is part of
+    that. Dropping it would put the entity back on the global without anyone
+    saying so."""
+    player = seed_pair(server)
+    write_metadata(server, player, {"radius": 7.5})
+    assert override_of(server, "gate-17") == 7.5
+    make_source_missing(server)
+
+    assert relink(server, source="gate-17", target="gate-18") is True
+
+    assert override_of(server, "gate-18") == 7.5
+
+
+def test_a_relink_carries_the_absence_of_one(server: MtaSandbox) -> None:
+    """And the other way: an entity that followed the global must not arrive at
+    its new home pinned to a number nobody chose.
+
+    The target here already has a radius of its own, so a relink that writes
+    nothing would leave that number in force under the source's identity.
+    """
+    player = seed_pair(server)
+    server.trigger(
+        "ankigta:updateEntityMetadata",
+        server.lua.globals().resourceRoot,
+        "current-map-id",
+        "gate-18",
+        server.lua.table_from({"radius": 12}),
+        client=player,
+    )
+    write_metadata(server, player, {"name": "North gate"})
+    assert override_of(server, "gate-17") is None
+    make_source_missing(server)
+
+    assert relink(server, source="gate-17", target="gate-18") is True
+
+    assert override_of(server, "gate-18") is None
+
+
+def test_relinking_an_entity_commits_at_all(server: MtaSandbox) -> None:
+    """It did not, on the trunk this branch came from.
+
+    `Store.relinkEntity` handed `historyTransaction` a raw Lua table where every
+    other caller hands it `historyTarget(...)`. `historySteps` binds that value
+    straight into `change_history.target`, so the bind failed, the transaction
+    rolled back and `Relink entity` answered `relink_transaction_failed` every
+    single time. The two tests that mention relinking read the function's
+    *source text* for the word `historyTransaction`, which is exactly the kind
+    of test `docs/agents/lua-testing.md` says proves nothing about behaviour.
+    """
+    player = seed_pair(server)
+    write_metadata(server, player, {"name": "North gate"})
+    make_source_missing(server)
+
+    assert relink(server, source="gate-17", target="gate-18") is True
+
+    moved = server.connection.raw.execute(
+        "SELECT entity_id FROM spatial_links WHERE state = 'active'"
+    ).fetchall()
+    assert moved == [("gate-18",)]
+    # And it is one entry in Change History, so one Undo puts it back.
+    recorded = server.connection.raw.execute(
+        "SELECT operation, target FROM change_history ORDER BY history_id DESC"
+        " LIMIT 1"
+    ).fetchone()
+    assert recorded[0] == "relink_entity"
+    # `toJSON` serialises its argument *list*, so one table comes back wrapped.
+    assert json.loads(recorded[1]) == [
+        {"mapId": "current-map-id", "entityId": "gate-17"}
+    ]

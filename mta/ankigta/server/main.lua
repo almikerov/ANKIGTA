@@ -262,7 +262,7 @@ local function entityContract(row)
             display = {
                 name = row.entity_name or "",
                 entityTag = row.entity_tag or "",
-                radius = tonumber(row.radius) or 3,
+                radius = tonumber(row.radius) or false,
                 showRadius = tonumber(row.show_radius) == 1,
             },
             authored = {
@@ -286,7 +286,7 @@ local function entityContract(row)
         metadata = {
             name = row.entity_name or "",
             entityTag = row.entity_tag or "",
-            radius = tonumber(row.radius) or 3,
+            radius = tonumber(row.radius) or false,
             showRadius = tonumber(row.show_radius) == 1,
         },
         link = link,
@@ -335,7 +335,9 @@ local function candidateContract(element, name, resourceName)
             type = getElementType(element),
             model = getElementModel(element),
             map = {resourceName = resourceName, mapName = resourceName},
-            display = {name = "", entityTag = "", radius = 3, showRadius = false},
+            display = {
+                name = "", entityTag = "", radius = false, showRadius = false
+            },
             authored = {
                 position = {x = x or 0, y = y or 0, z = z or 0},
                 rotation = {
@@ -352,7 +354,7 @@ local function candidateContract(element, name, resourceName)
             referenceId = getElementID(element) or "",
         },
         metadata = {
-            name = "", entityTag = "", radius = 3, showRadius = false,
+            name = "", entityTag = "", radius = false, showRadius = false,
         },
         link = {state = "Not adopted", guidanceKey = "f7.guidance.notAdopted"},
         copyCollision = false,
@@ -1856,14 +1858,27 @@ addEventHandler(ENTITY_METADATA_REQUEST_EVENT, resourceRoot, function(
         )
         return
     end
-    local radius = tonumber(metadata.radius)
-    if radius ~= nil then
+    -- Three answers, not two. A number is an override; `false` is the field
+    -- emptied, which means "follow the global again" and stores nothing; and
+    -- absent means this message is not about the radius at all, so whatever
+    -- the row already said stands.
+    local radius
+    if metadata.radius == nil then
+        radius = tonumber(row.radius) or false
+    elseif metadata.radius == false then
+        radius = false
+    else
+        radius = tonumber(metadata.radius)
         -- The schema's own rule for the global radius, applied to the
         -- per-entity one: a number cannot be legal in Settings and illegal
         -- here, and the schema is the side both can reach.
-        local valid, reason = ANKIGTA.Settings.validate(
-            "activationRadius", ANKIGTA.Settings.normalize("activationRadius", radius)
-        )
+        local valid, reason = false, "settings.error.not_a_number"
+        if radius ~= nil then
+            valid, reason = ANKIGTA.Settings.validate(
+                "activationRadius",
+                ANKIGTA.Settings.normalize("activationRadius", radius)
+            )
+        end
         if not valid then
             triggerClientEvent(
                 client, PENDING_NOTICE_EVENT, resourceRoot,
@@ -1881,7 +1896,7 @@ addEventHandler(ENTITY_METADATA_REQUEST_EVENT, resourceRoot, function(
             name = metadata.name ~= nil and metadata.name
                 or (row.entity_name or ""),
             entityTag = row.entity_tag or "",
-            radius = radius or tonumber(row.radius) or 3,
+            radius = radius,
             showRadius = metadata.showRadius ~= nil
                 and metadata.showRadius == true
                 or (metadata.showRadius == nil
@@ -2366,7 +2381,7 @@ addEventHandler(CARD_STATES_REFRESHED_EVENT, resourceRoot, function(
                     mapId = row.map_id,
                     entityId = row.entity_id,
                     cardIdentity = cardIdentity,
-                    radius = tonumber(row.radius) or 3,
+                    radius = tonumber(row.radius) or false,
                     showRadius = tonumber(row.show_radius) == 1,
                     eligible = true,
                 }
