@@ -41,6 +41,15 @@ to several of the questions above and reading it will save real time:
 `git show 00faa13`. Take from it what survives scrutiny; it was never run by
 anyone, so nothing in it is evidence.
 
+**The owner's store already holds a `coronaOpacity`.** After ticket 01 deployed,
+the live server logged `discarded_stored_setting: coronaOpacity
+(settings.error.unknown)` — some earlier build wrote it and the current schema
+does not know it, so the store throws it away every start, correctly. The moment
+this ticket adds the setting back, that stored value stops being discarded and
+becomes the value in force — whatever it happens to be, not 0.6. Decide what a
+stored value from a schema that no longer existed is worth, and say so; do not
+let it silently outrank the new default.
+
 **Blocked by:** 01, 03 — it adds three settings, and Settings has to be operable
 to judge them.
 
