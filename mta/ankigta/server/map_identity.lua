@@ -83,6 +83,15 @@ end
 -- `nil` where the file could not be read, so a map that is not there is never
 -- mistaken for a map whose entities have gone.
 local function mapFileContainsEntity(row, readFiles)
+    -- The editor's throwaway resources are rewritten from scratch the next
+    -- time it needs one, so an entity stored against one is gone whatever the
+    -- file on disk currently says. Answered before the file is read, and
+    -- answered `false` rather than `nil`: this is a Map Entity that is not
+    -- coming back, not a map that could not be opened.
+    if type(row) == "table" and ANKIGTA.World.isScratchResource(row.resource_name)
+    then
+        return false
+    end
     local virtualPath = mapFileVirtualPath(row)
     if virtualPath == nil then
         return nil
@@ -161,12 +170,18 @@ local function resolveCurrentMapLocator()
     }
 end
 
+--- The map identity elements the editor is holding, minus EDF's own drawings.
+--
+-- `me:ID` used to be demanded here as well, and it is not a marker of an
+-- element the editor manages: `assignID` writes it only when it has to invent
+-- an id, so an element the map file already named uniquely never carries one
+-- (editor_main/server/IDhandler.lua). Demanding it made a saved and reloaded
+-- map look like a map with no identity at all, and the next link would import
+-- a second one beside the first.
 local function currentMapIdentityElements()
     local result = {}
     for _, element in ipairs(getElementsByType("ankigta_map_identity")) do
-        if not exports.edf:edfIsRepresentation(element)
-            and getElementData(element, "me:ID")
-        then
+        if not ANKIGTA.World.isEditorRepresentation(element) then
             table.insert(result, element)
         end
     end
@@ -572,7 +587,12 @@ function MapIdentity.preparePendingMapSave(
         objectElement = objectElement,
         entityType = entityType,
         mapIdentity = mapIdentity,
-        editorElementId = getElementData(objectElement, "me:ID"),
+        -- What the saved `.map` will call this element. `me:ID` is the
+        -- editor's copy of it and exists only where the editor had to invent
+        -- one, so the element's own id is the answer wherever there is one.
+        editorElementId = getElementID(objectElement) ~= ""
+            and getElementID(objectElement)
+            or getElementData(objectElement, "me:ID"),
         study = false,
         activation = false,
         statistics = false,
@@ -585,8 +605,7 @@ end
 function MapIdentity.prepareObjectPendingMapSave(player, row, objectElement, cardIdentity)
     if not isElement(objectElement)
         or getElementType(objectElement) ~= "object"
-        or exports.edf:edfIsRepresentation(objectElement)
-        or not getElementData(objectElement, "me:ID")
+        or ANKIGTA.World.isEditorRepresentation(objectElement)
     then
         return false, "object_not_managed_by_stock_editor"
     end
@@ -622,24 +641,51 @@ function MapIdentity.prepareObjectPendingMapSave(player, row, objectElement, car
     )
 end
 
+--- Hang a card on a Map Entity the store already knows about.
+--
+-- This is the path the panel's Link button takes, and it refused everything.
+-- It counted `object` elements only -- a vehicle, a ped and a marker are Map
+-- Entity types and could not be linked at all -- and it demanded exactly one,
+-- while the editor keeps its own copy of the map beside the play-test's and
+-- EDF keeps a representation beside each element it draws. Inside the editor
+-- the count was never one.
+--
+-- `World` answers which live element that is, the same way the panel's list
+-- does, so the two cannot disagree about what the player is looking at.
 function MapIdentity.prepareCardLinkForEntity(player, row, cardIdentity)
     if type(row) ~= "table" then
         return false, "invalid_map_entity"
     end
-    local objectMatches = {}
-    for _, objectElement in ipairs(getElementsByType("object")) do
-        if getElementData(objectElement, "ankigtaEntityId") == row.entity_id
-            and getElementData(objectElement, "me:ID")
-        then
-            table.insert(objectMatches, objectElement)
+    local entityElement, copies = ANKIGTA.World.runtimeInstance(
+        row.map_id,
+        row.entity_id,
+        player
+    )
+    if not entityElement then
+        if copies == 0 then
+            return false, "entity_runtime_not_found: " .. tostring(row.entity_id)
         end
-    end
-    if #objectMatches ~= 1 then
-        return false, "entity_runtime_not_unique"
+        -- Which entity, because two copies standing in the player's own world
+        -- is a question about which one is meant, and answering it by taking
+        -- the first would write to whichever the walk happened to reach.
+        return false, "entity_runtime_not_unique: " .. tostring(row.entity_id)
+            .. " (" .. tostring(copies) .. " copies)"
     end
     local identities = currentMapIdentityElements()
-    if #identities ~= 1 then
+    if #identities > 1 then
         return false, "map_identity_not_unique"
+    end
+    local mapIdentity = identities[1]
+    if not mapIdentity then
+        -- Created the same way every other prepare path creates it. Demanding
+        -- one already exist is what left the F7 list unable to link anything:
+        -- adoption never makes one, so the first link on a fresh map found
+        -- none and stopped.
+        local created, identityError = createMapIdentity(player)
+        if not created then
+            return false, identityError
+        end
+        mapIdentity = created
     end
     local mapLocator, locatorError = resolveCurrentMapLocator()
     if not mapLocator then
@@ -652,8 +698,8 @@ function MapIdentity.prepareCardLinkForEntity(player, row, cardIdentity)
     return MapIdentity.preparePendingMapSave(
         player,
         row,
-        identities[1],
-        objectMatches[1],
+        mapIdentity,
+        entityElement,
         cardIdentity,
         mapLocator,
         baselineHash
@@ -669,8 +715,7 @@ local function prepareManagedPendingMapSave(
 )
     if not isElement(entityElement)
         or getElementType(entityElement) ~= expectedType
-        or exports.edf:edfIsRepresentation(entityElement)
-        or not getElementData(entityElement, "me:ID")
+        or ANKIGTA.World.isEditorRepresentation(entityElement)
     then
         return false, expectedType .. "_not_managed_by_stock_editor"
     end
@@ -836,9 +881,16 @@ function MapIdentity.linkSnapshot(row)
         }
     end
     if row.entity_state == "entity_missing" then
+        -- A row stored against `editor_dump` or `editor_test` is missing for a
+        -- reason worth naming: the player made that link deliberately, and may
+        -- have made it against an object they still have. Reported as what it
+        -- is and left for them to relink or remove -- never deleted here.
+        local scratchMap = ANKIGTA.World.isScratchResource(row.resource_name)
         return {
             state = "Entity missing",
             metadata = metadata,
+            editorScratchMap = scratchMap,
+            guidanceKey = scratchMap and "guidance.editorScratchMap" or nil,
             relinkAvailable = row.link_state == "active",
             cardIdentity = row.link_state == "active" and {
                 collectionUuid = row.collection_uuid,

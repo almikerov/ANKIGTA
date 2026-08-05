@@ -20,6 +20,9 @@
     <script src="server/backup.lua" type="server" />
     <script src="server/store.lua" type="server" />
     <script src="server/settings_store.lua" type="server" />
+    <!-- Before everything that asks what is standing in the world: the link
+         path, teleport and the study refresh all take their answer from it. -->
+    <script src="server/world.lua" type="server" />
     <script src="server/map_identity.lua" type="server" />
     <script src="server/teleport.lua" type="server" />
     <script src="server/statistics.lua" type="server" />

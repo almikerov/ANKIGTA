@@ -1,7 +1,8 @@
 # Backups and recovery
 
 ANKIGTA backs up **its own database and nothing else**: the Map Entity records,
-Spatial Links, Entity Tags, radii, `Include in study` and the Change History.
+Spatial Links, Entity Tags, radii, the server-owned settings and the Change
+History.
 
 It does not back up your Anki collection. Anki owns your study data and its own
 backups (ADR 0017), and nothing here reads or writes them. It also does not

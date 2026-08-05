@@ -1,7 +1,7 @@
 ANKIGTA = ANKIGTA or {}
 
 local DATABASE_PATH = "ankigta.sqlite"
-local CURRENT_SCHEMA_VERSION = 6
+local CURRENT_SCHEMA_VERSION = 7
 local HISTORY_LIMIT = 100
 
 -- The volume ticket 30 states its thresholds against. Nothing here is a limit:
@@ -255,15 +255,6 @@ local function ensureChangeHistorySchema()
         },
         {
             "INSERT OR IGNORE INTO change_history_state (singleton, cursor_id) VALUES (1, 0)",
-        },
-        {
-            [[
-                CREATE TABLE IF NOT EXISTS map_preferences (
-                    map_id TEXT PRIMARY KEY,
-                    include_in_study INTEGER NOT NULL DEFAULT 1,
-                    FOREIGN KEY (map_id) REFERENCES maps(map_id) ON DELETE CASCADE
-                )
-            ]],
         },
         {
             [[
@@ -632,6 +623,56 @@ local function migrateVersionSix()
     return transaction(Store.connection, steps)
 end
 
+--- Version 7: the per-map `Include in study` switch stops being stored.
+--
+-- Which maps take part is not a preference any more -- a Map Entity is in play
+-- when its map is loaded -- so a stored answer is a value nothing can read and
+-- nothing can change. Only the preference goes: every Spatial Link on every
+-- map, including the ones that were switched off, is left exactly as it is.
+--
+-- The switch's Change History entries go with the table they replayed into.
+-- The cursor is walked back to the newest surviving entry rather than left
+-- pointing at a deleted one, which Undo would report as a missing entry and
+-- never get past.
+local function tableExists(name)
+    local ok, rows = execute(
+        Store.connection,
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        name
+    )
+    return ok and rows[1] ~= nil
+end
+
+local function migrateVersionSeven()
+    local steps = {}
+    -- The history tables are created after migrations run, so a database old
+    -- enough not to have them yet has no entries to clear either.
+    if tableExists("change_history") then
+        table.insert(steps, {
+            "DELETE FROM change_history WHERE operation = 'map_preference'",
+        })
+    end
+    if tableExists("change_history_state") and tableExists("change_history") then
+        table.insert(steps, {
+            [[
+                UPDATE change_history_state
+                SET cursor_id = COALESCE(
+                    (SELECT MAX(history_id) FROM change_history
+                     WHERE history_id <= change_history_state.cursor_id),
+                    0
+                )
+                WHERE singleton = 1
+            ]],
+        })
+    end
+    table.insert(steps, {"DROP TABLE IF EXISTS map_preferences"})
+    table.insert(steps, {
+        "UPDATE schema_meta SET version = ? WHERE singleton = 1",
+        {7},
+    })
+    return transaction(Store.connection, steps)
+end
+
 local function hasIdentityCollisionTable()
     local ok, rows = execute(
         Store.connection,
@@ -743,6 +784,12 @@ local MIGRATIONS = {
         from = 5,
         to = 6,
         apply = migrateVersionSix,
+    },
+    {
+        id = "drop_map_preferences",
+        from = 6,
+        to = 7,
+        apply = migrateVersionSeven,
     },
 }
 
@@ -1561,23 +1608,6 @@ local function applyHistoryStateSteps(operation, target, state)
                 },
             })
         end
-    elseif operation == "map_preference" then
-        if type(target) ~= "table" or type(target.mapId) ~= "string"
-            or type(state) ~= "table"
-        then
-            return false, "invalid_history_target"
-        end
-        if state.exists == false then
-            table.insert(steps, {
-                "DELETE FROM map_preferences WHERE map_id = ?",
-                {target.mapId},
-            })
-        else
-            table.insert(steps, {
-                "INSERT OR REPLACE INTO map_preferences (map_id, include_in_study) VALUES (?, ?)",
-                {target.mapId, state.includeInStudy and 1 or 0},
-            })
-        end
     elseif operation == "user_setting" then
         if type(target) ~= "table" or type(target.settingKey) ~= "string"
             or type(state) ~= "table"
@@ -1949,8 +1979,6 @@ function Store.listMapEntities()
                 COALESCE(map_entity_metadata.entity_tag, '') AS entity_tag,
                 COALESCE(map_entity_metadata.radius, 3) AS radius,
                 COALESCE(map_entity_metadata.show_radius, 0) AS show_radius,
-                COALESCE(map_preferences.include_in_study, 1)
-                    AS include_in_study,
                 spatial_links.collection_uuid,
                 spatial_links.card_id,
                 spatial_links.state AS link_state,
@@ -1967,8 +1995,6 @@ function Store.listMapEntities()
             LEFT JOIN map_entity_metadata
                 ON map_entity_metadata.map_id = map_entities.map_id
                 AND map_entity_metadata.entity_id = map_entities.entity_id
-            LEFT JOIN map_preferences
-                ON map_preferences.map_id = map_entities.map_id
             -- Carried on the row rather than asked per entity: see
             -- `Store.rowIsIdentityCollision`.
             LEFT JOIN identity_collisions
@@ -2065,11 +2091,24 @@ function Store.getMapEntity(mapId, entityId)
                 maps.map_name,
                 map_entities.entity_id,
                 map_entities.entity_type,
+                map_entities.model,
+                -- Where the map says the entity stands. Teleport falls back to
+                -- this whenever no Runtime Instance is loaded, and without it
+                -- every teleport to an unloaded entity refused as
+                -- `invalid_target` -- which is exactly the case teleport
+                -- exists for.
+                map_entities.authored_x,
+                map_entities.authored_y,
+                map_entities.authored_z,
+                map_entities.rotation_x,
+                map_entities.rotation_y,
+                map_entities.rotation_z,
+                map_entities.interior,
+                map_entities.dimension,
                 map_entity_metadata.name AS entity_name,
                 map_entity_metadata.entity_tag AS entity_tag,
                 map_entity_metadata.radius AS radius,
                 map_entity_metadata.show_radius AS show_radius,
-                map_preferences.include_in_study AS include_in_study,
                 spatial_links.collection_uuid,
                 spatial_links.card_id,
                 spatial_links.state AS link_state,
@@ -2086,8 +2125,6 @@ function Store.getMapEntity(mapId, entityId)
             LEFT JOIN map_entity_metadata
                 ON map_entity_metadata.map_id = map_entities.map_id
                 AND map_entity_metadata.entity_id = map_entities.entity_id
-            LEFT JOIN map_preferences
-                ON map_preferences.map_id = map_entities.map_id
             LEFT JOIN identity_collisions
                 ON identity_collisions.map_id = map_entities.map_id
                 AND identity_collisions.entity_id = map_entities.entity_id
@@ -2241,10 +2278,10 @@ function Store.relinkEntity(value)
     }
     local committed, errorMessage = historyTransaction(
         "relink_entity",
-        {
-            mapId = value.sourceMapId,
-            entityId = value.sourceEntityId,
-        },
+        -- Encoded, like every other history target. A bare table reached
+        -- `dbQuery` as a parameter SQLite cannot bind, so every relink failed
+        -- with a transaction error nobody had ever executed to see.
+        historyTarget(value.sourceMapId, value.sourceEntityId),
         before,
         after,
         steps
@@ -2756,40 +2793,6 @@ function Store.updateEntityMetadata(mapId, entityId, metadata)
         return false, "entity_metadata_update_failed: " .. tostring(errorMessage)
     end
     return true
-end
-
-function Store.setMapIncludeInStudy(mapId, includeInStudy)
-    if not Store.ready or not Store.historyReady then
-        return false, Store.errorCategory or "storage_unavailable"
-    end
-    if type(mapId) ~= "string" or type(includeInStudy) ~= "boolean" then
-        return false, "invalid_map_preference"
-    end
-    local ok, rows = execute(
-        Store.connection,
-        "SELECT include_in_study FROM map_preferences WHERE map_id = ?",
-        mapId
-    )
-    if not ok then
-        return false, "map_preference_read_failed"
-    end
-    local before = {
-        exists = rows[1] ~= nil,
-        includeInStudy = not rows[1] or tonumber(rows[1].include_in_study) == 1,
-    }
-    local after = {exists = true, includeInStudy = includeInStudy}
-    return historyTransaction(
-        "map_preference",
-        jsonEncode({mapId = mapId}),
-        before,
-        after,
-        {
-            {
-                "INSERT OR REPLACE INTO map_preferences (map_id, include_in_study) VALUES (?, ?)",
-                {mapId, includeInStudy and 1 or 0},
-            },
-        }
-    )
 end
 
 --- Every persisted setting, decoded, keyed by setting.

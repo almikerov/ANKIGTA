@@ -335,7 +335,7 @@ def test_restoring_leaves_change_history_and_its_constraints_intact(
         """
         function()
             ANKIGTA.Store.setUserSetting("activationRadius", 9)
-            ANKIGTA.Store.setMapIncludeInStudy("ticket05-map", false)
+            ANKIGTA.Store.setUserSetting("activationDelaySeconds", 2)
         end
         """,
     )

@@ -451,15 +451,10 @@
     }
   }
 
-  /* Two rows carry the same setting key when it is per map, so the id is the
-   * key and the map together: duplicate ids would point every label at the
-   * first control and leave the rest unreachable by their own names. */
   function settingId(row) {
-    return "set-" + row.key + (row.mapId ? "-" + row.mapId : "");
+    return "set-" + row.key;
   }
 
-  /* A map's own name is the user's words, so it arrives as text rather than as
-   * a key to look up. Everything else is named by the string table. */
   function settingLabel(row) {
     return row.labelText !== undefined && row.labelText !== null
       ? row.labelText
@@ -467,16 +462,7 @@
   }
 
   function settingRow(row) {
-    /* A group's heading and the line that says there is nothing under it are
-     * text, not controls: giving them a label and an empty field would offer
-     * something to change where there is nothing. */
-    if (row.kind === "heading") {
-      return element("h3", "setting-heading", settingLabel(row));
-    }
-    if (row.kind === "note") {
-      return element("p", "setting-note", settingLabel(row));
-    }
-    var wrap = element("div", row.mapId ? "setting per-map" : "setting");
+    var wrap = element("div", "setting");
     var label = element("label", "setting-label");
     label.setAttribute("for", settingId(row));
     label.appendChild(element("span", null, settingLabel(row)));
@@ -508,9 +494,7 @@
       toggle.textContent = t("settings.value." + String(row.value));
       toggle.setAttribute("aria-pressed", String(row.value === true));
       toggle.addEventListener("click", function () {
-        /* The map travels with the change: a per-map setting written without
-         * one is a global value that nothing reads. */
-        send("setSetting", {key: row.key, value: !row.value, mapId: row.mapId});
+        send("setSetting", {key: row.key, value: !row.value});
       });
       return toggle;
     }

@@ -21,6 +21,9 @@ from tests.lua import MtaSandbox
 def teleport() -> Iterator[MtaSandbox]:
     sandbox = MtaSandbox()
     sandbox.load("shared/entity_types.lua")
+    # Which live element carries a Map Entity's identity is `world.lua`'s to
+    # answer, so teleport and the link path cannot disagree about it.
+    sandbox.load("server/world.lua")
     sandbox.load("server/teleport.lua")
     try:
         yield sandbox
@@ -277,9 +280,12 @@ def world_entity(
 
 
 def find(sandbox: MtaSandbox, map_id: str, entity_id: str) -> Any:
-    return sandbox.eval(
+    """The instance alone. It also reports how many copies there were, which
+    is what tells a duplicate apart from a missing one."""
+    element, _copies = sandbox.eval(
         "function(m, e) return ANKIGTA.Teleport.findRuntimeInstance(m, e) end"
     )(map_id, entity_id)
+    return element
 
 
 def test_a_reappearing_instance_with_the_same_identity_is_found_again(

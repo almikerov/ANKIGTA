@@ -11,8 +11,6 @@ ANKIGTA = ANKIGTA or {}
 -- no refusal over water, empty space, collision or a vehicle interior. Those
 -- are places a player may legitimately want to stand.
 
-local SUPPORTED_ENTITY_TYPES = ANKIGTA.EntityTypes.order
-
 local Teleport = {}
 
 --- Is this Runtime Instance usable as a teleport target right now?
@@ -27,29 +25,14 @@ end
 -- brings one back. Because the lookup is by persistent ID rather than by a
 -- remembered element, the replacement is recognised as the same Map Entity and
 -- its Spatial Link becomes usable again.
-function Teleport.findRuntimeInstance(mapId, entityId)
-    if type(entityId) ~= "string" or entityId == "" then
-        return false
-    end
-    for _, entityType in ipairs(SUPPORTED_ENTITY_TYPES) do
-        for _, element in ipairs(getElementsByType(entityType)) do
-            if isElement(element) then
-                local persistentId = getElementData(element, "ankigtaEntityId")
-                local editorId = getElementData(element, "me:ID")
-                if persistentId == entityId or editorId == entityId then
-                    local elementMapId = getElementData(element, "ankigtaMapId")
-                    if mapId == nil
-                        or elementMapId == nil
-                        or elementMapId == false
-                        or elementMapId == mapId
-                    then
-                        return element
-                    end
-                end
-            end
-        end
-    end
-    return false
+--
+-- The player is who the answer is for. The stock Map Editor works in a
+-- dimension of its own while the same map may be play-testing in the ordinary
+-- world, so one authored entity is standing in two places; teleport has to
+-- land next to the copy actually in front of the player, not next to whichever
+-- copy the walk reached first.
+function Teleport.findRuntimeInstance(mapId, entityId, player)
+    return ANKIGTA.World.runtimeInstance(mapId, entityId, player)
 end
 
 local function authoredTarget(record)
@@ -161,7 +144,11 @@ function Teleport.toMapEntity(player, record)
     if type(record) ~= "table" then
         return false, "invalid_map_entity"
     end
-    local element = Teleport.findRuntimeInstance(record.mapId, record.entityId)
+    local element = Teleport.findRuntimeInstance(
+        record.mapId,
+        record.entityId,
+        player
+    )
     local target = Teleport.resolveTarget(record, element)
     if not target then
         return false, "invalid_map_entity"

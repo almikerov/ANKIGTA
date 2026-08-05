@@ -292,7 +292,11 @@ def test_read_back_binds_entity_id_to_the_selected_editor_element() -> None:
     read_back = _function_body(identity, "readBackSavedMap")
     prepare = _function_body(identity, "MapIdentity.preparePendingMapSave")
 
-    assert 'editorElementId = getElementData(objectElement, "me:ID")' in prepare
+    # The id the saved `.map` gives the element, which is what the read-back
+    # matches on. `me:ID` is the editor's copy of it and exists only where the
+    # editor had to invent one, so it is the fallback rather than the answer.
+    assert 'editorElementId = getElementID(objectElement)' in prepare
+    assert 'getElementData(objectElement, "me:ID")' in prepare
     assert 'xmlNodeGetAttribute(child, "id") == pending.editorElementId' in read_back
     assert "selectedEntityIdentityCount ~= 1" in read_back
     assert "expectedEntityIdentityCount > 1" in read_back
