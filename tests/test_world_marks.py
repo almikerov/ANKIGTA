@@ -287,9 +287,14 @@ def test_a_corona_on_an_entity_with_no_radius_is_the_size_of_the_global(
 def test_a_corona_follows_its_object_as_the_object_moves(
     client: MtaSandbox,
 ) -> None:
-    """Attached rather than moved: MTA writes the target's matrix into an
-    attached element every frame, so following it in Lua would be this module's
-    own polling loop over elements MTA is already moving."""
+    """Attached rather than moved: MTA puts an attached element where its
+    target has got to on every pulse, so following it in Lua would be this
+    module's own polling loop over elements MTA is already moving.
+
+    A frame, not the move itself. Asked on the live client, a marker attached
+    to an object still reported its old position immediately after the object
+    was moved -- `CClientMarker::DoPulse` is what catches it up.
+    """
     authorize(client)
     element = standing(client, x=10.0, y=20.0, z=3.0)
     push_snapshot(client, [entry(show_corona=True)])
@@ -304,6 +309,7 @@ def test_a_corona_follows_its_object_as_the_object_moves(
     )(marker, element) is True
 
     element["x"], element["y"], element["z"] = 40.0, 60.0, 5.0
+    client.trigger("onClientRender")
 
     moved = client.eval("function(m) return {getElementPosition(m)} end")(marker)
     assert (moved[1], moved[2], moved[3]) == (40.0, 60.0, 5.0)

@@ -600,6 +600,32 @@ class MtaSandbox:
 
     # ---------------------------------------------------------------- events
 
+    def _pulse_attachment(self, element: Any) -> None:
+        """Put one attached element where its target has got to.
+
+        `CClientEntity::DoAttaching` writes the target's matrix plus the offset
+        into the attached element. It is called when the attachment is made and
+        again on every pulse -- for a marker, `CClientMarker::DoPulse`.
+        """
+        target = element["__attachedTo"]
+        if lua_type(target) != "table":
+            return
+        offset = element["__attachedOffset"]
+        shift = (
+            (float(offset[1]), float(offset[2]), float(offset[3]))
+            if offset is not None
+            else (0.0, 0.0, 0.0)
+        )
+        element["x"] = float(target["x"] or 0) + shift[0]
+        element["y"] = float(target["y"] or 0) + shift[1]
+        element["z"] = float(target["z"] or 0) + shift[2]
+
+    def _pulse_attachments(self) -> None:
+        """Every attached element, once per frame, as the managers do it."""
+        for element, _target in self.attachments:
+            if element["__destroyed"] is not True:
+                self._pulse_attachment(element)
+
     def trigger(
         self,
         event: str,
@@ -614,7 +640,13 @@ class MtaSandbox:
         triggered with `triggerServerEvent` it also sets `client` to that
         player, and leaves it nil otherwise -- server code checks that global to
         tell a remote request from a local one.
+
+        A rendered frame pulses the attachments first, because that is when MTA
+        moves an attached element: not when its target moved, but on the pulse
+        that follows.
         """
+        if event == "onClientRender":
+            self._pulse_attachments()
         for handler in self._handlers.get(event, []):
             self._dispatch(handler, source, args, client)
 
@@ -1860,22 +1892,6 @@ class MtaSandbox:
                 element["__destroyed"] = True
             if lua_type(element) != "table":
                 return False
-            # An attached element is wherever its target has got to, plus the
-            # offset -- MTA writes that in every frame (`DoAttaching`), so
-            # asking one where it is never answers with where it was attached.
-            target = element["__attachedTo"]
-            if lua_type(target) == "table":
-                offset = element["__attachedOffset"]
-                shift = (
-                    (float(offset[1]), float(offset[2]), float(offset[3]))
-                    if offset is not None
-                    else (0.0, 0.0, 0.0)
-                )
-                return (
-                    float(target["x"] or 0) + shift[0],
-                    float(target["y"] or 0) + shift[1],
-                    float(target["z"] or 0) + shift[2],
-                )
             return element["x"], element["y"], element["z"]
 
         def get_element_velocity(element: Any) -> Any:
@@ -2109,11 +2125,13 @@ class MtaSandbox:
             offset_z: Any = 0,
             *_rest: Any,
         ) -> bool:
-            # `CClientEntity::DoAttaching` writes the target's matrix plus the
-            # offset into the attached element every frame, so an attached
-            # element genuinely *is* wherever its target has got to -- which is
-            # the whole reason a mark is attached rather than moved in Lua.
-            # `getElementPosition` reads through the attachment below.
+            # Placed once here and then once per frame, which is what MTA does:
+            # `CClientMarker::AttachTo` calls `DoAttaching` immediately, and
+            # `CClientMarker::DoPulse` calls it again on every pulse of the
+            # marker manager. Asked on the live client, an attached marker was
+            # still reporting its old position immediately after its target was
+            # moved -- so a stub that followed instantly would let a test pass
+            # on a claim the real thing does not make.
             if lua_type(element) != "table" or lua_type(target) != "table":
                 return False
             element["__attachedTo"] = target
@@ -2121,6 +2139,7 @@ class MtaSandbox:
                 [float(offset_x), float(offset_y), float(offset_z)]
             )
             self.attachments.append((element, target))
+            self._pulse_attachment(element)
             return True
 
         def detach_elements(element: Any = None, *_rest: Any) -> bool:
