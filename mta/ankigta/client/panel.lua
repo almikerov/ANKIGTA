@@ -71,8 +71,8 @@ local focusedCamera = nil
 -- what it was.
 local focusedHold = nil
 
--- The last thing each source told us. The page is redrawn from these, so a
--- language change or a new status repaints without asking anyone again.
+-- The last thing each source told us. The page is redrawn from these, so a new
+-- status or a new scale repaints without asking anyone again.
 local lastStatus = nil
 -- Sanitized connection fields as last reported by the server. The token value
 -- never crosses this boundary; the page only needs to know whether its masked
@@ -104,8 +104,8 @@ local adoptionTarget = nil
 -- render. One-shot on purpose: a filter typed *after* the pick is the player's
 -- latest word and must survive.
 local selectionArrivedFromOutside = false
--- What the player typed to narrow the list. Kept here so a rebuild for another
--- language does not throw away their filter.
+-- What the player typed to narrow the list. Kept here so a rebuild the player
+-- did not ask for does not throw away their filter.
 local entityFilter = ""
 -- Which section the player asked for, when it is theirs to ask. The connection
 -- gate is not a request but a consequence, so it stays out of this.
@@ -362,8 +362,8 @@ end
 -- switch belonging to no map at all -- one that wrote a global value nothing
 -- reads, under a name that promised something about maps.
 --
--- The label is the map's own name, which is the user's words and so is never
--- translated; the setting's name introduces the group above them.
+-- The label is the map's own name, which is the user's words and so never goes
+-- through the string table; the setting's name introduces the group above them.
 --
 -- A refusal is remembered against the map it was about, not against the
 -- setting: one refused map must not put a red border on every other map's row.
@@ -573,7 +573,7 @@ end
 -- The prior resource walked `name`, `me:name`, `me:Name`, `me:ID` and then the
 -- *model* name, and that last step is the one that matters: an object nobody
 -- named reads as "Infernus" rather than as the hash that identifies it. The
--- model name is not user content, so translating nothing here is correct.
+-- model name is not user content, and it is not the table's either.
 --
 -- Client-side because that is where the model tables are: the server has no
 -- `engineGetModelNameFromID`.
@@ -882,22 +882,9 @@ local function deckNames(snapshot)
     return names
 end
 
+--- The whole string table, for a page that holds keys rather than words.
 local function localeTable()
-    local strings = ANKIGTA.Locale and ANKIGTA.Locale.strings
-    if not strings then
-        return {}
-    end
-    local active = strings[ANKIGTA.Locale.language] or {}
-    local merged = {}
-    -- English underneath, so a key the active language lacks still renders as
-    -- words rather than as its own name.
-    for key, value in pairs(strings.en or {}) do
-        merged[key] = value
-    end
-    for key, value in pairs(active) do
-        merged[key] = value
-    end
-    return merged
+    return ANKIGTA.Locale and ANKIGTA.Locale.strings or {}
 end
 
 --- What the top bar says about studying.
@@ -931,7 +918,6 @@ local function push()
     end
     local state = {
         section = section(),
-        language = ANKIGTA.Locale and ANKIGTA.Locale.language or "en",
         locale = localeTable(),
         connection = {
             state = lastStatus and lastStatus.state or "disconnected",
@@ -1832,7 +1818,7 @@ end)
 
 addEvent(PENDING_NOTICE_EVENT, true)
 -- The server sends the key and the outcome code; the side that draws is the
--- side that translates.
+-- side that words it.
 addEventHandler(PENDING_NOTICE_EVENT, resourceRoot, function(noticeKey, outcome)
     if type(noticeKey) ~= "string" then
         return
@@ -2003,10 +1989,6 @@ addEventHandler(AUTHORIZATION_EVENT, resourceRoot, function(value)
         closePanel()
     end
 end)
-
-if ANKIGTA.Locale then
-    ANKIGTA.Locale.onChange(push)
-end
 
 addEventHandler("onClientResourceStart", resourceRoot, function()
     triggerServerEvent(AUTHORIZATION_REQUEST_EVENT, resourceRoot)

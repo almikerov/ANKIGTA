@@ -456,8 +456,12 @@ class MtaSandbox:
         self.blips: list[Any] = []
         #: Every control the resource created, in creation order.
         self.widgets: list[Widget] = []
-        #: What `getLocalization()` reports, as MTA's `{code, name}`.
-        self.localization = {"code": "en-US", "name": "English"}
+        #: What `getLocalization()` reports, as MTA's `{code, name}`. ANKIGTA
+        #: ships in English and asks nobody what Windows is set to, so this is
+        #: here to catch a caller rather than to serve one.
+        self.localization = {"code": "ru-RU", "name": "Russian"}
+        #: How many times a script asked for it.
+        self.localization_reads = 0
         #: Every string handed to `dxDrawText`, in draw order.
         self.drawn_text: list[str] = []
         #: Every script Lua asked the panel page to run, in order.
@@ -1566,7 +1570,12 @@ class MtaSandbox:
             return True
 
         g.dxDrawImage = dx_draw_image
-        g.getLocalization = lambda: self.lua.table_from(self.localization)
+
+        def get_localization() -> Any:
+            self.localization_reads += 1
+            return self.lua.table_from(self.localization)
+
+        g.getLocalization = get_localization
         self._install_gui_globals(g)
         g.tocolor = lambda r=0, gr=0, b=0, a=255: (
             (int(a) << 24) | (int(r) << 16) | (int(gr) << 8) | int(b)

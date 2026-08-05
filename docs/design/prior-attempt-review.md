@@ -19,17 +19,19 @@ was modified. Line counts: 1811 Lua across `anki_in_gta`, ~1000 across
 present in `en.json` but missing from `ru.json`, *and* every key referenced in
 Lua, JS or HTML that does not exist in `en.json` at all.
 
-ANKIGTA has the first (`test_both_languages_cover_the_same_keys`) and a runtime
-diagnostic (`untranslated_key`), but nothing static for the second. A key
-misspelled at a call site renders as the key text and logs — but only if that
-code path runs, which for a rarely-hit error branch may be never.
+Taken, and the first direction no longer applies: panel-rebuild ticket 01 left
+one table and no second language for keys to be missing from. What ANKIGTA had
+was a runtime diagnostic (`missing_string`), which only fires if the code path
+runs — for a rarely-hit error branch, possibly never.
 
-We can do this better than they did. Their version greps the source with a
-regex and needs a `dynamic_prefixes` allowlist to suppress false positives.
-`tests/lua/constants.py` already reads the constant table out of the compiled
-chunk, so the check becomes: every constant that looks like a locale key and is
-passed to `Locale.text`/`Locale.format` must exist in `en`. Cheap, and it turns
-a runtime diagnostic into a build-time failure.
+We did it better than they did. Their version greps the source with a regex and
+needs a `dynamic_prefixes` allowlist to suppress false positives.
+`tests/lua/constants.py` reads the constant table out of the compiled chunk, so
+`test_every_key_a_script_names_has_words_behind_it` asks that every constant
+shaped like a key have words behind it in `shared/locale.lua`, and
+`tests/test_panel_locale_keys.py` does the same for the page. It found
+`settings.error.secret_not_readable`, which had no string and would have
+rendered as its own name on a settings row.
 
 ### Make the nearest-candidate order total
 

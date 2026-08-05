@@ -852,8 +852,8 @@ function MapIdentity.linkSnapshot(row)
         }
     end
     if pending then
-        -- Guidance travels as a key, not a sentence: this side has no
-        -- language, and the F7 window that shows it does.
+        -- Guidance travels as a key, not a sentence: this side has no string
+        -- table, and the F7 window that shows the guidance does.
         local guidanceKey = "guidance.saveWithEditor"
         if pending.lastReadBackOutcome == "identity_collision" then
             return {

@@ -484,16 +484,14 @@ def test_the_input_path_reports_the_reason_the_schema_gives(
     assert control(client, key)["error"] == reason
 
 
-def test_the_rejection_reason_is_shown_in_the_language_in_use(
-    client: MtaSandbox,
-) -> None:
-    call(client, 'function() ANKIGTA.Locale.setLanguage("ru") end')
+def test_the_rejection_reason_reaches_the_row_as_words(client: MtaSandbox) -> None:
+    """The row carries the key; the words for it are in the table the page has."""
     open_panel(client)
 
     apply_number(client, "activationRadius", "200")
 
     assert translate(client, control(client, "activationRadius")["error"]) == (
-        "Значение вне допустимого диапазона"
+        "Value is outside the allowed range"
     )
 
 
@@ -800,25 +798,34 @@ def test_a_player_without_the_study_right_changes_nothing(wired: MtaSandbox) -> 
     assert server_value(wired, "activationRadius") == 3
 
 
-# --- language ----------------------------------------------------------------
+# --- there is no language row ------------------------------------------------
 
 
-def test_switching_language_relabels_the_open_panel_without_a_restart(
+def test_the_panel_neither_offers_a_language_nor_accepts_one(
     client: MtaSandbox,
 ) -> None:
-    open_panel(client)
-    english = translate(client, control(client, "activationRadius")["labelKey"])
+    """The words on the rows come from a table nothing chooses between.
 
-    call(
-        client,
-        "function() end",
+    "Does not accept" is read off the stored values rather than off a getter:
+    `ClientSettings.get` refuses an unknown key whether or not a write got
+    through, so asking it proves only that the schema forgot `language` -- not
+    that the panel declined to store one.
+    """
+    open_panel(client)
+    assert translate(client, control(client, "activationRadius")["labelKey"]) == (
+        "Activation Zone radius (m)"
     )
+    assert control(client, "language") is None
+
     panel_action(client, "setSetting", {"key": "language", "value": "ru"})
 
-    russian = translate(client, control(client, "activationRadius")["labelKey"])
-    assert english == "Activation Zone radius (m)"
-    assert russian == "Радиус зоны активации (м)"
-    assert client_value(client, "language") == "ru"
+    assert call(client, 'function() return ANKIGTA.ClientSettings.values.language end') is None
+    # Nor was it handed to the other side as something the server owns.
+    assert [
+        event.args[0]
+        for event in client.recorder.server_events
+        if event.name == "ankigta:updateSetting"
+    ] == []
 
 
 def test_a_choice_the_schema_does_not_offer_is_rejected(client: MtaSandbox) -> None:
