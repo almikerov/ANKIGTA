@@ -350,9 +350,14 @@ def test_an_entity_the_editor_reloaded_is_still_found_by_its_map_id(
 def teleport(
     sandbox: MtaSandbox, player: Any, map_id: str, entity_id: str
 ) -> tuple[Any, Any]:
-    return sandbox.eval(
-        "function(p, m, e) return teleportPlayerToMapEntity(p, m, e) end"
+    """Moved and why. The arrival target is the third value; see
+    `test_map_editor_defects_after_02.py` for what the client does with it."""
+    result = sandbox.eval(
+        "function(p, m, e)"
+        " local ok, source = teleportPlayerToMapEntity(p, m, e)"
+        " return ok, source end"
     )(player, map_id, entity_id)
+    return result
 
 
 def test_teleport_moves_the_player_to_the_entity_while_the_editor_is_open(
@@ -493,7 +498,7 @@ def notices(sandbox: MtaSandbox) -> list[Any]:
     ]
 
 
-def test_an_entity_is_not_adopted_while_a_scratch_resource_owns_it(
+def test_an_entity_is_not_adopted_while_the_play_test_copy_owns_it(
     server: MtaSandbox,
 ) -> None:
     """`editor_test` is the copy the editor play-tests from.
@@ -512,7 +517,7 @@ def test_an_entity_is_not_adopted_while_a_scratch_resource_owns_it(
         "SELECT COUNT(*) FROM map_entities"
     ).fetchone()[0]
     assert stored == 0
-    assert notices(server)[-1].args[1] == "editor_scratch_resource"
+    assert notices(server)[-1].args[1] == "editor_play_test_map"
 
 
 def test_working_in_the_map_editor_normally_still_adopts(
@@ -532,16 +537,16 @@ def test_working_in_the_map_editor_normally_still_adopts(
     assert row == ("mymap", 99)
 
 
-def test_an_entity_stored_against_a_scratch_map_is_reported_as_missing(
+def test_an_entity_stored_against_the_play_test_copy_is_reported_as_missing(
     server: MtaSandbox,
 ) -> None:
     """Not deleted. The link may have been made against an object the player
     still has, so the row says what it is and the player decides."""
     seed_entity(
         server,
-        map_id="editor_dump",
+        map_id="editor_test",
         entity_id="object (bin) (1)",
-        resource_name="editor_dump",
+        resource_name="editor_test",
     )
     player = study_player(server, dimension=0)
 
@@ -566,23 +571,23 @@ def test_an_entity_stored_against_a_scratch_map_is_reported_as_missing(
     ).fetchone()[0] == 1
 
 
-def test_a_spatial_link_on_a_scratch_map_can_be_removed(
+def test_a_spatial_link_on_the_play_test_copy_can_be_removed(
     server: MtaSandbox,
 ) -> None:
     """The other half of the decision: keep the entity, drop the link."""
     seed_link(
         server,
-        map_id="editor_dump",
+        map_id="editor_test",
         entity_id="object (bin) (1)",
         card_id=42,
-        resource_name="editor_dump",
+        resource_name="editor_test",
     )
     player = study_player(server, dimension=0)
 
     server.eval(
         """
         function(player)
-            return unlinkCardFromEntity(player, "editor_dump",
+            return unlinkCardFromEntity(player, "editor_test",
                 "object (bin) (1)",
                 {collectionUuid = "%s", cardId = 42})
         end
@@ -599,20 +604,20 @@ def test_a_spatial_link_on_a_scratch_map_can_be_removed(
     ).fetchone()[0] == 1
 
 
-def test_a_spatial_link_on_a_scratch_map_can_be_relinked(
+def test_a_spatial_link_on_the_play_test_copy_can_be_relinked(
     server: MtaSandbox,
 ) -> None:
     seed_entity(
         server,
-        map_id="editor_dump",
+        map_id="editor_test",
         entity_id="object (bin) (1)",
-        resource_name="editor_dump",
+        resource_name="editor_test",
     )
     seed_entity(server, map_id="mymap", entity_id="object (crate) (1)")
     server.connection.raw.execute(
         "INSERT INTO spatial_links (map_id, entity_id, collection_uuid,"
         " card_id, state, verified_map_sha256)"
-        " VALUES ('editor_dump', 'object (bin) (1)', ?, 42, 'active', ?)",
+        " VALUES ('editor_test', 'object (bin) (1)', ?, 42, 'active', ?)",
         (UUID, "a" * 64),
     )
     server.connection.raw.commit()
@@ -625,7 +630,7 @@ def test_a_spatial_link_on_a_scratch_map_can_be_relinked(
     relinked = server.eval(
         """
         function(player)
-            local ok, reason = relinkEntity(player, "editor_dump",
+            local ok, reason = relinkEntity(player, "editor_test",
                 "object (bin) (1)", "mymap", "object (crate) (1)")
             return ok ~= false and ok ~= nil, tostring(reason)
         end

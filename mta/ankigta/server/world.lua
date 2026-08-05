@@ -16,22 +16,27 @@ local World = {}
 
 local SUPPORTED_ENTITY_ORDER = ANKIGTA.EntityTypes.order
 
---- The editor's own throwaway resources.
+--- The copy the editor play-tests from.
 --
--- `editor_dump` is where the stock Map Editor keeps a map nobody has named
--- yet, and `editor_test` is the copy it play-tests from. Both are rewritten
--- from scratch the next time the editor needs them, so an entity adopted out
--- of one is a Spatial Link pointing at a copy that stops existing when the
--- test does. Knowing which of the editor's resources are scratch is reading
--- it, not changing it (ADR 0025).
-local SCRATCH_RESOURCES = {
-    editor_dump = true,
-    editor_test = true,
-}
+-- `editor_test` is rebuilt from whatever map is open every time Test is
+-- pressed and torn down when the test ends, and every map reuses the name --
+-- so an entity adopted out of it is a Spatial Link pointing at a copy that
+-- stops existing when the test does.
+--
+-- `editor_dump` is NOT one of these, though ticket 02 said it was and broke
+-- linking for it. It is the editor's autosave of the map being edited, and it
+-- is that map's name for as long as the map is unsaved: `startUp` opens it on
+-- every server start and `newResource` sets `loadedMap` back to it
+-- (editor_main/server/saveloadtest_server.lua). Refusing it refused the normal
+-- case -- a map the player has not pressed Save As on yet.
+--
+-- Knowing which of the editor's resources is the play-test is reading it, not
+-- changing it (ADR 0025).
+local PLAY_TEST_RESOURCE = "editor_test"
 
---- Is this resource one the editor treats as scratch?
-function World.isScratchResource(name)
-    return type(name) == "string" and SCRATCH_RESOURCES[name] == true
+--- Is this the resource the editor play-tests from?
+function World.isPlayTestResource(name)
+    return name == PLAY_TEST_RESOURCE
 end
 
 --- Which running resource loaded this element, and under what name.
@@ -88,6 +93,25 @@ function World.editor()
         mapName = (nameOk and type(mapName) == "string" and mapName ~= "")
             and mapName or false,
     }
+end
+
+--- Has the editor deleted this element?
+--
+-- The stock editor's Delete does not destroy anything: it parks the element in
+-- `workingDimension + 1` so Undo can bring it back. Nothing that reads the
+-- world may treat a parked element as present -- a row for one stays in the
+-- list and keeps its Activation Zone drawn at coordinates nothing stands at.
+--
+-- One answer, here, because three places were deriving it separately and only
+-- two of them ever asked.
+function World.isDeletedInEditor(element, editor)
+    if editor == nil then
+        editor = World.editor()
+    end
+    if not editor or not editor.workingDimension then
+        return false
+    end
+    return getElementDimension(element) == editor.workingDimension + 1
 end
 
 --- Every ANKIGTA map identity the world carries, by the resource that owns it.
@@ -292,6 +316,25 @@ function World.loadedMapIds(storedRows)
     return loaded
 end
 
+--- Does this element answer to a Map Entity's identity?
+--
+-- Matched on the ANKIGTA stamp, on the editor's `me:ID`, or on the `id` the
+-- `.map` file gave the element, because a Map Entity adopted out of the editor
+-- is stored under whichever of those named it -- and a server restart takes
+-- the stamp with it while the `.map` file keeps the id.
+function World.elementCarriesIdentity(element, mapId, entityId)
+    local stamp = getElementData(element, "ankigtaEntityId")
+    local editorId = getElementData(element, "me:ID")
+    if stamp ~= entityId
+        and editorId ~= entityId
+        and getElementID(element) ~= entityId
+    then
+        return false
+    end
+    local elementMapId = getElementData(element, "ankigtaMapId")
+    return mapId == nil or not elementMapId or elementMapId == mapId
+end
+
 --- Every live element carrying one Map Entity's identity.
 --
 -- Matched on the ANKIGTA stamp, on the editor's `me:ID`, or on the `id` the
@@ -309,32 +352,63 @@ function World.runtimeInstances(mapId, entityId, limit)
     if type(entityId) ~= "string" or entityId == "" then
         return found
     end
+    local editor = World.editor()
     for _, kind in ipairs(SUPPORTED_ENTITY_ORDER) do
         for _, element in ipairs(getElementsByType(kind)) do
             if limit and #found >= limit then
                 return found
             end
-            if isElement(element) and not World.isEditorRepresentation(element)
+            if isElement(element)
+                and not World.isEditorRepresentation(element)
+                and not World.isDeletedInEditor(element, editor)
             then
-                local stamp = getElementData(element, "ankigtaEntityId")
-                local editorId = getElementData(element, "me:ID")
-                if stamp == entityId
-                    or editorId == entityId
-                    or getElementID(element) == entityId
-                then
-                    local elementMapId =
-                        getElementData(element, "ankigtaMapId")
-                    if mapId == nil
-                        or not elementMapId
-                        or elementMapId == mapId
-                    then
-                        found[#found + 1] = element
-                    end
+                if World.elementCarriesIdentity(element, mapId, entityId) then
+                    found[#found + 1] = element
                 end
             end
         end
     end
     return found
+end
+
+--- Every identity the editor is holding in its deleted dimension.
+--
+-- Delete in the stock editor is `setElementDimension(element, working + 1)`,
+-- not a destroy, so the element is still in the world and still answers to the
+-- identity. That is the difference between "the player deleted this" and "this
+-- map is not loaded", and it is the only signal that tells them apart while
+-- the map is open.
+--
+-- One walk for the whole snapshot rather than one per row. Asked per row it is
+-- the entire world re-read once per Map Entity, which on a reference-sized
+-- world spent longer than F7's whole two-second budget.
+function World.deletedIdentities()
+    local deleted = {}
+    local editor = World.editor()
+    if not editor or not editor.workingDimension then
+        return deleted
+    end
+    for _, kind in ipairs(SUPPORTED_ENTITY_ORDER) do
+        for _, element in ipairs(getElementsByType(kind)) do
+            if isElement(element)
+                and not World.isEditorRepresentation(element)
+                and World.isDeletedInEditor(element, editor)
+            then
+                -- Under every name the identity match would accept, so a row
+                -- stored under any of them finds it.
+                for _, name in ipairs({
+                    getElementData(element, "ankigtaEntityId"),
+                    getElementData(element, "me:ID"),
+                    getElementID(element),
+                }) do
+                    if type(name) == "string" and name ~= "" then
+                        deleted[name] = element
+                    end
+                end
+            end
+        end
+    end
+    return deleted
 end
 
 --- Which of several live copies is the one in front of the player.

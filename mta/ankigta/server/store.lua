@@ -69,7 +69,6 @@ local Store = {
     errorCategory = nil,
     errorMessage = nil,
     schemaVersion = nil,
-    identityCollisionByMap = {},
     historyReady = false,
     -- Set only when the database cannot be opened and the user has to choose
     -- what happens next. Nothing here ever resolves it on its own.
@@ -966,7 +965,6 @@ function Store.open()
     Store.errorCategory = nil
     Store.errorMessage = nil
     Store.schemaVersion = nil
-    Store.identityCollisionByMap = {}
     Store.historyReady = false
     Store.recoveryState = nil
 
@@ -1073,12 +1071,6 @@ function Store.open()
     return true
 end
 
-function Store.markIdentityCollision(mapId)
-    if type(mapId) == "string" and mapId ~= "" then
-        Store.identityCollisionByMap[mapId] = true
-    end
-end
-
 function Store.markEntityIdentityCollision(mapId, entityId, reason)
     if not Store.ready or type(mapId) ~= "string" or type(entityId) ~= "string" then
         return false, "invalid_identity_collision"
@@ -1098,13 +1090,20 @@ function Store.markEntityIdentityCollision(mapId, entityId, reason)
     if not ok then
         return false, errorMessage
     end
-    Store.markIdentityCollision(mapId)
     return true
 end
 
+--- Is this Map Entity blocked on a copy decision?
+--
+-- Per entity, never per map. A map-wide flag used to be consulted first, so
+-- one entity's collision painted every row of the map with the Original /
+-- New copy buttons -- and on those borrowed rows both buttons answer
+-- `identity_collision_not_found`, because no collision was ever recorded
+-- against them. `recoverPersistedCollisions` re-armed the flag on every start,
+-- so the state outlived the thing that caused it.
 function Store.isIdentityCollision(mapId, entityId)
-    if type(mapId) ~= "string" or Store.identityCollisionByMap[mapId] == true then
-        return type(mapId) == "string" and Store.identityCollisionByMap[mapId] == true
+    if type(mapId) ~= "string" then
+        return false
     end
     if not Store.ready then
         return false
@@ -1134,9 +1133,6 @@ end
 function Store.rowIsIdentityCollision(row)
     if type(row) ~= "table" or type(row.map_id) ~= "string" then
         return false
-    end
-    if Store.identityCollisionByMap[row.map_id] == true then
-        return true
     end
     if row.identity_collision == nil then
         return Store.isIdentityCollision(row.map_id, row.entity_id)
@@ -1198,19 +1194,92 @@ function Store.clearEntityIdentityCollision(mapId, entityId)
     if not ok then
         return false, errorMessage
     end
-    local remainingOk, remainingRows = execute(
-        Store.connection,
-        "SELECT 1 FROM identity_collisions WHERE map_id = ? LIMIT 1",
-        mapId
-    )
-    if not remainingOk then
-        return false, "identity_collision_read_failed"
-    end
-    local remaining = remainingRows
-    if #remaining == 0 then
-        Store.identityCollisionByMap[mapId] = nil
-    end
     return true
+end
+
+--- Forget a Map Entity the player deleted from the map.
+--
+-- Everything ANKIGTA holds about it goes: the entity, its metadata and the
+-- Spatial Link it carried. This is the one place a Map Entity is removed
+-- rather than marked, and it happens only because somebody asked -- the row
+-- was deleted from the map, ANKIGTA said so, and the player answered.
+--
+-- Recorded in Change History, so an answer given too quickly is one Undo away.
+function Store.forgetMapEntity(mapId, entityId)
+    if not Store.ready or not Store.historyReady then
+        return false, Store.errorCategory or "storage_unavailable"
+    end
+    local row, readError = Store.getMapEntity(mapId, entityId)
+    if not row then
+        return false, readError or "entity_missing"
+    end
+    local ok, entityRows = execute(
+        Store.connection,
+        [[
+            SELECT entity_type, model, authored_x, authored_y, authored_z,
+                   rotation_x, rotation_y, rotation_z, interior, dimension
+            FROM map_entities WHERE map_id = ? AND entity_id = ?
+        ]],
+        mapId,
+        entityId
+    )
+    if not ok or not entityRows[1] then
+        return false, "entity_read_failed"
+    end
+    local stored = entityRows[1]
+    local before = {
+        entity = {
+            entityType = stored.entity_type,
+            model = stored.model,
+            x = stored.authored_x,
+            y = stored.authored_y,
+            z = stored.authored_z,
+            rotationX = stored.rotation_x,
+            rotationY = stored.rotation_y,
+            rotationZ = stored.rotation_z,
+            interior = stored.interior,
+            dimension = stored.dimension,
+        },
+        metadata = {
+            name = row.entity_name or "",
+            entityTag = row.entity_tag or "",
+            radius = tonumber(row.radius) or 3,
+            showRadius = tonumber(row.show_radius) == 1,
+            presenceState = row.entity_state or "identified",
+        },
+        link = row.link_state and {
+            collectionUuid = row.collection_uuid,
+            cardId = tonumber(row.card_id),
+            state = row.link_state,
+            verifiedMapSha256 = row.verified_map_sha256,
+        } or nil,
+    }
+    return historyTransaction(
+        "forget_map_entity",
+        historyTarget(mapId, entityId),
+        before,
+        {},
+        {
+            {
+                "DELETE FROM spatial_links WHERE map_id = ? AND entity_id = ?",
+                {mapId, entityId},
+            },
+            {
+                "DELETE FROM identity_collisions"
+                    .. " WHERE map_id = ? AND entity_id = ?",
+                {mapId, entityId},
+            },
+            {
+                "DELETE FROM map_entity_metadata"
+                    .. " WHERE map_id = ? AND entity_id = ?",
+                {mapId, entityId},
+            },
+            {
+                "DELETE FROM map_entities WHERE map_id = ? AND entity_id = ?",
+                {mapId, entityId},
+            },
+        }
+    )
 end
 
 function Store.createMapEntityCopy(
@@ -1557,6 +1626,90 @@ local function applyHistoryStateSteps(operation, target, state)
                     },
                 })
             end
+        end
+    elseif operation == "forget_map_entity" then
+        if type(target) ~= "table"
+            or type(target.mapId) ~= "string"
+            or type(target.entityId) ~= "string"
+            or type(state) ~= "table"
+        then
+            return false, "invalid_history_target"
+        end
+        table.insert(steps, {
+            "DELETE FROM spatial_links WHERE map_id = ? AND entity_id = ?",
+            {target.mapId, target.entityId},
+        })
+        table.insert(steps, {
+            "DELETE FROM map_entity_metadata WHERE map_id = ? AND entity_id = ?",
+            {target.mapId, target.entityId},
+        })
+        table.insert(steps, {
+            "DELETE FROM identity_collisions WHERE map_id = ? AND entity_id = ?",
+            {target.mapId, target.entityId},
+        })
+        table.insert(steps, {
+            "DELETE FROM map_entities WHERE map_id = ? AND entity_id = ?",
+            {target.mapId, target.entityId},
+        })
+        local entity = state.entity
+        if type(entity) == "table" then
+            table.insert(steps, {
+                [[
+                    INSERT INTO map_entities (
+                        map_id, entity_id, entity_type, model,
+                        authored_x, authored_y, authored_z,
+                        rotation_x, rotation_y, rotation_z,
+                        interior, dimension
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ]],
+                {
+                    target.mapId, target.entityId, entity.entityType,
+                    tonumber(entity.model) or 0,
+                    tonumber(entity.x) or 0,
+                    tonumber(entity.y) or 0,
+                    tonumber(entity.z) or 0,
+                    tonumber(entity.rotationX) or 0,
+                    tonumber(entity.rotationY) or 0,
+                    tonumber(entity.rotationZ) or 0,
+                    tonumber(entity.interior) or 0,
+                    tonumber(entity.dimension) or 0,
+                },
+            })
+        end
+        local metadata = state.metadata
+        if type(metadata) == "table" then
+            table.insert(steps, {
+                [[
+                    INSERT INTO map_entity_metadata (
+                        map_id, entity_id, name, entity_tag, radius,
+                        show_radius, presence_state
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ]],
+                {
+                    target.mapId, target.entityId,
+                    metadata.name or "",
+                    metadata.entityTag or "",
+                    tonumber(metadata.radius) or 3,
+                    metadata.showRadius and 1 or 0,
+                    metadata.presenceState or "identified",
+                },
+            })
+        end
+        local link = state.link
+        if type(link) == "table" then
+            table.insert(steps, {
+                [[
+                    INSERT INTO spatial_links (
+                        map_id, entity_id, collection_uuid, card_id,
+                        state, verified_map_sha256
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                ]],
+                {
+                    target.mapId, target.entityId,
+                    link.collectionUuid, tonumber(link.cardId),
+                    link.state or "active", link.verifiedMapSha256,
+                },
+            })
         end
     elseif operation == "map_locator" then
         if type(target) ~= "table" or type(target.mapId) ~= "string"

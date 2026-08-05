@@ -40,6 +40,7 @@ local REVIEW_CLOSED_EVENT = "ankigta:reviewClosed"
 local RENDER_ISSUED_EVENT = "ankigta:renderIssued"
 local REVIEW_RETURN_REQUEST_EVENT = "ankigta:returnToCard"
 local ADOPT_ENTITY_REQUEST_EVENT = "ankigta:adoptEntity"
+local FORGET_ENTITY_REQUEST_EVENT = "ankigta:forgetMapEntity"
 local NOTE_READ_REQUEST_EVENT = "ankigta:requestNote"
 local NOTE_UPDATE_REQUEST_EVENT = "ankigta:updateNote"
 local NOTE_SNAPSHOT_EVENT = "ankigta:noteSnapshot"
@@ -139,13 +140,24 @@ local function adoptionRecord(element, context)
     end
     local resourceName = context and context.resourceName
         or owningResource(element) or "world"
+    -- What the map's document is actually called. `maps.map_name` is read as a
+    -- `.map` filename everywhere -- it is what `Store.updateMapLocator` writes
+    -- into it -- so filling it with the resource name made every later reader
+    -- look for a file that is not there, and made the copy-decision check
+    -- announce every adopted row as a copy of itself.
+    local locator = ANKIGTA.MapIdentity.currentMapLocator()
+    local mapFile = (locator and locator.resourceName == resourceName)
+        and locator.mapFile
+        or resourceName
     local x, y, z = getElementPosition(element)
     local rotationX, rotationY, rotationZ = getElementRotation(element)
     return {
         -- One map per resource: a `.map` names its elements uniquely, and the
-        -- resource is what the ownership walk can check.
+        -- resource is what the ownership walk can check. The map's *identity*
+        -- is the resource; the map's *document* is the file it declares, and
+        -- the two are different strings.
         mapId = resourceName,
-        mapName = resourceName,
+        mapName = mapFile,
         resourceName = resourceName,
         entityId = entityId,
         entityType = getElementType(element),
@@ -447,20 +459,34 @@ local function buildF7Snapshot(player)
     local scratchRows = {}
     local cardLinks = {}
     for _, row in ipairs(rows) do
-        local onCurrentMap = context ~= false
-            and row.resource_name == context.resourceName
-            and (not context.mapIds or context.mapIds[row.map_id])
+        -- Which map a row belongs to is its ANKIGTA identity, not the name of
+        -- the resource the map happens to be loaded from. Those differ every
+        -- time the editor is involved: the same document is `editor_dump`
+        -- while it is unsaved, `editor_test` while it is play-testing, and
+        -- whatever the player saves it as afterwards -- and the identity
+        -- written into the `.map` survives all three. Comparing resource names
+        -- put every row of the open map outside it, which is what listed each
+        -- of them twice: once as a stored row nobody claimed, and once as an
+        -- offer to adopt the element standing right there.
+        local onCurrentMap = false
+        if context ~= false then
+            if context.mapIds then
+                onCurrentMap = context.mapIds[row.map_id] == true
+            else
+                onCurrentMap = row.resource_name == context.resourceName
+            end
+        end
         if onCurrentMap then
             currentRows[#currentRows + 1] = row
             if not seenMapIds[row.map_id] then
                 seenMapIds[row.map_id] = true
                 currentMapIds[#currentMapIds + 1] = row.map_id
             end
-        elseif ANKIGTA.World.isScratchResource(row.resource_name) then
-            -- Stored against one of the editor's throwaway resources, which is
-            -- not a map the player can walk back into. Shown anyway: the row
-            -- is how they are told what happened, and the only place they can
-            -- relink or remove the Spatial Link they made.
+        elseif ANKIGTA.World.isPlayTestResource(row.resource_name) then
+            -- Stored against the copy the editor play-tests from, which is not
+            -- a map the player can walk back into. Shown anyway: the row is how
+            -- they are told what happened, and the only place they can relink
+            -- or remove the Spatial Link they made.
             scratchRows[#scratchRows + 1] = row
         end
         if row.link_state == "active" or row.link_state == "card_missing" then
@@ -474,11 +500,49 @@ local function buildF7Snapshot(player)
         end
     end
 
-    local entities = {}
+    -- An object deleted in the editor is not a Map Entity any more, so it is
+    -- not a row. The editor parks a deleted element in `workingDimension + 1`
+    -- rather than destroying it, which is exactly what tells "the player
+    -- deleted this" apart from "this map is not loaded" -- and without that
+    -- test the row stayed in the list, kept its Activation Zone drawn, and
+    -- offered a copy decision about an object that was in the bin.
+    --
+    -- Reported rather than acted on. The link was made deliberately and the
+    -- player is the one who says whether it goes.
+    local deletedRows = {}
+    local kept = {}
+    local deletedIdentities = ANKIGTA.World.deletedIdentities()
     for _, row in ipairs(currentRows) do
-        table.insert(entities, entityContract(row))
+        if deletedIdentities[row.entity_id] then
+            deletedRows[#deletedRows + 1] = {
+                mapId = row.map_id,
+                entityId = row.entity_id,
+                name = row.entity_name ~= "" and row.entity_name
+                    or row.entity_id,
+                mapName = row.map_name or row.resource_name,
+                linked = row.link_state == "active"
+                    or row.link_state == "card_missing",
+            }
+        else
+            kept[#kept + 1] = row
+        end
+    end
+    currentRows = kept
+
+    -- Every row the snapshot emits, in the order it emits them. The candidate
+    -- walk is fed this rather than the current-map rows alone: an element whose
+    -- row was already emitted must not also be offered as something to adopt,
+    -- which is the second half of how one object came to have two entries.
+    local emittedRows = {}
+    for _, row in ipairs(currentRows) do
+        emittedRows[#emittedRows + 1] = row
     end
     for _, row in ipairs(scratchRows) do
+        emittedRows[#emittedRows + 1] = row
+    end
+
+    local entities = {}
+    for _, row in ipairs(emittedRows) do
         table.insert(entities, entityContract(row))
     end
 
@@ -486,7 +550,7 @@ local function buildF7Snapshot(player)
     -- player sees first and the offers follow.
     local candidates, candidateTotal = {}, 0
     if context then
-        candidates, candidateTotal = worldCandidates(player, currentRows, context)
+        candidates, candidateTotal = worldCandidates(player, emittedRows, context)
     end
     for _, candidate in ipairs(candidates) do
         entities[#entities + 1] = candidate
@@ -515,6 +579,7 @@ local function buildF7Snapshot(player)
         } or false,
         cardLinks = cardLinks,
         entities = entities,
+        deletedFromMap = deletedRows,
         candidatesShown = #candidates,
         candidatesFound = candidateTotal,
         history = history,
@@ -1648,8 +1713,8 @@ local function adoptOffer(player, entityElement)
     -- resources, rewritten the next time it needs one. An entity taken out of
     -- either is a Spatial Link pointing at a copy that stops existing when the
     -- play-test does, so it is refused rather than stored and mourned later.
-    if ANKIGTA.World.isScratchResource(record.resourceName) then
-        return false, "editor_scratch_resource"
+    if ANKIGTA.World.isPlayTestResource(record.resourceName) then
+        return false, "editor_play_test_map"
     end
     local row, adoptError = ANKIGTA.Store.adoptMapEntity(record)
     if not row then
@@ -2445,6 +2510,7 @@ end)
 -- Teleport -------------------------------------------------------------------
 
 local TELEPORT_REQUEST_EVENT = "ankigta:teleportToEntity"
+local TELEPORT_ARRIVED_EVENT = "ankigta:teleportArrived"
 
 --- Move the requesting player to one of their Map Entities.
 -- The client names a Map Entity; the server resolves which Runtime Instance
@@ -2462,7 +2528,7 @@ function teleportPlayerToMapEntity(player, mapId, entityId)
         -- Not in the store: the list also offers what is merely standing in
         -- the world, and "take me to it" is most useful for exactly those --
         -- a thing you have not taken in yet is a thing you have not found.
-        local element = elementByAdoptionName(entityId)
+        local element = elementByAdoptionName(entityId, player)
         if not element then
             return false, "entity_missing"
         end
@@ -2488,12 +2554,63 @@ function teleportPlayerToMapEntity(player, mapId, entityId)
     })
 end
 
+--- The player answered "yes, remove it" about an object they deleted.
+--
+-- The one place a Map Entity is removed rather than marked. It happens because
+-- the object is gone from the map and the player said so, and Change History
+-- holds it, so an answer given too quickly is one Undo away.
+function forgetMapEntity(player, mapId, entityId)
+    local authorized, authorizationError = playerAuthorization(player)
+    if not authorized then
+        return false, authorizationError.category
+    end
+    if type(mapId) ~= "string" or type(entityId) ~= "string" then
+        return false, "invalid_map_entity"
+    end
+    return ANKIGTA.Store.forgetMapEntity(mapId, entityId)
+end
+
+addEvent(FORGET_ENTITY_REQUEST_EVENT, true)
+addEventHandler(FORGET_ENTITY_REQUEST_EVENT, resourceRoot, function(
+    mapId, entityId
+)
+    if not client or source ~= resourceRoot then
+        return
+    end
+    local forgotten, reason = forgetMapEntity(client, mapId, entityId)
+    if not forgotten then
+        triggerClientEvent(
+            client, PENDING_NOTICE_EVENT, resourceRoot,
+            "notice.forgetFailed", reason
+        )
+        return
+    end
+    invalidateStudyDependents(client, false, false, "forget")
+    sendF7Snapshot(client)
+end)
+
 addEvent(TELEPORT_REQUEST_EVENT, true)
 addEventHandler(TELEPORT_REQUEST_EVENT, resourceRoot, function(mapId, entityId)
     if not client or source ~= resourceRoot then
         return
     end
-    teleportPlayerToMapEntity(client, mapId, entityId)
+    local moved, reason, target = teleportPlayerToMapEntity(
+        client, mapId, entityId
+    )
+    if not moved then
+        triggerClientEvent(
+            client,
+            PENDING_NOTICE_EVENT,
+            resourceRoot,
+            "notice.teleportFailed",
+            reason
+        )
+        return
+    end
+    -- Where the player now is, so the client can take the view there too. In
+    -- the stock Map Editor the camera is what holds the player, and only the
+    -- client can move it.
+    triggerClientEvent(client, TELEPORT_ARRIVED_EVENT, resourceRoot, target)
 end)
 
 --- Stopping the resource has to reach Anki, not only the database.
