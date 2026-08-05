@@ -819,7 +819,10 @@ function MapIdentity.linkSnapshot(row)
     local metadata = {
         name = row.entity_name or "",
         entityTag = row.entity_tag or "",
-        radius = tonumber(row.radius) or 3,
+        -- `false` is "this entity follows the global", the same answer the row
+        -- gives everywhere else. Coercing it to 3 here would make one row say
+        -- two different things about its own Activation Zone.
+        radius = tonumber(row.radius) or false,
         showRadius = tonumber(row.show_radius) == 1,
     }
     local pending = pendingByEntity[entityKey(row.map_id, row.entity_id)]
