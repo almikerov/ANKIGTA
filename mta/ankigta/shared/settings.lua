@@ -78,7 +78,11 @@ Settings.schema = {
         default = "allow_due",
         rule = choice({"allow_due", "allow_all"}),
     },
-    includeInStudy = {authority = SERVER, default = true, rule = toggle()},
+    -- No `includeInStudy`. Which maps take part is not a preference: a Map
+    -- Entity is in play when its map is loaded, which the world already
+    -- answers. The switch offered a row per map ANKIGTA had ever seen --
+    -- including the editor's own scratch resources -- and was the only thing
+    -- narrowing study at all.
 
     -- Presentation, input and audio: this player's machine only.
     indicatorMode = {
@@ -124,7 +128,6 @@ Settings.order = {
     "activationDelaySeconds",
     "maxActivationSpeedKmh",
     "reviewMode",
-    "includeInStudy",
     "indicatorMode",
     "reviewProtection",
     "disablePlayerControls",

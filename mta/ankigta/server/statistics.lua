@@ -48,12 +48,13 @@ end
 --- Is this link one that may contribute its card to the counts?
 --
 -- Anything other than an active link -- Card missing, Pending Map Save -- keeps
--- its record but offers nothing to study through.
-local function linkContributes(link, includedMaps)
+-- its record but offers nothing to study through, and neither does a link on a
+-- map that is not loaded.
+local function linkContributes(link, loadedMaps)
     if link.state ~= "active" then
         return false
     end
-    if includedMaps and includedMaps[link.mapId] ~= true then
+    if loadedMaps and loadedMaps[link.mapId] ~= true then
         return false
     end
     return true
@@ -62,19 +63,20 @@ end
 --- Count unique cards by bucket.
 --
 -- `cardStates` is keyed `collectionUuid/cardId` and holds the state Anki
--- reported. `includedMaps` is the Active Map Set. `allowNotDue` decides whether
--- not-due cards are studied at all -- which Review mode it came from is the
--- caller's business, not this one's.
-function Statistics.summarize(links, cardStates, includedMaps, allowNotDue)
+-- reported. `loadedMaps` is the Active Map Set -- the maps in play right now,
+-- which `World.loadedMapIds` decides and nothing here second-guesses.
+-- `allowNotDue` decides whether not-due cards are studied at all -- which
+-- Review mode it came from is the caller's business, not this one's.
+function Statistics.summarize(links, cardStates, loadedMaps, allowNotDue)
     local counts = {new = 0, learning = 0, due = 0, early = 0, total = 0}
     local seen = {}
 
     for _, raw in ipairs(links or {}) do
         local link = readLink(raw)
-        -- Excluded maps and non-active links are filtered before the card is
+        -- Unloaded maps and non-active links are filtered before the card is
         -- considered at all, so a card reachable through several entities is
         -- judged on the ones that actually contribute.
-        if link and linkContributes(link, includedMaps) then
+        if link and linkContributes(link, loadedMaps) then
             local key = cardKey(link)
             if not seen[key] then
                 seen[key] = true

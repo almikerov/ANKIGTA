@@ -58,7 +58,6 @@ def can_write(sandbox: MtaSandbox, side: str, key: str) -> Any:
         ("activationDelaySeconds", "server"),
         ("maxActivationSpeedKmh", "server"),
         ("reviewMode", "server"),
-        ("includeInStudy", "server"),
         ("indicatorMode", "client"),
         ("reviewProtection", "client"),
         ("disablePlayerControls", "client"),
@@ -214,7 +213,7 @@ def test_change_history_covers_exactly_what_the_server_owns(
 
 @pytest.mark.parametrize(
     "key",
-    ["activationRadius", "reviewMode", "includeInStudy"],
+    ["activationRadius", "reviewMode", "activationDelaySeconds"],
 )
 def test_settings_the_server_owns_are_undoable(
     settings: MtaSandbox,

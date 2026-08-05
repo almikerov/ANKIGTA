@@ -66,20 +66,18 @@ def seed(
     sandbox: MtaSandbox,
     links: list[tuple[str, int]],
     *,
-    include_in_study: bool = True,
+    resource_name: str = "ankigta",
     radius: float = 3.0,
     show_radius: bool = False,
 ) -> None:
+    """Links on one map, owned by a resource that is running unless said
+    otherwise. A Map Entity takes part when its map is loaded, and the sandbox
+    is always running `ankigta` itself."""
     raw = sandbox.connection.raw
     raw.execute(
         "INSERT OR IGNORE INTO maps (map_id, resource_name, map_name)"
-        " VALUES (?, 'ankigta', 'Ticket 31')",
-        (MAP_ID,),
-    )
-    raw.execute(
-        "INSERT OR REPLACE INTO map_preferences (map_id, include_in_study)"
-        " VALUES (?, ?)",
-        (MAP_ID, 1 if include_in_study else 0),
+        " VALUES (?, ?, 'Ticket 31')",
+        (MAP_ID, resource_name),
     )
     for entity_id, card_id in links:
         raw.execute(
@@ -281,15 +279,22 @@ def test_a_not_due_card_activates_only_with_early_review_enabled(
     assert [candidate["entityId"] for candidate in candidates] == ["e1"]
 
 
-def test_an_excluded_map_contributes_nothing(server: MtaSandbox) -> None:
+def test_an_unloaded_map_contributes_nothing(server: MtaSandbox) -> None:
+    """A Map Entity takes part when its map is loaded, and only then.
+
+    Nothing is removed: the Spatial Link is still there, waiting for the map
+    to come back.
+    """
     player = server.add_study_player()
-    seed(server, [("e1", 11)], include_in_study=False)
+    seed(server, [("e1", 11)], resource_name="stowed-map")
     refresh(server, player)
 
-    answer(server, {key(11): "new"})
-
+    assert server.recorder.remote_fetches == [], "nothing to ask Anki about"
     assert as_list(last_payload(server, "ankigta:spatialCandidates")) == []
     assert last_payload(server, "ankigta:statistics")["total"] == 0
+    assert server.connection.raw.execute(
+        "SELECT COUNT(*) FROM spatial_links"
+    ).fetchone()[0] == 1
 
 
 # --- the next card -----------------------------------------------------------
@@ -324,7 +329,7 @@ def test_no_session_means_no_next_card(server: MtaSandbox) -> None:
 
 
 def test_a_next_card_nothing_carries_is_not_announced(server: MtaSandbox) -> None:
-    """Anki may name a card whose entity is on an excluded map.
+    """Anki may name a card whose entity is on a map that is not loaded.
 
     Naming it with no bearer would leave the client marking nothing while
     believing it had a target.

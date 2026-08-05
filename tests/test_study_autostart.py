@@ -63,10 +63,6 @@ def seed_link(sandbox: MtaSandbox) -> None:
         " VALUES ('m1', 'ankigta', 'Ticket 32')"
     )
     raw.execute(
-        "INSERT OR REPLACE INTO map_preferences (map_id, include_in_study)"
-        " VALUES ('m1', 1)"
-    )
-    raw.execute(
         "INSERT OR IGNORE INTO map_entities (map_id, entity_id, entity_type,"
         " model, authored_x, authored_y, authored_z, rotation_x, rotation_y,"
         " rotation_z, interior, dimension)"

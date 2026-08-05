@@ -151,15 +151,24 @@ def test_migration_keeps_metadata_change_history_and_settings(
             "entity_missing",
         ]
 
+        # The per-map switch is gone, and so are the entries that replayed into
+        # it. The cursor moves back to the newest surviving entry rather than
+        # pointing at a deleted one, which Undo would never get past.
         assert [row["operation"] for row in rows(
             database, "SELECT operation FROM change_history ORDER BY history_id"
-        )] == ["user_setting", "map_preference"]
+        )] == ["user_setting"]
         assert rows(database, "SELECT cursor_id FROM change_history_state") == [
-            {"cursor_id": 2}
+            {"cursor_id": 1}
         ]
         assert rows(
-            database, "SELECT include_in_study FROM map_preferences"
-        ) == [{"include_in_study": 0}]
+            database,
+            "SELECT name FROM sqlite_master WHERE name = 'map_preferences'",
+        ) == []
+        # A Spatial Link is not the map's preference: the map that had been
+        # switched off keeps every one of them.
+        assert [row["map_id"] for row in rows(
+            database, "SELECT map_id FROM spatial_links ORDER BY map_id"
+        )] == ["second-map", "study-map"]
         assert {
             row["setting_key"]
             for row in rows(database, "SELECT setting_key FROM user_settings")

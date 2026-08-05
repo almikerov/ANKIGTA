@@ -67,24 +67,12 @@ local function denial(category)
     }
 end
 
---- Which running resource loaded this element, and under what name.
---
--- The exact inverse of the walk `Store.findMapEntityByRuntimeElement` does to
--- check ownership, so the pair that goes in is the pair that comes back out.
--- An element no resource owns has nothing to be looked up by after a restart.
-local function owningResource(element)
-    for _, resource in ipairs(getResources() or {}) do
-        local root = getResourceRootElement(resource)
-        local ancestor = element
-        while isElement(ancestor) do
-            if ancestor == root then
-                return getResourceName(resource)
-            end
-            ancestor = getElementParent(ancestor)
-        end
-    end
-    return nil
-end
+-- What is standing in the world is `server/world.lua`'s to answer, so the
+-- panel's scoping, the link path, teleport and the study refresh cannot end up
+-- with four answers that disagree.
+local owningResource = ANKIGTA.World.owningResource
+local currentMapContext = ANKIGTA.World.currentMapContext
+local isEditorRepresentation = ANKIGTA.World.isEditorRepresentation
 
 --- A name for an element that has none of its own.
 --
@@ -243,10 +231,12 @@ end
 
 local function entityContract(row)
     local link = ANKIGTA.MapIdentity.linkSnapshot(row)
-    local element = ANKIGTA.Teleport.findRuntimeInstance(
-        row.map_id,
-        row.entity_id
-    )
+    -- Whether there is a Runtime Instance at all, which is a different
+    -- question from which of several copies is in front of the player -- two
+    -- copies still means the entity is there. Stopped at the first, because
+    -- this runs once per row inside F7's two-second envelope.
+    local element =
+        ANKIGTA.World.runtimeInstances(row.map_id, row.entity_id, 1)[1]
     return {
         mapEntity = {
             mapId = row.map_id,
@@ -365,147 +355,6 @@ end
 -- reported rather than applied quietly.
 local CANDIDATE_LIMIT = 150
 
-local function isEditorRepresentation(element)
-    local ok, answer = pcall(function()
-        return exports.edf:edfIsRepresentation(element)
-    end)
-    return ok and answer == true
-end
-
-local function mapIdsForOwner(owner)
-    local mapIds = {}
-    local function collect(kind)
-        for _, element in ipairs(getElementsByType(kind)) do
-            if owningResource(element) == owner then
-                local mapId = getElementData(element, "ankigtaMapId")
-                if type(mapId) == "string" and mapId ~= "" then
-                    mapIds[mapId] = true
-                end
-            end
-        end
-    end
-    collect("ankigta_map_identity")
-    for _, kind in ipairs(SUPPORTED_ENTITY_ORDER) do
-        collect(kind)
-    end
-    return next(mapIds) and mapIds or false
-end
-
-local function playerWorldScore(owner, player)
-    if not isElement(player) then
-        return 0
-    end
-    local score = 0
-    for _, kind in ipairs(SUPPORTED_ENTITY_ORDER) do
-        for _, element in ipairs(getElementsByType(kind)) do
-            if owningResource(element) == owner
-                and getElementDimension(element) == getElementDimension(player)
-                and getElementInterior(element) == getElementInterior(player)
-            then
-                score = score + 1
-            end
-        end
-    end
-    return score
-end
-
---- The map the player is actually working in or playing on.
---
--- The stock editor keeps an editable copy under `editor_main` in its working
--- dimension while a play-test may keep the map resource itself running in the
--- ordinary world.  Looking at every element therefore lists the same authored
--- entity twice.  The player's dimension decides which of those two worlds is
--- current; outside the editor, the one running resource of type `map` wins.
-local function currentMapContext(player, storedRows)
-    local editor = getResourceFromName("editor_main")
-    if editor and getResourceState(editor) == "running" then
-        local dimensionOk, workingDimension = pcall(function()
-            return exports.editor_main:getWorkingDimension()
-        end)
-        workingDimension = dimensionOk and tonumber(workingDimension) or nil
-        if workingDimension ~= nil
-            and isElement(player)
-            and getElementDimension(player) == workingDimension
-        then
-            local nameOk, mapName = pcall(function()
-                return exports.editor_main:getCurrentMapName()
-            end)
-            if nameOk and type(mapName) == "string" and mapName ~= "" then
-                return {
-                    resourceName = mapName,
-                    candidateOwner = "editor_main",
-                    workingDimension = workingDimension,
-                    mapIds = mapIdsForOwner("editor_main"),
-                }
-            end
-        end
-    end
-
-    local runningMaps = {}
-    for _, candidate in ipairs(getResources() or {}) do
-        if getResourceState(candidate) == "running"
-            and getResourceInfo(candidate, "type") == "map"
-        then
-            runningMaps[#runningMaps + 1] = getResourceName(candidate)
-        end
-    end
-    table.sort(runningMaps)
-    local runningMap = nil
-    if #runningMaps == 1 then
-        runningMap = runningMaps[1]
-    elseif #runningMaps > 1 then
-        local bestScore, tied = 0, false
-        for _, resourceName in ipairs(runningMaps) do
-            local score = playerWorldScore(resourceName, player)
-            if score > bestScore then
-                runningMap, bestScore, tied = resourceName, score, false
-            elseif score > 0 and score == bestScore then
-                tied = true
-            end
-        end
-        if tied then
-            runningMap = nil
-        end
-    end
-    if runningMap then
-        return {
-            resourceName = runningMap,
-            candidateOwner = runningMap,
-            workingDimension = false,
-            mapIds = mapIdsForOwner(runningMap),
-        }
-    end
-
-    -- Disposable/server-only runs have no map manager, but a database that
-    -- contains exactly one map still has an unambiguous current scope.  This
-    -- is also the useful headless-server answer: one known map is that map;
-    -- two known maps without runtime context are deliberately not guessed.
-    local onlyResourceName, onlyMapId = nil, nil
-    for _, row in ipairs(storedRows or {}) do
-        if onlyResourceName == nil then
-            onlyResourceName = row.resource_name
-            onlyMapId = row.map_id
-        elseif row.resource_name ~= onlyResourceName then
-            onlyResourceName = false
-            break
-        elseif row.map_id ~= onlyMapId then
-            onlyMapId = false
-        end
-    end
-    if type(onlyResourceName) == "string" and onlyResourceName ~= ""
-        and type(onlyMapId) == "string" and onlyMapId ~= ""
-    then
-        return {
-            resourceName = onlyResourceName,
-            candidateOwner = onlyResourceName,
-            workingDimension = false,
-            mapIds = {[onlyMapId] = true},
-        }
-    end
-
-    return false
-end
-
 local function worldCandidates(player, storedRows, context)
     local taken = {}
     for _, row in ipairs(storedRows) do
@@ -595,18 +444,24 @@ local function buildF7Snapshot(player)
 
     local context = currentMapContext(player, rows)
     local currentRows, currentMapIds, seenMapIds = {}, {}, {}
+    local scratchRows = {}
     local cardLinks = {}
     for _, row in ipairs(rows) do
-        if context then
-            if row.resource_name == context.resourceName
-                and (not context.mapIds or context.mapIds[row.map_id])
-            then
-                currentRows[#currentRows + 1] = row
-                if not seenMapIds[row.map_id] then
-                    seenMapIds[row.map_id] = true
-                    currentMapIds[#currentMapIds + 1] = row.map_id
-                end
+        local onCurrentMap = context ~= false
+            and row.resource_name == context.resourceName
+            and (not context.mapIds or context.mapIds[row.map_id])
+        if onCurrentMap then
+            currentRows[#currentRows + 1] = row
+            if not seenMapIds[row.map_id] then
+                seenMapIds[row.map_id] = true
+                currentMapIds[#currentMapIds + 1] = row.map_id
             end
+        elseif ANKIGTA.World.isScratchResource(row.resource_name) then
+            -- Stored against one of the editor's throwaway resources, which is
+            -- not a map the player can walk back into. Shown anyway: the row
+            -- is how they are told what happened, and the only place they can
+            -- relink or remove the Spatial Link they made.
+            scratchRows[#scratchRows + 1] = row
         end
         if row.link_state == "active" or row.link_state == "card_missing" then
             cardLinks[#cardLinks + 1] = {
@@ -621,6 +476,9 @@ local function buildF7Snapshot(player)
 
     local entities = {}
     for _, row in ipairs(currentRows) do
+        table.insert(entities, entityContract(row))
+    end
+    for _, row in ipairs(scratchRows) do
         table.insert(entities, entityContract(row))
     end
 
@@ -887,7 +745,7 @@ function validatePickEntity(player, entityElement, mode)
     if not SUPPORTED_ENTITY_TYPES[entityType] then
         return false, "target_type_not_supported"
     end
-    if exports.edf:edfIsRepresentation(entityElement) then
+    if isEditorRepresentation(entityElement) then
         return false, "entity_not_managed"
     end
     local persistentId = getElementData(entityElement, "ankigtaEntityId")
@@ -999,15 +857,22 @@ local function restoreDatabaseBackup(player, backupId)
     return ANKIGTA.Store.restoreFromBackup(backupId)
 end
 
+--- Every card the session should take, from the maps that are in play.
+--
+-- The Active Map Set is the only thing that narrows study, and it is asked for
+-- here rather than assembled: the counters, the spatial candidates and this
+-- set have to be statements about the same world.
 local function activeCardIdentities()
     local rows = ANKIGTA.Store.listMapEntities()
     if type(rows) ~= "table" then
         return false, "storage_unavailable"
     end
+    local loadedMaps = ANKIGTA.World.loadedMapIds(rows)
     local identities = {}
     local seen = {}
     for _, row in ipairs(rows) do
         if row.link_state == "active"
+            and loadedMaps[row.map_id] == true
             and type(row.collection_uuid) == "string"
             and tonumber(row.card_id) ~= nil
         then
@@ -1268,7 +1133,6 @@ local function sendSettingsSnapshot(player)
         resourceRoot,
         {
             values = ANKIGTA.SettingsStore.owned(),
-            maps = ANKIGTA.SettingsStore.mapPreferences(),
         }
     )
 end
@@ -1292,7 +1156,7 @@ addEventHandler(SETTINGS_REQUEST_EVENT, resourceRoot, function()
 end)
 
 addEvent(SETTINGS_UPDATE_EVENT, true)
-addEventHandler(SETTINGS_UPDATE_EVENT, resourceRoot, function(key, value, mapId)
+addEventHandler(SETTINGS_UPDATE_EVENT, resourceRoot, function(key, value)
     if not client or source ~= resourceRoot then
         return
     end
@@ -1310,26 +1174,14 @@ addEventHandler(SETTINGS_UPDATE_EVENT, resourceRoot, function(key, value, mapId)
     -- Checked again here. The client validated for the user's sake, so a bad
     -- value is caught before it leaves the machine; a value arriving over the
     -- wire has been checked by nothing this side owns.
-    local stored, reason
-    if key == "includeInStudy" and mapId ~= nil then
-        -- The only per-map setting: it names the map it is about.
-        stored, reason = ANKIGTA.SettingsStore.setMapIncludeInStudy(
-            mapId,
-            value
-        )
-    else
-        stored, reason = ANKIGTA.SettingsStore.set(key, value)
-    end
+    local stored, reason = ANKIGTA.SettingsStore.set(key, value)
     if not stored then
         triggerClientEvent(
             client,
             SETTINGS_REJECTED_EVENT,
             resourceRoot,
             key,
-            reason,
-            -- Which map the refusal was about, where it was about one: the
-            -- panel puts the reason on that map's row and not on every map's.
-            mapId
+            reason
         )
         return
     end
@@ -1791,6 +1643,13 @@ local function adoptOffer(player, entityElement)
     )
     if not record then
         return false, recordError
+    end
+    -- `editor_dump` and `editor_test` are the editor's own throwaway
+    -- resources, rewritten the next time it needs one. An entity taken out of
+    -- either is a Spatial Link pointing at a copy that stops existing when the
+    -- play-test does, so it is refused rather than stored and mourned later.
+    if ANKIGTA.World.isScratchResource(record.resourceName) then
+        return false, "editor_scratch_resource"
     end
     local row, adoptError = ANKIGTA.Store.adoptMapEntity(record)
     if not row then
@@ -2355,16 +2214,6 @@ local ACTIVATABLE_STATES = {
     not_due = "early",
 }
 
-local function includedMapSet()
-    local included = {}
-    for _, preference in ipairs(ANKIGTA.SettingsStore.mapPreferences()) do
-        if preference.includeInStudy == true then
-            included[preference.mapId] = true
-        end
-    end
-    return included
-end
-
 local function cardStateKey(collectionUuid, cardId)
     return tostring(collectionUuid) .. "/" .. tostring(cardId)
 end
@@ -2409,7 +2258,7 @@ addEventHandler(CARD_STATES_REFRESHED_EVENT, resourceRoot, function(
     if type(rows) ~= "table" then
         return
     end
-    local includedMaps = includedMapSet()
+    local loadedMaps = ANKIGTA.World.loadedMapIds(rows)
     local allowNotDue = studyTakesNotDueCards()
 
     triggerClientEvent(
@@ -2419,7 +2268,7 @@ addEventHandler(CARD_STATES_REFRESHED_EVENT, resourceRoot, function(
         ANKIGTA.Statistics.summarize(
             rows,
             cardStates,
-            includedMaps,
+            loadedMaps,
             allowNotDue
         )
     )
@@ -2431,7 +2280,7 @@ addEventHandler(CARD_STATES_REFRESHED_EVENT, resourceRoot, function(
     local candidates, bearers = {}, {}
     for _, row in ipairs(rows) do
         if row.link_state == "active"
-            and includedMaps[row.map_id] == true
+            and loadedMaps[row.map_id] == true
             and type(row.collection_uuid) == "string"
             and tonumber(row.card_id) ~= nil
         then

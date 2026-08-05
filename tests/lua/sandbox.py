@@ -119,6 +119,10 @@ class _FileStore:
     def __init__(self, root: Path) -> None:
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
+        #: Every path written through this store, in call order. "Nothing was
+        #: written into the editor's own resources" is otherwise only provable
+        #: about files that survived to the end of the test.
+        self.writes: list[str] = []
 
     def resolve(self, path: str) -> Path:
         parts = str(path).split("/")
@@ -147,6 +151,7 @@ class _FileStore:
         target = self.resolve(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)
+        self.writes.append(str(path))
 
     def get(self, path: str, default: bytes = b"") -> bytes:
         try:
@@ -389,6 +394,13 @@ class MtaSandbox:
         #: be able to say what that dimension is.
         self.editor_map_name: str | None = None
         self.editor_working_dimension: int | None = None
+        #: Every container handed to `editor_main:import`, in call order. What
+        #: a test asks when it wants to know whether anything was pushed into
+        #: the editor's own resources.
+        self.editor_imports: list[Any] = []
+        #: Serial number behind every element the sandbox creates, so a parent
+        #: can be recognised across the lupa boundary.
+        self._element_handle = 0
         #: What `getZoneName` reports for any position.
         self.zone_name = "Ganton"
         # The resource directory. A caller that named a database file gets that
@@ -405,6 +417,11 @@ class MtaSandbox:
         #: parsed once per entity and a document parsed once look identical
         #: from their answers, and only differ here.
         self.xml_loads: list[str] = []
+        #: Every element type `getElementsByType` was asked for, in call
+        #: order. A world walked once and a world walked once per map
+        #: give the same answers and differ only here -- and the study
+        #: refresh runs on a two-second timer.
+        self.element_type_reads: list[str] = []
         #: Parsed nodes, so a Lua handle can index back to its element.
         self._xml_nodes: list[ElementTree.Element] = []
         #: Failures to inject at the MTA API boundary.
@@ -777,6 +794,20 @@ class MtaSandbox:
 
         g.isElement = is_element
         g.destroyElement = destroy_element
+        g.createElement = lambda kind="element", element_id=None: (
+            self.new_element(str(kind), element_id=element_id)
+        )
+
+        def set_element_parent(element: Any = None, parent: Any = None) -> bool:
+            if lua_type(element) != "table":
+                return False
+            element["__parent"] = parent
+            return True
+
+        g.setElementParent = set_element_parent
+        g.getElementChildren = lambda element=None, kind=None: (
+            self.lua.table_from(self._children_of(element, kind))
+        )
         g.getElementByID = lambda element_id, *_rest: next(
             (
                 element
@@ -1118,11 +1149,15 @@ class MtaSandbox:
             return args[index + 1] if len(args) > index + 1 else None
 
         def edf_is_representation(*args: Any) -> bool:
+            # `edf.lua`'s own answer: `getElementData(elem, "edf:rep")`, which
+            # EDF stamps on every ordinary element it parents to a custom one.
+            # A double that invented its own marker would let the uniqueness
+            # check pass here and fail in the editor, where the representation
+            # is the second element carrying the entity's identity.
             element = export_argument(args, 0)
-            return (
-                lua_type(element) == "table"
-                and element["__edf_representation"] is True
-            )
+            if lua_type(element) != "table":
+                return False
+            return element["edf:rep"] is True
 
         def edf_set_element_property(*args: Any) -> bool:
             element = export_argument(args, 0)
@@ -1138,13 +1173,10 @@ class MtaSandbox:
             properties = export_argument(args, 3)
             if not isinstance(kind, str) or not kind:
                 return False
-            element = self.lua.table_from(
-                {"__element": True, "type": kind, "__parent": False}
-            )
+            element = self.new_element(kind)
             if lua_type(properties) == "table":
                 for key in properties.keys():
                     element[str(key)] = properties[key]
-            self.world_elements.append(element)
             return element
 
         def editor_current_map(*_args: Any) -> Any:
@@ -1154,6 +1186,47 @@ class MtaSandbox:
             if self.editor_working_dimension is None:
                 return False
             return self.editor_working_dimension
+
+        def editor_import(*args: Any) -> bool:
+            """Take a container's custom elements into the open map.
+
+            `editor_main/server/import.lua` fires `doCloneElement` for every
+            EDF element under the container; the editor clones it into the map
+            it has open and runs `assignID` on the clone. The clone is what
+            survives -- the caller destroys the container behind it.
+
+            Moved rather than copied here, because the observable outcome is
+            the same one ANKIGTA reads back (`getElementsByType` finds exactly
+            one, carrying an editor id) and a copy would need the container's
+            destruction to cascade to model it.
+
+            `assignID` (editor_main/server/IDhandler.lua) only writes `me:ID`
+            when it has to invent an id -- an element whose `.map` already
+            named it uniquely never gets one. Freshly imported elements have
+            no id, so these do.
+            """
+            container = export_argument(args, 0)
+            if lua_type(container) != "table":
+                return False
+            self.editor_imports.append(container)
+            root = self._editor_root() or self._resource_root
+            moved = 0
+            for element in self.world_elements:
+                if lua_type(element) != "table":
+                    continue
+                parent = element["__parent"]
+                if lua_type(parent) != "table":
+                    continue
+                if parent["__handle"] != container["__handle"]:
+                    continue
+                element["__parent"] = root
+                if not element["__id"]:
+                    moved += 1
+                    assigned = f"{element['type']} ({moved})"
+                    element["__id"] = assigned
+                    element["id"] = assigned
+                    element["me:ID"] = assigned
+            return True
 
         edf = self.lua.table_from(
             {
@@ -1167,7 +1240,7 @@ class MtaSandbox:
                 "getCurrentMapName": editor_current_map,
                 "getWorkingDimension": editor_working_dimension,
                 "getSelectedElement": lambda *_args: False,
-                "import": lambda *_args: True,
+                "import": editor_import,
             }
         )
         g.exports = self.lua.table_from(
@@ -1338,6 +1411,72 @@ class MtaSandbox:
         g.fileDelete = file_delete
         g.fileRename = file_rename
 
+    def new_element(self, kind: str, *, element_id: Any = None) -> Any:
+        """A bare element, as `createElement` hands one back.
+
+        Every element the sandbox makes carries a `__handle`, because lupa
+        hands out a fresh wrapper per crossing and the Python identity of a
+        table that went through Lua is not something to key on. Parent lookups
+        compare handles.
+        """
+        self._element_handle += 1
+        element = self.lua.table_from(
+            {
+                "__element": True,
+                "__handle": self._element_handle,
+                "__id": str(element_id) if element_id else "",
+                "__parent": False,
+                "type": str(kind),
+            }
+        )
+        self.world_elements.append(element)
+        return element
+
+    def _children_of(self, parent: Any, kind: Any = None) -> list[Any]:
+        if lua_type(parent) != "table":
+            return []
+        handle = parent["__handle"]
+        return [
+            element
+            for element in self.world_elements
+            if lua_type(element) == "table"
+            and lua_type(element["__parent"]) == "table"
+            and handle is not None
+            and element["__parent"]["__handle"] == handle
+            and (kind is None or str(element["type"]) == str(kind))
+        ]
+
+    def _editor_root(self) -> Any:
+        entry = self._resources.get("editor_main")
+        return entry.root if entry else None
+
+    def add_resource(
+        self,
+        name: str,
+        *,
+        resource_type: str | None = None,
+        state: str = "running",
+    ) -> Any:
+        """Register a resource `getResources` will report, and return its root.
+
+        Parent an element to that root and the ownership walk finds the same
+        pair the store writes down. `resource_type` is what
+        `getResourceInfo(resource, "type")` answers -- `"map"` is how a running
+        map is told from a script.
+        """
+        table = self.lua.table_from({"name": name, "type": resource_type})
+        root = self.lua.table_from(
+            {"__element": True, "type": "resourceRoot", "name": name}
+        )
+        self._resources[name] = _Resource(
+            name=name, table=table, root=root, state=state
+        )
+        return root
+
+    def set_resource_state(self, name: str, state: str) -> None:
+        """Start or stop a registered resource, as `startResource` would."""
+        self._resources[name].state = state
+
     def add_study_player(self, *, right: str = "resource.ankigta.study") -> Any:
         """A logged-in player holding the study right, as the resource expects."""
         player = self.lua.table_from(
@@ -1375,9 +1514,11 @@ class MtaSandbox:
         Element data is set the way EDF sets it, so a lookup by
         `ankigtaEntityId` finds the same thing the resource would find.
         """
+        self._element_handle += 1
         element = self.lua.table_from(
             {
                 "__element": True,
+                "__handle": self._element_handle,
                 "__streamed": streamed,
                 # The `id` a `.map` file gave it, which `getElementID` returns.
                 "__id": str(map_id or ""),
@@ -1399,6 +1540,33 @@ class MtaSandbox:
         self.world_elements.append(element)
         self._elements.add(id(element))
         return element
+
+    def add_edf_representation(self, element: Any, **element_data: Any) -> Any:
+        """The editor's own drawing of `element`, standing beside it.
+
+        `edfRepresentElement` parents ordinary MTA elements to the element they
+        represent and stamps each one `edf:rep`, so the world genuinely holds
+        two elements of the same type. Element data written into a `.map` file
+        arrives on both of them, which is why a uniqueness check that counts
+        elements by identity never sees one inside the editor.
+        """
+        representation = self.add_world_element(
+            str(element["type"]),
+            x=float(element["x"] or 0),
+            y=float(element["y"] or 0),
+            z=float(element["z"] or 0),
+            interior=int(element["interior"] or 0),
+            dimension=int(element["dimension"] or 0),
+            map_id=str(element["__id"] or ""),
+            model=int(element["model"] or 0),
+            **element_data,
+        )
+        representation["__parent"] = element
+        representation["edf:rep"] = True
+        for key in ("ankigtaEntityId", "ankigtaMapId", "me:ID"):
+            if element[key] is not None:
+                representation[key] = element[key]
+        return representation
 
     def to_python(self, value: Any) -> Any:
         """Convert a Lua value the scripts produced into plain Python.
@@ -1761,9 +1929,13 @@ class MtaSandbox:
             return table
 
         g.getVehicleOccupants = get_vehicle_occupants
-        g.getElementsByType = lambda kind, *_rest: self.lua.table_from(
-            [e for e in self.world_elements if str(e["type"]) == str(kind)]
-        )
+        def get_elements_by_type(kind: Any, *_rest: Any) -> Any:
+            self.element_type_reads.append(str(kind))
+            return self.lua.table_from(
+                [e for e in self.world_elements if str(e["type"]) == str(kind)]
+            )
+
+        g.getElementsByType = get_elements_by_type
         g.getElementData = lambda element, key, *_rest: (
             element[str(key)] if lua_type(element) == "table" else False
         )

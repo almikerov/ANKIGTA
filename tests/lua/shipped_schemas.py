@@ -20,8 +20,11 @@ each of which is the inverse of a shipped shape:
   `state = 'active'`.
 - **v4** — `card_missing` admitted on a Spatial Link.
 - **v5** — `map_entities` widened again so a card can hang on a marker.
-- **v6** — the current shape. Its tables are v5's; what changed is a row, the
-  `allowEarlyReview` boolean rewritten as the `reviewMode` it meant.
+- **v6** — v5's tables; what changed is a row, the `allowEarlyReview` boolean
+  rewritten as the `reviewMode` it meant.
+- **v7** — the current shape. `map_preferences` is gone: which maps take part
+  in study is not a stored preference any more, so the table and the Change
+  History entries that replayed into it go with it.
 
 `history=True` adds the tables ticket 11 introduced. They are created by
 `ensureChangeHistorySchema` on every open regardless of version, so any database
@@ -40,7 +43,7 @@ UUID = "11111111-1111-4111-8111-111111111111"
 MAP_SHA = "A" * 64
 
 #: Every shape a released ANKIGTA could have left on disk.
-SHIPPED_VERSIONS = ("v1", "v2", "v3legacy", "v3", "v4", "v5", "v6")
+SHIPPED_VERSIONS = ("v1", "v2", "v3legacy", "v3", "v4", "v5", "v6", "v7")
 
 #: The lowest version a database may be on once the store has opened it.
 #:
@@ -50,7 +53,7 @@ SHIPPED_VERSIONS = ("v1", "v2", "v3legacy", "v3", "v4", "v5", "v6")
 #: still pass. `Store.open()` returning true is the strong claim -- it refuses
 #: any database not at exactly the current version -- and this guards the
 #: direction: raise it in the ticket whose migration raises the schema.
-MIGRATED_SCHEMA_FLOOR = 6
+MIGRATED_SCHEMA_FLOOR = 7
 
 
 _MAPS = """
@@ -164,6 +167,15 @@ CREATE TABLE identity_collisions (
 )
 """
 
+#: The per-map switch, which every shape up to v6 carried.
+_MAP_PREFERENCES = """
+CREATE TABLE map_preferences (
+    map_id TEXT PRIMARY KEY,
+    include_in_study INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY (map_id) REFERENCES maps(map_id) ON DELETE CASCADE
+)
+"""
+
 _HISTORY = [
     """
     CREATE TABLE change_history (
@@ -179,13 +191,6 @@ _HISTORY = [
     CREATE TABLE change_history_state (
         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
         cursor_id INTEGER NOT NULL DEFAULT 0
-    )
-    """,
-    """
-    CREATE TABLE map_preferences (
-        map_id TEXT PRIMARY KEY,
-        include_in_study INTEGER NOT NULL DEFAULT 1,
-        FOREIGN KEY (map_id) REFERENCES maps(map_id) ON DELETE CASCADE
     )
     """,
     """
@@ -264,7 +269,7 @@ def build(path: Path, version: str, *, history: bool | None = None) -> None:
     if history is None:
         # Any build after ticket 11 creates these on open, so the shapes that
         # can still be met in the wild at that version carry them.
-        history = version in ("v3", "v4", "v5", "v6")
+        history = version in ("v3", "v4", "v5", "v6", "v7")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path)
@@ -279,6 +284,7 @@ def build(path: Path, version: str, *, history: bool | None = None) -> None:
 def _create(connection: sqlite3.Connection, version: str, *, history: bool) -> None:
     numeric = {
         "v1": 1, "v2": 2, "v3legacy": 3, "v3": 3, "v4": 4, "v5": 5, "v6": 6,
+        "v7": 7,
     }[version]
     connection.execute(
         "CREATE TABLE schema_meta ("
@@ -299,17 +305,20 @@ def _create(connection: sqlite3.Connection, version: str, *, history: bool) -> N
             "v4": _ENTITIES_V3,
             "v5": _ENTITIES_CURRENT,
             "v6": _ENTITIES_CURRENT,
+            "v7": _ENTITIES_CURRENT,
         }[version]
     )
     if version in ("v3legacy", "v3"):
         connection.execute(_LINKS_V3)
         connection.execute(_COLLISIONS)
-    elif version in ("v4", "v5", "v6"):
+    elif version in ("v4", "v5", "v6", "v7"):
         connection.execute(_LINKS_V4)
         connection.execute(_COLLISIONS)
     if history:
         for statement in _HISTORY:
             connection.execute(statement)
+        if version != "v7":
+            connection.execute(_MAP_PREFERENCES)
 
 
 def _fill(connection: sqlite3.Connection, version: str, *, history: bool) -> None:
@@ -365,39 +374,48 @@ def _fill(connection: sqlite3.Connection, version: str, *, history: bool) -> Non
     connection.executemany(
         "INSERT INTO map_entity_metadata VALUES (?, ?, ?, ?, ?, ?, ?)", METADATA
     )
-    connection.execute(
-        "INSERT INTO map_preferences (map_id, include_in_study) VALUES (?, ?)",
-        ("second-map", 0),
-    )
+    if version != "v7":
+        connection.execute(
+            "INSERT INTO map_preferences (map_id, include_in_study) VALUES (?, ?)",
+            ("second-map", 0),
+        )
     connection.executemany(
         "INSERT INTO user_settings (setting_key, setting_value) VALUES (?, ?)",
         SETTINGS
-        + [_REVIEW_MODE_SETTING if version == "v6" else _EARLY_REVIEW_SETTING],
+        + [
+            _REVIEW_MODE_SETTING
+            if version in ("v6", "v7")
+            else _EARLY_REVIEW_SETTING
+        ],
     )
-    connection.executemany(
-        "INSERT INTO change_history "
-        "(operation, target, before_json, after_json, created_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        [
-            (
-                "user_setting",
-                '{"settingKey":"activationRadius"}',
-                '{"exists":false}',
-                '{"exists":true,"value":7}',
-                100,
-            ),
+    history_entries = [
+        (
+            "user_setting",
+            '{"settingKey":"activationRadius"}',
+            '{"exists":false}',
+            '{"exists":true,"value":7}',
+            100,
+        ),
+    ]
+    if version != "v7":
+        history_entries.append(
             (
                 "map_preference",
                 '{"mapId":"second-map"}',
                 '{"exists":false}',
                 '{"exists":true,"includeInStudy":false}',
                 200,
-            ),
-        ],
+            )
+        )
+    connection.executemany(
+        "INSERT INTO change_history "
+        "(operation, target, before_json, after_json, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        history_entries,
     )
     connection.execute(
         "INSERT INTO change_history_state (singleton, cursor_id) VALUES (1, ?)",
-        (2,),
+        (len(history_entries),),
     )
 
 

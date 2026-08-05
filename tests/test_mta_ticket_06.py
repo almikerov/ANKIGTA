@@ -292,7 +292,9 @@ def test_read_back_binds_entity_id_to_the_selected_editor_element() -> None:
     read_back = _function_body(identity, "readBackSavedMap")
     prepare = _function_body(identity, "MapIdentity.preparePendingMapSave")
 
-    assert 'editorElementId = getElementData(objectElement, "me:ID")' in prepare
+    # Which id `editorElementId` actually ends up holding is behaviour, and
+    # `tests/test_map_editor_and_maps_in_play.py` asserts it against a prepared
+    # pending save rather than against the source that computes it.
     assert 'xmlNodeGetAttribute(child, "id") == pending.editorElementId' in read_back
     assert "selectedEntityIdentityCount ~= 1" in read_back
     assert "expectedEntityIdentityCount > 1" in read_back

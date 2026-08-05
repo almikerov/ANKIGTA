@@ -223,16 +223,6 @@ def set_client(sandbox: MtaSandbox, key: str, value: Any) -> Any:
     )
 
 
-def map_preferences(sandbox: MtaSandbox) -> dict[str, bool]:
-    rows = call(
-        sandbox, "function() return ANKIGTA.SettingsStore.mapPreferences() end"
-    )
-    return {
-        str(rows[index]["mapId"]): rows[index]["includeInStudy"]
-        for index in rows.keys()
-    }
-
-
 # --- reachability ------------------------------------------------------------
 
 
@@ -251,20 +241,12 @@ def test_every_setting_in_the_schema_is_reachable_in_the_panel(
             assert entry is None
             continue
         assert entry is not None, f"{key} is not reachable in the settings panel"
-        if key == "includeInStudy":
-            # The one per-map setting. It is reachable as a group -- a heading
-            # naming the setting, then a row per loaded map -- rather than as a
-            # single switch belonging to no map;
-            # `test_the_per_map_study_setting_is_a_row_per_map` covers the rows.
-            assert entry["kind"] == "heading"
-            continue
         assert entry["kind"] in (
             "number",
             "boolean",
             "choice",
             "delegated",
             "placement",
-            "maps",
         ), f"{key} has no usable control kind"
 
 
@@ -312,7 +294,7 @@ def test_every_label_the_panel_shows_comes_from_the_locale_table(
         )
 
 
-def settings_snapshot(sandbox: MtaSandbox, maps: list[dict[str, Any]]) -> None:
+def settings_snapshot(sandbox: MtaSandbox) -> None:
     """The settings the server owns, arriving as `sendSettingsSnapshot` sends
     them."""
     call(
@@ -324,7 +306,7 @@ def settings_snapshot(sandbox: MtaSandbox, maps: list[dict[str, Any]]) -> None:
             )
         end
         """,
-        json.dumps({"values": {}, "maps": maps}),
+        json.dumps({"values": {}}),
     )
 
 
@@ -336,92 +318,23 @@ def rows_for(sandbox: MtaSandbox, key: str) -> list[dict[str, Any]]:
     ]
 
 
-def test_the_per_map_study_setting_is_a_row_per_map(client: MtaSandbox) -> None:
-    """It decides whether *one* map's entities take part in the study session.
+def test_settings_offers_no_per_map_row_and_no_way_to_exclude_a_map(
+    client: MtaSandbox,
+) -> None:
+    """Which maps take part is not a preference any more.
 
-    Built from the schema like every other setting, it came out as a single
-    switch belonging to no map: its writes went to a global value nothing
-    reads, and excluding one map was not something the panel could express at
-    all. The name says "this map"; the rows have to be per map for that to be
-    true.
+    The switch went: the map that is running gives the set of cards, and
+    `Review mode` chooses within it. Two questions, in that order, and only the
+    second is the player's to answer twice.
     """
     open_panel(client)
-    settings_snapshot(
-        client,
-        [
-            {"mapId": "m1", "mapName": "maps/study.map", "includeInStudy": True},
-            {"mapId": "m2", "mapName": "maps/second.map", "includeInStudy": False},
-        ],
-    )
+    settings_snapshot(client)
 
-    heading, first, second = rows_for(client, "includeInStudy")
-    assert heading["kind"] == "heading"
-    assert heading["labelKey"] == "settings.includeInStudy"
-    # A map's own name is the user's words, so it is shown rather than looked up.
-    assert [first["labelText"], second["labelText"]] == [
-        "maps/study.map",
-        "maps/second.map",
-    ]
-    assert [first["value"], second["value"]] == [True, False]
+    rows = pushed_state(client).get("settings", {}).get("rows", [])
 
-    panel_action(
-        client,
-        "setSetting",
-        {"key": "includeInStudy", "value": False, "mapId": "m1"},
-    )
-
-    update = [
-        event
-        for event in client.recorder.server_events
-        if event.name == "ankigta:updateSetting"
-    ][-1]
-    assert update.args[0] == "includeInStudy"
-    assert update.args[1] is False
-    assert update.args[2] == "m1"
-
-
-def test_a_refused_map_marks_its_own_row_and_no_other(client: MtaSandbox) -> None:
-    """The reason belongs to the map that earned it.
-
-    Rejections are held per setting, and the per-map rows all carry the same
-    setting name -- so one refused map put a red border and an error line on
-    every map in the list.
-    """
-    open_panel(client)
-    settings_snapshot(
-        client,
-        [
-            {"mapId": "m1", "mapName": "maps/study.map", "includeInStudy": True},
-            {"mapId": "m2", "mapName": "maps/second.map", "includeInStudy": True},
-        ],
-    )
-
-    call(
-        client,
-        """
-        function()
-            triggerEvent(
-                "ankigta:settingRejected", resourceRoot,
-                "includeInStudy", "settings.error.not_saved", "m2"
-            )
-        end
-        """,
-    )
-
-    _heading, first, second = rows_for(client, "includeInStudy")
-    assert first["error"] is False
-    assert second["error"] == "settings.error.not_saved"
-
-
-def test_with_no_map_loaded_the_study_setting_says_so(client: MtaSandbox) -> None:
-    """Rather than an empty space where a switch used to be."""
-    open_panel(client)
-    settings_snapshot(client, [])
-
-    heading, note = rows_for(client, "includeInStudy")
-    assert heading["kind"] == "heading"
-    assert note["kind"] == "note"
-    assert note["labelKey"] == "settings.noMaps"
+    assert [row for row in rows if row.get("mapId")] == []
+    assert [row for row in rows if row["key"] == "includeInStudy"] == []
+    assert [row for row in rows if row["kind"] in ("heading", "note")] == []
 
 
 # --- rejection, never clamping ----------------------------------------------
@@ -700,23 +613,6 @@ def test_a_server_setting_is_undoable(server: MtaSandbox) -> None:
     server.execute("ANKIGTA.SettingsStore.load()")
 
     assert server_value(server, "activationRadius") == 3
-
-
-def test_include_in_study_is_offered_per_map_and_recorded_in_history(
-    server: MtaSandbox,
-) -> None:
-    ok = call(
-        server,
-        "function() return ANKIGTA.SettingsStore.setMapIncludeInStudy("
-        '"ticket05-map", false) end',
-    )
-    assert ok is True
-
-    assert map_preferences(server)["ticket05-map"] is False
-
-    call(server, "function() return ANKIGTA.Store.undo() end")
-
-    assert map_preferences(server)["ticket05-map"] is True
 
 
 # --- the wire between the two sides ------------------------------------------

@@ -422,22 +422,6 @@ label {
 }
 .setting:last-child { border-bottom: 0; }
 .setting.invalid { background: rgba(239, 68, 68, 0.07); }
-/* A setting that is per map introduces its rows instead of being one. The
-   rows under it are indented so it reads as a group rather than as a switch
-   that happens to sit above some map names. */
-.setting-heading {
-  margin: var(--space-3) 0 0;
-  padding: 0 var(--space-3);
-  font-size: 13px;
-  color: var(--text);
-}
-.setting-note {
-  margin: 0;
-  padding: var(--space-2) var(--space-3);
-  color: var(--muted);
-  font-size: 12px;
-}
-.setting.per-map { padding-left: var(--space-5); }
 .setting-label {
   flex-direction: row;
   align-items: baseline;

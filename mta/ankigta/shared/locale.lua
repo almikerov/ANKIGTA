@@ -40,15 +40,11 @@ Locale.strings = {
     ["settings.cardAudioEnabled"] = "Card audio",
     ["settings.muteGameWorld"] = "Mute world while reviewing",
     ["settings.uiScale"] = "UI scale",
-    -- Per map, and about that map's entities rather than about a list of
-    -- maps: the old plural read as a global switch over all of them.
-    ["settings.includeInStudy"] = "This map's entities take part in study",
     ["settings.uiPlacement"] = "Window placement",
     ["settings.connectionPort"] = "Companion port",
     ["settings.connectionToken"] = "Companion token",
     ["settings.apply"] = "Apply",
     ["settings.close"] = "X",
-    ["settings.noMaps"] = "No map is loaded",
     ["settings.connectionSettings"] = "Connection settings…",
     ["settings.value.true"] = "On",
     ["settings.value.false"] = "Off",
@@ -72,7 +68,6 @@ Locale.strings = {
     ["settings.error.not_a_placement"] =
         "Stored window placement is not usable",
     ["settings.error.wrong_authority"] = "This setting is owned elsewhere",
-    ["settings.error.map_required"] = "This setting needs a map",
     ["settings.error.not_saved"] = "The setting could not be saved",
     ["ui.smaller"] = "Smaller (−0.05)",
     ["ui.larger"] = "Larger (+0.05)",
@@ -283,6 +278,9 @@ Locale.strings = {
     ["guidance.saveWithEditor"] = "Save the map with the stock Map Editor command.",
     ["guidance.retrySave"] =
         "Repeat the stock Save or the Editor recovery, then press Check again.",
+    ["guidance.editorScratchMap"] =
+        "Stored against the Map Editor's own scratch map, which it rewrites."
+            .. " Relink it to an entity on a saved map, or remove the link.",
     ["guidance.cardMissing"] =
         "The card was deleted from the Bound Anki Collection. Use Replace card.",
     ["notice.pendingActivated"] =

@@ -34,6 +34,31 @@ then `since`), then look in `C:\Games\MTA San Andreas 1.6\MTA\dumps\public`. If 
 reproduces, file it with the diagnosis attached; if not, say so and say what was
 tried.
 
+### It did not reproduce
+
+Driven against the deployed build on 2026-08-05, with `mark`/`since` running
+throughout and the owner's player restored afterwards:
+
+- 5 teleports through `exports.ankigta:teleportPlayerToMapEntity`, one per
+  stored Map Entity;
+- 15 rapid repeats to the one entity that has a live instance, resetting the
+  player to dimension 0 between each;
+- one teleport while occupying a vehicle, and one out of interior 3;
+- one through the whole client→server path (`ankigta:teleportToEntity` from the
+  client), and then 12 more of those on a 250 ms timer with F7 open and the
+  focus camera held, alternating the player's dimension between 0 and 200.
+
+The client stayed reachable throughout, `since` reported no error from any
+resource, and `MTA\dumps\public` is still empty. The only dump on the machine is
+`private\client_..._20260723_0046.dmp`, from 2026-07-23 — not the reported day.
+
+What it did reproduce is the wrong-place symptom, exactly: teleport to
+`editor_dump / object (vgsSstairs04_lvs) (1)` put the player in **dimension 200**,
+the editor's working dimension, from dimension 0. Every other stored entity
+refused with `invalid_target`, because `Store.getMapEntity` never selected the
+authored coordinates — so teleport to an entity with no Runtime Instance could
+not work at all. Both are fixed and tested here.
+
 ## The editor's scratch maps are not the player's
 
 `editor_dump` and `editor_test` are what the editor calls the throwaway resources
@@ -100,27 +125,94 @@ loading the map again brings the link back exactly as it was.
 
 **Status:** ready-for-agent
 
-- [ ] A card links to an object while the Map Editor is open
-- [ ] An editor representation is not counted as a second copy of an entity
-- [ ] A genuine duplicate is still refused, and the refusal says which
-- [ ] A vehicle, a ped and a marker can each be linked
-- [ ] The stub the uniqueness check runs against knows about EDF representations,
+- [x] A card links to an object while the Map Editor is open
+- [x] An editor representation is not counted as a second copy of an entity
+- [x] A genuine duplicate is still refused, and the refusal says which
+- [x] A vehicle, a ped and a marker can each be linked
+- [x] The stub the uniqueness check runs against knows about EDF representations,
       so this cannot pass in tests and fail in the game
-- [ ] Teleport moves the player to the entity while the Map Editor is open
-- [ ] Teleport still works outside the editor, into the right dimension
-- [ ] The teleport crash is either reproduced and filed with a diagnosis, or
+- [x] Teleport moves the player to the entity while the Map Editor is open
+- [x] Teleport still works outside the editor, into the right dimension
+- [x] The teleport crash is either reproduced and filed with a diagnosis, or
       reported as not reproducing, with what was tried
-- [ ] An entity is not adopted while an editor scratch resource owns it
-- [ ] Working in the Map Editor normally still adopts from the map being edited
-- [ ] Entities already stored against a scratch map are identifiable as such
-- [ ] The player is told, rather than having rows silently deleted
-- [ ] A Spatial Link made against one can be relinked or removed deliberately
-- [ ] Nothing is written into any editor resource
-- [ ] Settings offers no per-map row, and no way to exclude a map
-- [ ] A Map Entity on a loaded map is in play; one on an unloaded map is not
-- [ ] Loading that map again brings its links back untouched
-- [ ] The session's card set, the counters and the spatial candidates all narrow
+- [x] An entity is not adopted while an editor scratch resource owns it
+- [x] Working in the Map Editor normally still adopts from the map being edited
+- [x] Entities already stored against a scratch map are identifiable as such
+- [x] The player is told, rather than having rows silently deleted — the row
+      turns `Entity missing` and offers Relink, and carries a reason; see
+      "Found on the way" for why nothing renders the reason yet
+- [x] A Spatial Link made against one can be relinked or removed deliberately
+- [x] Nothing is written into any editor resource
+- [x] Settings offers no per-map row, and no way to exclude a map
+- [x] A Map Entity on a loaded map is in play; one on an unloaded map is not
+- [x] Loading that map again brings its links back untouched
+- [x] The session's card set, the counters and the spatial candidates all narrow
       by the same answer, taken from one place
-- [ ] A database holding stored per-map preferences opens without complaint, and
+- [x] A database holding stored per-map preferences opens without complaint, and
       stops carrying them
-- [ ] `Active Map Set` in CONTEXT.md no longer mentions the switch
+- [x] `Active Map Set` in CONTEXT.md no longer mentions the switch — it names
+      it only to say it is abolished, which is how CONTEXT.md retires a term
+      (see `String Table` on `Localization`)
+
+## Found on the way, and left for whoever owns the file
+
+**Nothing renders `guidanceKey`.** `panel.lua` puts it in the page state and
+`app.js` and `index.html` never read it — so `guidance.saveWithEditor`,
+`guidance.retrySave`, `guidance.cardMissing`, `guidance.copyBlocked`,
+`f7.guidance.notAdopted` and this ticket's `guidance.editorScratchMap` are all
+written and never shown. A scratch row therefore says `Entity missing` and
+offers Relink, which is the state and the action, but not the reason. Ticket 03
+rewrites both files and should render it once for all six.
+
+**`zone_marks.lua:254`** repeats `attempt to call field 'selection'` in
+`clientscript.log`. Ticket 04's file.
+
+**`client/settings_store.lua`** still discards stored `language` and
+`drawRadius` on every start — settings that no longer exist, left from before
+ticket 01.
+
+**Four orphan files sit in the deployed resource**, on disk and undeclared by
+its own `meta.xml`: `client/text_labels.lua`, `client/zone_marks.lua`,
+`server/text_labels.lua`, `shared/text_label.lua`. They are inert — MTA never
+loads them — but this is the shape the wave was called for
+(`spec.md`: "`zone_marks.lua` ended up sitting in the deployed folder undeclared
+by its own `meta.xml` — on disk, never loaded, for days"). Whoever deploys next
+should sweep the directory rather than copy over it.
+
+## What this ticket touched that it was not asked for
+
+Three, each because a checklist item could not otherwise be met:
+
+- **`Store.relinkEntity` passed a bare table as its Change History target**,
+  which SQLite cannot bind, so every relink failed with a transaction error.
+  Only source-text tests covered relink, so nothing had ever run it. Needed for
+  *A Spatial Link made against one can be relinked*.
+- **`Store.getMapEntity` never selected the authored coordinates**, so teleport
+  to an entity with no Runtime Instance answered `invalid_target` — reproduced
+  live on four of the owner's five stored entities. Needed for *Teleport still
+  works outside the editor*.
+- **`me:ID` dropped as a gate in the two Pick Entity prepare paths as well as
+  the Link path**, because it is the same mistake: `assignID` writes it only
+  when the editor has to invent an id.
+
+## What a person still has to look at
+
+Every item above is met at the highest programmatic seam, in
+`tests/test_map_editor_and_maps_in_play.py`. Four of them end in something only
+a person can see, and those are **not run**:
+
+- **F7 → pick a row → Link, inside the open Map Editor.** Expect a Pending Map
+  Save row rather than `entity_runtime_not_unique`. The link only becomes an
+  Active Spatial Link after the editor's own Save, which is the same manual step
+  it always was.
+- **The Teleport button, in the editor and out of it.** Expect to arrive beside
+  the copy in front of you, in the dimension you were looking at.
+- **Settings.** Expect no map names, no heading above them, and no `No map is
+  loaded` line — just the flat list of settings.
+- **A row stored against `editor_dump`/`editor_test`.** Expect `Entity missing`
+  with the scratch-map guidance, Relink offered, and nothing gone from the list
+  on its own.
+
+The owner's live database holds five such rows (`editor_test` ×4,
+`editor_dump` ×1) and no Spatial Link at all, so the fourth is what the panel
+will show first on the next deploy.

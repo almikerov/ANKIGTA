@@ -536,7 +536,6 @@ SERVER_VALUES = {
     "activationDelaySeconds": 2.5,
     "maxActivationSpeedKmh": 45,
     "reviewMode": "allow_all",
-    "includeInStudy": False,
 }
 
 
@@ -642,7 +641,6 @@ def test_a_snapshot_carries_every_answerable_setting_and_no_secret(
         "activationDelaySeconds",
         "maxActivationSpeedKmh",
         "reviewMode",
-        "includeInStudy",
         "connectionPort",
     } == keys
     assert "connectionToken" not in keys

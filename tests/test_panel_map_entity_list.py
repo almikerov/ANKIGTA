@@ -433,7 +433,8 @@ def test_the_editor_list_skips_representations_and_its_deleted_dimension(
         entity_id="representation", map_id="representation", dimension=200
     )
     representation["__parent"] = editor_root
-    representation["__edf_representation"] = True
+    # What EDF stamps on every element it parents to the one it draws.
+    representation["edf:rep"] = True
     deleted = server.add_world_element(
         entity_id="deleted", map_id="deleted", dimension=201
     )
