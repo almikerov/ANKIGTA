@@ -16,22 +16,27 @@ local World = {}
 
 local SUPPORTED_ENTITY_ORDER = ANKIGTA.EntityTypes.order
 
---- The editor's own throwaway resources.
+--- The copy the editor play-tests from.
 --
--- `editor_dump` is where the stock Map Editor keeps a map nobody has named
--- yet, and `editor_test` is the copy it play-tests from. Both are rewritten
--- from scratch the next time the editor needs them, so an entity adopted out
--- of one is a Spatial Link pointing at a copy that stops existing when the
--- test does. Knowing which of the editor's resources are scratch is reading
--- it, not changing it (ADR 0025).
-local SCRATCH_RESOURCES = {
-    editor_dump = true,
-    editor_test = true,
-}
+-- `editor_test` is rebuilt from whatever map is open every time Test is
+-- pressed and torn down when the test ends, and every map reuses the name --
+-- so an entity adopted out of it is a Spatial Link pointing at a copy that
+-- stops existing when the test does.
+--
+-- `editor_dump` is NOT one of these, though ticket 02 said it was and broke
+-- linking for it. It is the editor's autosave of the map being edited, and it
+-- is that map's name for as long as the map is unsaved: `startUp` opens it on
+-- every server start and `newResource` sets `loadedMap` back to it
+-- (editor_main/server/saveloadtest_server.lua). Refusing it refused the normal
+-- case -- a map the player has not pressed Save As on yet.
+--
+-- Knowing which of the editor's resources is the play-test is reading it, not
+-- changing it (ADR 0025).
+local PLAY_TEST_RESOURCE = "editor_test"
 
---- Is this resource one the editor treats as scratch?
-function World.isScratchResource(name)
-    return type(name) == "string" and SCRATCH_RESOURCES[name] == true
+--- Is this the resource the editor play-tests from?
+function World.isPlayTestResource(name)
+    return name == PLAY_TEST_RESOURCE
 end
 
 --- Which running resource loaded this element, and under what name.

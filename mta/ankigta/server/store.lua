@@ -69,7 +69,6 @@ local Store = {
     errorCategory = nil,
     errorMessage = nil,
     schemaVersion = nil,
-    identityCollisionByMap = {},
     historyReady = false,
     -- Set only when the database cannot be opened and the user has to choose
     -- what happens next. Nothing here ever resolves it on its own.
@@ -966,7 +965,6 @@ function Store.open()
     Store.errorCategory = nil
     Store.errorMessage = nil
     Store.schemaVersion = nil
-    Store.identityCollisionByMap = {}
     Store.historyReady = false
     Store.recoveryState = nil
 
@@ -1073,12 +1071,6 @@ function Store.open()
     return true
 end
 
-function Store.markIdentityCollision(mapId)
-    if type(mapId) == "string" and mapId ~= "" then
-        Store.identityCollisionByMap[mapId] = true
-    end
-end
-
 function Store.markEntityIdentityCollision(mapId, entityId, reason)
     if not Store.ready or type(mapId) ~= "string" or type(entityId) ~= "string" then
         return false, "invalid_identity_collision"
@@ -1098,13 +1090,20 @@ function Store.markEntityIdentityCollision(mapId, entityId, reason)
     if not ok then
         return false, errorMessage
     end
-    Store.markIdentityCollision(mapId)
     return true
 end
 
+--- Is this Map Entity blocked on a copy decision?
+--
+-- Per entity, never per map. A map-wide flag used to be consulted first, so
+-- one entity's collision painted every row of the map with the Original /
+-- New copy buttons -- and on those borrowed rows both buttons answer
+-- `identity_collision_not_found`, because no collision was ever recorded
+-- against them. `recoverPersistedCollisions` re-armed the flag on every start,
+-- so the state outlived the thing that caused it.
 function Store.isIdentityCollision(mapId, entityId)
-    if type(mapId) ~= "string" or Store.identityCollisionByMap[mapId] == true then
-        return type(mapId) == "string" and Store.identityCollisionByMap[mapId] == true
+    if type(mapId) ~= "string" then
+        return false
     end
     if not Store.ready then
         return false
@@ -1134,9 +1133,6 @@ end
 function Store.rowIsIdentityCollision(row)
     if type(row) ~= "table" or type(row.map_id) ~= "string" then
         return false
-    end
-    if Store.identityCollisionByMap[row.map_id] == true then
-        return true
     end
     if row.identity_collision == nil then
         return Store.isIdentityCollision(row.map_id, row.entity_id)
@@ -1197,18 +1193,6 @@ function Store.clearEntityIdentityCollision(mapId, entityId)
     )
     if not ok then
         return false, errorMessage
-    end
-    local remainingOk, remainingRows = execute(
-        Store.connection,
-        "SELECT 1 FROM identity_collisions WHERE map_id = ? LIMIT 1",
-        mapId
-    )
-    if not remainingOk then
-        return false, "identity_collision_read_failed"
-    end
-    local remaining = remainingRows
-    if #remaining == 0 then
-        Store.identityCollisionByMap[mapId] = nil
     end
     return true
 end

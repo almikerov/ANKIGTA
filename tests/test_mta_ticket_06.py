@@ -211,7 +211,11 @@ def test_public_object_prepare_path_uses_stock_editor_and_acl_boundary() -> None
     public_prepare = _function_body(server, "prepareObjectPendingMapSave")
 
     assert "exports.editor_main:getCurrentMapName()" in identity
-    assert 'xmlLoadFile(":" .. mapName .. "/meta.xml", true)' in identity
+    # Where the map's document is read from is behaviour, not text: it is
+    # `meta.xml`'s single `<map src>`, and
+    # tests/test_map_editor_and_maps_in_play.py exercises it against a resource
+    # whose file is not named after the resource.
+    assert "meta.xml" in identity
     assert "createMapIdentity(player)" in prepare_object
     assert "exports.edf:edfCreateElement(" in identity
     assert "exports.editor_main:import(container)" in identity

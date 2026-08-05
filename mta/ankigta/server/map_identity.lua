@@ -68,31 +68,111 @@ local function readMapFileIdentities(virtualPath)
     return {mapIds = mapIds, entityIds = entityIds}
 end
 
+--- The single `<map src>` a resource declares, or `false`.
+--
+-- One resource, one map document. Read from `meta.xml` rather than assumed,
+-- because a `src` may carry a directory (`maps/ticket05.map`) and because the
+-- name a map is stored under is not always the name of its file.
+local function declaredMapFile(resourceName)
+    if type(resourceName) ~= "string" or resourceName == "" then
+        return false
+    end
+    local meta = xmlLoadFile(":" .. resourceName .. "/meta.xml", true)
+    if not meta then
+        return false
+    end
+    local sources = {}
+    for _, child in ipairs(xmlNodeGetChildren(meta)) do
+        if xmlNodeGetName(child) == "map" then
+            local source = xmlNodeGetAttribute(child, "src")
+            if type(source) == "string" and source ~= "" then
+                sources[#sources + 1] = source
+            end
+        end
+    end
+    xmlUnloadFile(meta)
+    return #sources == 1 and sources[1] or false
+end
+
+--- Where a stored row's map document actually is.
+--
+-- `maps.map_name` is supposed to hold the `.map` filename -- that is what
+-- `Store.updateMapLocator` writes into it -- but adoption writes the resource
+-- name there, because adoption never learns the resource's `<map src>`. So a
+-- row adopted through the F7 list produced `:editor_dump/editor_dump`, which
+-- is nothing, and every reader of that path silently got "unreadable": the
+-- presence refresh could never clear Entity missing, and the collision check
+-- compared a resource name against a real filename and called it a copy.
+--
+-- Asking the resource what its map file is called costs one `meta.xml` read
+-- and answers for both shapes, so a row healed by `updateMapLocator` and a row
+-- that was never linked resolve the same way.
 local function mapFileVirtualPath(row)
-    if type(row) ~= "table"
-        or type(row.resource_name) ~= "string"
-        or type(row.map_name) ~= "string"
-    then
+    if type(row) ~= "table" or type(row.resource_name) ~= "string" then
         return nil
     end
-    return ":" .. row.resource_name .. "/" .. row.map_name
+    if type(row.map_name) == "string" and row.map_name:sub(-4) == ".map" then
+        return ":" .. row.resource_name .. "/" .. row.map_name
+    end
+    local declared = declaredMapFile(row.resource_name)
+    if not declared then
+        return nil
+    end
+    return ":" .. row.resource_name .. "/" .. declared
+end
+
+local function documentCarriesMapId(virtualPath, mapId)
+    if type(virtualPath) ~= "string" then
+        return false
+    end
+    local contents = readMapFileIdentities(virtualPath)
+    return contents ~= nil and contents.mapIds[mapId] == true
+end
+
+local function resolveCurrentMapLocator()
+    local mapName = exports.editor_main:getCurrentMapName()
+    if type(mapName) ~= "string" or mapName == "" then
+        return false, "no_loaded_map"
+    end
+    local declared = declaredMapFile(mapName)
+    if not declared then
+        return false, "ambiguous_map_file"
+    end
+    return {
+        resourceName = mapName,
+        mapFile = declared,
+        virtualPath = ":" .. mapName .. "/" .. declared,
+    }
 end
 
 --- Is this row's Map Entity in its saved map file?
 --
 -- `nil` where the file could not be read, so a map that is not there is never
 -- mistaken for a map whose entities have gone.
-local function mapFileContainsEntity(row, readFiles)
-    -- The editor's throwaway resources are rewritten from scratch the next
-    -- time it needs one, so an entity stored against one is gone whatever the
-    -- file on disk currently says. Answered before the file is read, and
-    -- answered `false` rather than `nil`: this is a Map Entity that is not
-    -- coming back, not a map that could not be opened.
-    if type(row) == "table" and ANKIGTA.World.isScratchResource(row.resource_name)
-    then
-        return false
+local function mapFileContainsEntity(row, readFiles, currentLocator)
+    if type(row) ~= "table" then
+        return nil
     end
-    local virtualPath = mapFileVirtualPath(row)
+    -- Where this map's document is *now*. A map keeps its ANKIGTA identity and
+    -- changes resource: the same document is `editor_dump` while it is
+    -- unsaved, `editor_test` while it is play-testing, and its own name after
+    -- Save As. So the row is looked for in the document that currently carries
+    -- its identity, not in the resource it happened to be adopted under.
+    local virtualPath = nil
+    if currentLocator
+        and documentCarriesMapId(currentLocator.virtualPath, row.map_id)
+    then
+        virtualPath = currentLocator.virtualPath
+    elseif ANKIGTA.World.isPlayTestResource(row.resource_name) then
+        -- Nothing carries this identity and the only place it was ever written
+        -- down is the copy the editor play-tests from, which is rewritten from
+        -- whatever map is open the next time Test is pressed. `false` rather
+        -- than `nil`: this is a Map Entity that is not coming back, not a map
+        -- that could not be opened.
+        return false
+    else
+        virtualPath = mapFileVirtualPath(row)
+    end
     if virtualPath == nil then
         return nil
     end
@@ -125,8 +205,9 @@ function MapIdentity.refreshEntityPresence()
     end
     -- Each map file, read once for the whole refresh.
     local readFiles = {}
+    local currentLocator = resolveCurrentMapLocator()
     for _, row in ipairs(rows) do
-        local present = mapFileContainsEntity(row, readFiles)
+        local present = mapFileContainsEntity(row, readFiles, currentLocator)
         -- Only where the stored state disagrees. The refresh runs on every F7
         -- open, and a write per entity is twenty thousand statements to record
         -- that nothing changed.
@@ -140,34 +221,12 @@ function MapIdentity.refreshEntityPresence()
     return true
 end
 
-local function resolveCurrentMapLocator()
-    local mapName = exports.editor_main:getCurrentMapName()
-    if type(mapName) ~= "string" or mapName == "" then
-        return false, "no_loaded_map"
-    end
-
-    local meta = xmlLoadFile(":" .. mapName .. "/meta.xml", true)
-    if not meta then
-        return false, "map_meta_not_readable"
-    end
-    local mapSources = {}
-    for _, child in ipairs(xmlNodeGetChildren(meta)) do
-        if xmlNodeGetName(child) == "map" then
-            local source = xmlNodeGetAttribute(child, "src")
-            if type(source) == "string" and source ~= "" then
-                table.insert(mapSources, source)
-            end
-        end
-    end
-    xmlUnloadFile(meta)
-    if #mapSources ~= 1 then
-        return false, "ambiguous_map_file"
-    end
-    return {
-        resourceName = mapName,
-        mapFile = mapSources[1],
-        virtualPath = ":" .. mapName .. "/" .. mapSources[1],
-    }
+--- Where the map the editor currently has open keeps its document.
+--
+-- Adoption needs it: a row whose `map_name` is a resource name is a row every
+-- later reader misreads.
+function MapIdentity.currentMapLocator()
+    return resolveCurrentMapLocator()
 end
 
 --- The map identity elements the editor is holding, minus EDF's own drawings.
@@ -369,16 +428,68 @@ local function attemptReadBack(pending, trigger)
     return true, "active"
 end
 
+--- Has this map been copied or renamed behind ANKIGTA's back?
+--
+-- The question is whether the map that carries this identity is still the map
+-- ANKIGTA wrote down, and it is answered by comparing where the document lives
+-- now against where the store says it lives.
+--
+-- Both halves used to be compared raw, and both were wrong. `owner.mapFile`
+-- comes out of `maps.map_name`, which adoption fills with a RESOURCE NAME
+-- while `mapLocator.mapFile` is a real `<map src>` -- so `editor_test` was
+-- forever "not" `editor_dump.map` and every adopted row was announced as a
+-- copy, with two buttons that could not do anything about it. They are
+-- normalised through the same resolver now, so a row that has never been
+-- linked and a row healed by `updateMapLocator` compare equal.
+local function mapWasCopiedOrRenamed(mapId, owner, mapLocator)
+    if not owner then
+        return false
+    end
+    -- The document in front of us says which map it is. If it carries this
+    -- identity then it IS this map, whatever resource it happens to be loaded
+    -- from -- and being loaded from a different resource is the ordinary case
+    -- in the editor, where one document answers to `editor_dump` while it is
+    -- unsaved, to `editor_test` while it is play-testing, and to its own name
+    -- afterwards. Comparing those names called every one of those a copy.
+    if not documentCarriesMapId(mapLocator.virtualPath, mapId) then
+        -- No identity in the document to go on, so fall back to where the
+        -- store says the map lives, normalised so a stored resource name and a
+        -- real `<map src>` are not mistaken for a rename.
+        if owner.resourceName ~= mapLocator.resourceName then
+            return true
+        end
+        if owner.mapFile == mapLocator.mapFile then
+            return false
+        end
+        local declared = declaredMapFile(owner.resourceName)
+        return declared ~= false and declared ~= mapLocator.mapFile
+    end
+    -- It does carry the identity. That is a copy only if the map the store
+    -- recorded still carries it too -- two documents answering to one identity
+    -- is the thing the decision exists for. One document that has moved is a
+    -- rename, and needs no decision.
+    if owner.resourceName == mapLocator.resourceName then
+        return false
+    end
+    local recorded = declaredMapFile(owner.resourceName)
+    if not recorded then
+        return false
+    end
+    return documentCarriesMapId(
+        ":" .. owner.resourceName .. "/" .. recorded,
+        mapId
+    )
+end
+
 function MapIdentity.detectIdentityCollisions(mapId, entityId, mapLocator)
     local pending = pendingByEntity[entityKey(mapId, entityId)]
     local owner, ownerError = ANKIGTA.Store.mapIdentityOwner(mapId, mapLocator)
     if ownerError then
         return false, ownerError
     end
-    if owner and not (pending and pending.allowRename) and (
-        owner.resourceName ~= mapLocator.resourceName
-        or owner.mapFile ~= mapLocator.mapFile
-    ) then
+    if not (pending and pending.allowRename)
+        and mapWasCopiedOrRenamed(mapId, owner, mapLocator)
+    then
         ANKIGTA.Store.markEntityIdentityCollision(
             mapId,
             entityId,
@@ -803,12 +914,34 @@ function MapIdentity.recheckPendingMapSave(mapId, entityId)
     return attemptReadBack(pending, "manual")
 end
 
+--- Rebuild what the store remembers about blocked copy decisions.
+--
+-- Each one is re-checked rather than believed. A collision is a statement
+-- about where the map document is now, and the predicate that wrote these
+-- rows compared a resource name against a `.map` filename -- so a build that
+-- has fixed the predicate must not carry its old answers forward, or the
+-- Original / New copy buttons outlive the bug that raised them.
 function MapIdentity.recoverPersistedCollisions()
     local rows, readError = ANKIGTA.Store.listIdentityCollisions()
     if not rows then
         return false, readError
     end
+    local currentLocator = resolveCurrentMapLocator()
     for _, row in ipairs(rows) do
+        local owner = {
+            resourceName = row.resource_name,
+            mapFile = row.map_name,
+        }
+        if currentLocator
+            and not mapWasCopiedOrRenamed(row.map_id, owner, currentLocator)
+        then
+            -- The map is where the store says it is. Whatever raised this was
+            -- not a copy.
+            ANKIGTA.Store.clearEntityIdentityCollision(
+                row.map_id,
+                row.entity_id
+            )
+        else
         local mapIdentity = false
         for _, candidate in ipairs(getElementsByType("ankigta_map_identity")) do
             if getElementData(candidate, "ankigtaMapId") == row.map_id then
@@ -828,9 +961,12 @@ function MapIdentity.recoverPersistedCollisions()
                 break
             end
         end
-        local mapFile = row.map_name
-        local virtualPath = ":" .. row.resource_name .. "/" .. mapFile
-        local baselineHash = readMapFileHash(virtualPath)
+        -- Resolved rather than concatenated: a row adopted through the F7
+        -- list carries a resource name in `map_name`, and the path built from
+        -- it is nothing, so the baseline hash was always false.
+        local virtualPath = mapFileVirtualPath(row)
+        local mapFile = declaredMapFile(row.resource_name) or row.map_name
+        local baselineHash = virtualPath and readMapFileHash(virtualPath)
         collisionsByEntity[entityKey(row.map_id, row.entity_id)] = {
             state = "Identity Collision",
             mapId = row.map_id,
@@ -855,7 +991,7 @@ function MapIdentity.recoverPersistedCollisions()
             objectElement = entityElement,
             mapIdentity = mapIdentity,
         }
-        ANKIGTA.Store.markIdentityCollision(row.map_id)
+        end
     end
     return true
 end
@@ -885,7 +1021,8 @@ function MapIdentity.linkSnapshot(row)
         -- reason worth naming: the player made that link deliberately, and may
         -- have made it against an object they still have. Reported as what it
         -- is and left for them to relink or remove -- never deleted here.
-        local scratchMap = ANKIGTA.World.isScratchResource(row.resource_name)
+        local scratchMap =
+            ANKIGTA.World.isPlayTestResource(row.resource_name)
         return {
             state = "Entity missing",
             metadata = metadata,

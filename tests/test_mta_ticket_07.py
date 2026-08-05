@@ -76,7 +76,10 @@ def test_collision_coordinator_blocks_ambiguous_ids_before_activation() -> None:
     activation = function_body(store, "Store.activateSpatialLink")
     assert "Store.mapIdentityOwner" in activation
     assert "identity_collision" in activation
-    assert "markIdentityCollision" in identity
+    # A collision is recorded against the entity that has one, never against
+    # its map: a map-wide flag painted every row of the map with buttons that
+    # then answered `identity_collision_not_found`.
+    assert "markEntityIdentityCollision" in identity
     # Off the row rather than one query per entity (ticket 30), which is the
     # same answer `Store.isIdentityCollision` gives.
     assert "rowIsIdentityCollision" in identity
