@@ -321,13 +321,16 @@ def test_teleporting_to_a_map_entity_resolves_its_instance_first(
     world_entity(teleport, "ticket25-entity", x=250.0)
     subject = player(teleport)
 
-    ok, source = teleport.eval(
+    ok, source, arrived = teleport.eval(
         "function(p, r) return ANKIGTA.Teleport.toMapEntity(p, r) end"
     )(subject, record(teleport, mapId="m1", entityId="ticket25-entity"))
 
     assert ok is True
     assert source == "runtime"
     assert teleport.moved[-1]["position"][0] == 250.0
+    # The target travels back, because inside the Map Editor the camera holds
+    # the player and only the client can move it.
+    assert arrived["x"] == 250.0
 
 
 def test_teleporting_to_a_missing_entity_uses_the_authored_snapshot(
@@ -335,13 +338,14 @@ def test_teleporting_to_a_missing_entity_uses_the_authored_snapshot(
 ) -> None:
     subject = player(teleport)
 
-    ok, source = teleport.eval(
+    ok, source, arrived = teleport.eval(
         "function(p, r) return ANKIGTA.Teleport.toMapEntity(p, r) end"
     )(subject, record(teleport, mapId="m1", entityId="ticket25-entity"))
 
     assert ok is True
     assert source == "authored"
     assert teleport.moved[-1]["position"] == (10.5, -20.25, 4.75)
+    assert (arrived["x"], arrived["y"], arrived["z"]) == (10.5, -20.25, 4.75)
 
 
 def test_every_passenger_gets_the_interior_not_just_the_vehicle(

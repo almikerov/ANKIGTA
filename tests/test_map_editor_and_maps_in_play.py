@@ -350,9 +350,14 @@ def test_an_entity_the_editor_reloaded_is_still_found_by_its_map_id(
 def teleport(
     sandbox: MtaSandbox, player: Any, map_id: str, entity_id: str
 ) -> tuple[Any, Any]:
-    return sandbox.eval(
-        "function(p, m, e) return teleportPlayerToMapEntity(p, m, e) end"
+    """Moved and why. The arrival target is the third value; see
+    `test_map_editor_defects_after_02.py` for what the client does with it."""
+    result = sandbox.eval(
+        "function(p, m, e)"
+        " local ok, source = teleportPlayerToMapEntity(p, m, e)"
+        " return ok, source end"
     )(player, map_id, entity_id)
+    return result
 
 
 def test_teleport_moves_the_player_to_the_entity_while_the_editor_is_open(

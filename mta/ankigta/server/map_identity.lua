@@ -73,12 +73,21 @@ end
 -- One resource, one map document. Read from `meta.xml` rather than assumed,
 -- because a `src` may carry a directory (`maps/ticket05.map`) and because the
 -- name a map is stored under is not always the name of its file.
-local function declaredMapFile(resourceName)
+local function declaredMapFile(resourceName, cache)
     if type(resourceName) ~= "string" or resourceName == "" then
         return false
     end
+    -- Memoised for the caller that asks about every row. `meta.xml` is one
+    -- document per resource and the presence refresh walks ten thousand Map
+    -- Entities: parsing it per row spent longer than F7's whole budget.
+    if cache and cache[resourceName] ~= nil then
+        return cache[resourceName]
+    end
     local meta = xmlLoadFile(":" .. resourceName .. "/meta.xml", true)
     if not meta then
+        if cache then
+            cache[resourceName] = false
+        end
         return false
     end
     local sources = {}
@@ -91,7 +100,11 @@ local function declaredMapFile(resourceName)
         end
     end
     xmlUnloadFile(meta)
-    return #sources == 1 and sources[1] or false
+    local declared = #sources == 1 and sources[1] or false
+    if cache then
+        cache[resourceName] = declared
+    end
+    return declared
 end
 
 --- Where a stored row's map document actually is.
@@ -107,25 +120,37 @@ end
 -- Asking the resource what its map file is called costs one `meta.xml` read
 -- and answers for both shapes, so a row healed by `updateMapLocator` and a row
 -- that was never linked resolve the same way.
-local function mapFileVirtualPath(row)
+local function mapFileVirtualPath(row, declaredFiles)
     if type(row) ~= "table" or type(row.resource_name) ~= "string" then
         return nil
     end
     if type(row.map_name) == "string" and row.map_name:sub(-4) == ".map" then
         return ":" .. row.resource_name .. "/" .. row.map_name
     end
-    local declared = declaredMapFile(row.resource_name)
+    local declared = declaredMapFile(row.resource_name, declaredFiles)
     if not declared then
         return nil
     end
     return ":" .. row.resource_name .. "/" .. declared
 end
 
-local function documentCarriesMapId(virtualPath, mapId)
+local function readIdentitiesCached(virtualPath, readFiles)
     if type(virtualPath) ~= "string" then
-        return false
+        return nil
     end
-    local contents = readMapFileIdentities(virtualPath)
+    if readFiles == nil then
+        return readMapFileIdentities(virtualPath)
+    end
+    local contents = readFiles[virtualPath]
+    if contents == nil then
+        contents = readMapFileIdentities(virtualPath) or false
+        readFiles[virtualPath] = contents
+    end
+    return contents ~= false and contents or nil
+end
+
+local function documentCarriesMapId(virtualPath, mapId, readFiles)
+    local contents = readIdentitiesCached(virtualPath, readFiles)
     return contents ~= nil and contents.mapIds[mapId] == true
 end
 
@@ -149,7 +174,7 @@ end
 --
 -- `nil` where the file could not be read, so a map that is not there is never
 -- mistaken for a map whose entities have gone.
-local function mapFileContainsEntity(row, readFiles, currentLocator)
+local function mapFileContainsEntity(row, readFiles, currentLocator, declaredFiles)
     if type(row) ~= "table" then
         return nil
     end
@@ -160,7 +185,9 @@ local function mapFileContainsEntity(row, readFiles, currentLocator)
     -- its identity, not in the resource it happened to be adopted under.
     local virtualPath = nil
     if currentLocator
-        and documentCarriesMapId(currentLocator.virtualPath, row.map_id)
+        and documentCarriesMapId(
+            currentLocator.virtualPath, row.map_id, readFiles
+        )
     then
         virtualPath = currentLocator.virtualPath
     elseif ANKIGTA.World.isPlayTestResource(row.resource_name) then
@@ -171,26 +198,14 @@ local function mapFileContainsEntity(row, readFiles, currentLocator)
         -- that could not be opened.
         return false
     else
-        virtualPath = mapFileVirtualPath(row)
+        virtualPath = mapFileVirtualPath(row, declaredFiles)
     end
     if virtualPath == nil then
         return nil
     end
-    local contents
-    if readFiles ~= nil then
-        contents = readFiles[virtualPath]
-        if contents == nil then
-            contents = readMapFileIdentities(virtualPath) or false
-            readFiles[virtualPath] = contents
-        end
-        if contents == false then
-            return nil
-        end
-    else
-        contents = readMapFileIdentities(virtualPath)
-        if contents == nil then
-            return nil
-        end
+    local contents = readIdentitiesCached(virtualPath, readFiles)
+    if contents == nil then
+        return nil
     end
     return contents.mapIds[row.map_id] == true
         and contents.entityIds[row.entity_id] == true
@@ -205,9 +220,13 @@ function MapIdentity.refreshEntityPresence()
     end
     -- Each map file, read once for the whole refresh.
     local readFiles = {}
+    -- And each resource's `meta.xml`, read once for the whole refresh.
+    local declaredFiles = {}
     local currentLocator = resolveCurrentMapLocator()
     for _, row in ipairs(rows) do
-        local present = mapFileContainsEntity(row, readFiles, currentLocator)
+        local present = mapFileContainsEntity(
+            row, readFiles, currentLocator, declaredFiles
+        )
         -- Only where the stored state disagrees. The refresh runs on every F7
         -- open, and a write per entity is twenty thousand statements to record
         -- that nothing changed.

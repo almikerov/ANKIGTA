@@ -157,7 +157,12 @@ function Teleport.toMapEntity(player, record)
     if not moved then
         return false, reason
     end
-    return true, target.source
+    -- The target travels back with the answer. Inside the stock Map Editor the
+    -- camera owns where the player is -- `editor_main/client/attachplayer.lua`
+    -- does `setElementPosition(localPlayer, getCameraMatrix())` on every frame
+    -- -- so moving the player alone is undone before it is ever drawn. Only
+    -- the client can move that camera, and it needs somewhere to move it to.
+    return true, target.source, target
 end
 
 ANKIGTA.Teleport = Teleport

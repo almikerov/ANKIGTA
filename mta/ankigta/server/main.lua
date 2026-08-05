@@ -40,6 +40,7 @@ local REVIEW_CLOSED_EVENT = "ankigta:reviewClosed"
 local RENDER_ISSUED_EVENT = "ankigta:renderIssued"
 local REVIEW_RETURN_REQUEST_EVENT = "ankigta:returnToCard"
 local ADOPT_ENTITY_REQUEST_EVENT = "ankigta:adoptEntity"
+local FORGET_ENTITY_REQUEST_EVENT = "ankigta:forgetMapEntity"
 local NOTE_READ_REQUEST_EVENT = "ankigta:requestNote"
 local NOTE_UPDATE_REQUEST_EVENT = "ankigta:updateNote"
 local NOTE_SNAPSHOT_EVENT = "ankigta:noteSnapshot"
@@ -499,6 +500,35 @@ local function buildF7Snapshot(player)
         end
     end
 
+    -- An object deleted in the editor is not a Map Entity any more, so it is
+    -- not a row. The editor parks a deleted element in `workingDimension + 1`
+    -- rather than destroying it, which is exactly what tells "the player
+    -- deleted this" apart from "this map is not loaded" -- and without that
+    -- test the row stayed in the list, kept its Activation Zone drawn, and
+    -- offered a copy decision about an object that was in the bin.
+    --
+    -- Reported rather than acted on. The link was made deliberately and the
+    -- player is the one who says whether it goes.
+    local deletedRows = {}
+    local kept = {}
+    local deletedIdentities = ANKIGTA.World.deletedIdentities()
+    for _, row in ipairs(currentRows) do
+        if deletedIdentities[row.entity_id] then
+            deletedRows[#deletedRows + 1] = {
+                mapId = row.map_id,
+                entityId = row.entity_id,
+                name = row.entity_name ~= "" and row.entity_name
+                    or row.entity_id,
+                mapName = row.map_name or row.resource_name,
+                linked = row.link_state == "active"
+                    or row.link_state == "card_missing",
+            }
+        else
+            kept[#kept + 1] = row
+        end
+    end
+    currentRows = kept
+
     -- Every row the snapshot emits, in the order it emits them. The candidate
     -- walk is fed this rather than the current-map rows alone: an element whose
     -- row was already emitted must not also be offered as something to adopt,
@@ -549,6 +579,7 @@ local function buildF7Snapshot(player)
         } or false,
         cardLinks = cardLinks,
         entities = entities,
+        deletedFromMap = deletedRows,
         candidatesShown = #candidates,
         candidatesFound = candidateTotal,
         history = history,
@@ -2479,6 +2510,7 @@ end)
 -- Teleport -------------------------------------------------------------------
 
 local TELEPORT_REQUEST_EVENT = "ankigta:teleportToEntity"
+local TELEPORT_ARRIVED_EVENT = "ankigta:teleportArrived"
 
 --- Move the requesting player to one of their Map Entities.
 -- The client names a Map Entity; the server resolves which Runtime Instance
@@ -2496,7 +2528,7 @@ function teleportPlayerToMapEntity(player, mapId, entityId)
         -- Not in the store: the list also offers what is merely standing in
         -- the world, and "take me to it" is most useful for exactly those --
         -- a thing you have not taken in yet is a thing you have not found.
-        local element = elementByAdoptionName(entityId)
+        local element = elementByAdoptionName(entityId, player)
         if not element then
             return false, "entity_missing"
         end
@@ -2522,12 +2554,63 @@ function teleportPlayerToMapEntity(player, mapId, entityId)
     })
 end
 
+--- The player answered "yes, remove it" about an object they deleted.
+--
+-- The one place a Map Entity is removed rather than marked. It happens because
+-- the object is gone from the map and the player said so, and Change History
+-- holds it, so an answer given too quickly is one Undo away.
+function forgetMapEntity(player, mapId, entityId)
+    local authorized, authorizationError = playerAuthorization(player)
+    if not authorized then
+        return false, authorizationError.category
+    end
+    if type(mapId) ~= "string" or type(entityId) ~= "string" then
+        return false, "invalid_map_entity"
+    end
+    return ANKIGTA.Store.forgetMapEntity(mapId, entityId)
+end
+
+addEvent(FORGET_ENTITY_REQUEST_EVENT, true)
+addEventHandler(FORGET_ENTITY_REQUEST_EVENT, resourceRoot, function(
+    mapId, entityId
+)
+    if not client or source ~= resourceRoot then
+        return
+    end
+    local forgotten, reason = forgetMapEntity(client, mapId, entityId)
+    if not forgotten then
+        triggerClientEvent(
+            client, PENDING_NOTICE_EVENT, resourceRoot,
+            "notice.forgetFailed", reason
+        )
+        return
+    end
+    invalidateStudyDependents(client, false, false, "forget")
+    sendF7Snapshot(client)
+end)
+
 addEvent(TELEPORT_REQUEST_EVENT, true)
 addEventHandler(TELEPORT_REQUEST_EVENT, resourceRoot, function(mapId, entityId)
     if not client or source ~= resourceRoot then
         return
     end
-    teleportPlayerToMapEntity(client, mapId, entityId)
+    local moved, reason, target = teleportPlayerToMapEntity(
+        client, mapId, entityId
+    )
+    if not moved then
+        triggerClientEvent(
+            client,
+            PENDING_NOTICE_EVENT,
+            resourceRoot,
+            "notice.teleportFailed",
+            reason
+        )
+        return
+    end
+    -- Where the player now is, so the client can take the view there too. In
+    -- the stock Map Editor the camera is what holds the player, and only the
+    -- client can move it.
+    triggerClientEvent(client, TELEPORT_ARRIVED_EVENT, resourceRoot, target)
 end)
 
 --- Stopping the resource has to reach Anki, not only the database.

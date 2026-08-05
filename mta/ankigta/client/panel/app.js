@@ -585,6 +585,18 @@
     document.getElementById("copy-decision").hidden =
       !entity || !entity.copyCollision;
 
+    /* One question at a time, about the first object that left the map. It is
+       not a row any more -- that is the point -- so it is asked here rather
+       than shown as a state on something the list no longer holds. */
+    var deleted = (state.deletedFromMap || [])[0];
+    document.getElementById("deleted-decision").hidden = !deleted;
+    if (deleted) {
+      document.getElementById("deleted-question").textContent =
+        t("f7.deleted.question")
+          .replace("%s", deleted.name)
+          .replace("%s", deleted.mapName);
+    }
+
     /* Offered for every selected row, including one the list is only offering:
      * writing to it is what takes it into the store. A form that appears only
      * after a card has been linked makes naming a thing a statement about a
@@ -638,7 +650,12 @@
     "link": ["link", {}],
 
     "copy-original": ["copyDecision", {decision: "original_or_renamed"}],
-    "copy-new": ["copyDecision", {decision: "new_copy"}]
+    "copy-new": ["copyDecision", {decision: "new_copy"}],
+
+    /* The object left the map. Both answers are the player's; neither is
+       taken for them. */
+    "deleted-forget": ["forgetEntity", {}],
+    "deleted-keep": ["keepDeletedEntity", {}]
   };
   Object.keys(SIMPLE).forEach(function (id) {
     document.getElementById(id).addEventListener("click", function () {

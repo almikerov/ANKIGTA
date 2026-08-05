@@ -368,3 +368,75 @@ def test_the_play_test_copy_is_still_refused_and_says_so(
         "SELECT COUNT(*) FROM map_entities"
     ).fetchone()[0] == 0
     assert notices(server)[-1].args[1] == "editor_play_test_map"
+
+
+# --- "the camera goes back to its map-editor position" -----------------------
+
+
+@pytest.fixture
+def panel_client() -> Iterator[MtaSandbox]:
+    sandbox = MtaSandbox()
+    try:
+        sandbox.load("shared/settings.lua")
+        sandbox.load("shared/locale.lua")
+        sandbox.load("shared/entity_types.lua")
+        sandbox.load("client/layout.lua")
+        sandbox.load("client/panel.lua")
+        sandbox.eval(
+            """
+            function()
+                triggerEvent("ankigta:setAuthorized", resourceRoot, true)
+                togglePanel()
+                triggerEvent("ankigta:panelAction", resourceRoot, "ready", "{}")
+            end
+            """
+        )()
+        yield sandbox
+    finally:
+        sandbox.close()
+
+
+def arrive(sandbox: MtaSandbox, x: float, y: float, z: float, interior: int = 0):
+    sandbox.eval(
+        """
+        function(target)
+            triggerEvent("ankigta:teleportArrived", resourceRoot, target)
+        end
+        """
+    )(
+        sandbox.lua.table_from(
+            {"x": x, "y": y, "z": z, "interior": interior, "dimension": 0}
+        )
+    )
+
+
+def test_arriving_moves_the_camera_when_something_else_holds_the_player(
+    panel_client: MtaSandbox,
+) -> None:
+    """In the Map Editor the camera IS where the player is.
+
+    `editor_main/client/attachplayer.lua` runs
+    `setElementPosition(localPlayer, getCameraMatrix())` every frame, so the
+    server moving the player is undone before the next frame is drawn. A camera
+    with no target is a camera somebody is holding, and that somebody is who is
+    dragging the player back.
+    """
+    panel_client.camera_target = False
+
+    arrive(panel_client, 100.0, 200.0, 30.0, interior=5)
+
+    assert panel_client.camera_matrix[3:6] == (100.0, 200.0, 30.0)
+    assert panel_client.camera_interior == 5
+
+
+def test_arriving_leaves_an_ordinary_follow_camera_alone(
+    panel_client: MtaSandbox,
+) -> None:
+    """Outside the editor the camera already follows the player, who moved."""
+    follower = panel_client.add_world_element("player")
+    panel_client.camera_target = follower
+    before = panel_client.camera_matrix
+
+    arrive(panel_client, 100.0, 200.0, 30.0)
+
+    assert panel_client.camera_matrix == before

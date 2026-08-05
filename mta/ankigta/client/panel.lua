@@ -31,8 +31,10 @@ local UNLINK_CARD_REQUEST_EVENT = "ankigta:unlinkCardFromEntity"
 local REPLACE_CARD_REQUEST_EVENT = "ankigta:replaceCardForEntity"
 local RELINK_ENTITY_REQUEST_EVENT = "ankigta:relinkEntity"
 local TELEPORT_REQUEST_EVENT = "ankigta:teleportToEntity"
+local TELEPORT_ARRIVED_EVENT = "ankigta:teleportArrived"
 local ENTITY_METADATA_REQUEST_EVENT = "ankigta:updateEntityMetadata"
 local ADOPT_ENTITY_REQUEST_EVENT = "ankigta:adoptEntity"
+local FORGET_ENTITY_REQUEST_EVENT = "ankigta:forgetMapEntity"
 local NOTE_READ_REQUEST_EVENT = "ankigta:requestNote"
 local NOTE_UPDATE_REQUEST_EVENT = "ankigta:updateNote"
 local NOTE_SNAPSHOT_EVENT = "ankigta:noteSnapshot"
@@ -115,6 +117,29 @@ local requestedSection = nil
 -- of a form.
 local serverValues = {}
 local settingsRejections = {}
+--- Deleted objects the player has already answered about, this session.
+local answeredDeletions = {}
+
+--- Which deleted objects the player has not answered about yet.
+--
+-- The answer is remembered for as long as the session lasts. "Keep" is a real
+-- answer -- the link stays and the row does not come back -- and asking again
+-- on the next snapshot would make it look like it had not been heard.
+local function unansweredDeletions(snapshot)
+    local pending = {}
+    for _, entry in ipairs(snapshot and snapshot.deletedFromMap or {}) do
+        local key = tostring(entry.mapId) .. "\0" .. tostring(entry.entityId)
+        if not answeredDeletions[key] then
+            pending[#pending + 1] = entry
+        end
+    end
+    return pending
+end
+
+local function firstDeletion()
+    return unansweredDeletions(lastSnapshot)[1]
+end
+
 -- What was sent to the server and not yet answered. Shown in place of the
 -- stored value while it is in flight: snapping the field back to the old
 -- number while the owner is still deciding reads exactly like a refusal.
@@ -196,8 +221,18 @@ local function stillCarriesPlayer(element)
         or element == getPedOccupiedVehicle(localPlayer)
 end
 
+--- True only while `actions.teleport` is closing the panel.
+--
+-- The player is about to be somewhere else, so the camera the panel borrowed
+-- is dropped rather than restored.
+local teleporting = false
+
 local function restoreFocusedCamera()
     if not focusedCamera then
+        return
+    end
+    if teleporting then
+        focusedCamera = nil
         return
     end
     setCameraInterior(focusedCamera.interior or 0)
@@ -885,6 +920,11 @@ local function push()
             tokenError = settingsRejections.connectionToken or false,
         },
         entities = entityRows(lastSnapshot),
+        -- Objects the player deleted from the map. Not rows -- that is the
+        -- point of deleting one -- so they travel beside the list, and the
+        -- ones already answered about are dropped here rather than asked
+        -- again on every snapshot.
+        deletedFromMap = unansweredDeletions(lastSnapshot),
         entityFilter = entityFilter,
         entityTotal = #(lastSnapshot and lastSnapshot.entities or {}),
         study = studyState(),
@@ -1301,9 +1341,13 @@ function actions.teleport()
     if not entry then
         return
     end
-    -- Teleport is the one row action that leaves F7. Capture the identity
-    -- first, then restore the camera/cursor before the server moves the player.
+    -- Teleport is the one row action that leaves F7. The panel goes first, so
+    -- the player is looking at the world when they arrive -- but the camera it
+    -- borrowed for a focus is NOT handed back, because handing it back aims
+    -- the view at wherever the player used to be standing.
+    teleporting = true
     closePanel()
+    teleporting = false
     triggerServerEvent(
         TELEPORT_REQUEST_EVENT,
         resourceRoot,
@@ -1432,6 +1476,32 @@ function actions.recheck()
             RECHECK_REQUEST_EVENT, resourceRoot, selectedMapId, selectedEntityId
         )
     end
+end
+
+--- Remove everything ANKIGTA holds about an object that left the map.
+function actions.forgetEntity()
+    local entry = firstDeletion()
+    if not entry then
+        return
+    end
+    triggerServerEvent(
+        FORGET_ENTITY_REQUEST_EVENT,
+        resourceRoot,
+        entry.mapId,
+        entry.entityId
+    )
+end
+
+--- Keep the saved link, and stop asking.
+function actions.keepDeletedEntity()
+    local entry = firstDeletion()
+    if not entry then
+        return
+    end
+    answeredDeletions[
+        tostring(entry.mapId) .. "\0" .. tostring(entry.entityId)
+    ] = true
+    push()
 end
 
 function actions.copyDecision(payload)
@@ -1765,6 +1835,38 @@ addEventHandler(CARD_PICKER_SNAPSHOT_EVENT, resourceRoot, function(snapshot)
         total = snapshot.total or false,
     })
     searchRequestedAt = false
+end)
+
+--- The player has been moved. Take the view with them.
+--
+-- Inside the stock Map Editor the camera is what holds the player:
+-- `editor_main/client/attachplayer.lua` runs
+-- `setElementPosition(localPlayer, getCameraMatrix())` on every frame, so a
+-- player the server moved is dragged back before the next frame is drawn --
+-- which is what "the camera goes back to its map-editor position" was. The
+-- camera has to be moved instead, and only this side can move it.
+--
+-- Told apart by who the camera is following rather than by asking the editor
+-- whether it is open: a camera with no target is a camera somebody is holding
+-- in a fixed position, and that somebody is the one dragging the player.
+addEvent(TELEPORT_ARRIVED_EVENT, true)
+addEventHandler(TELEPORT_ARRIVED_EVENT, resourceRoot, function(target)
+    if source ~= resourceRoot or type(target) ~= "table" then
+        return
+    end
+    local x, y, z = tonumber(target.x), tonumber(target.y), tonumber(target.z)
+    if not x or not y or not z then
+        return
+    end
+    if isElement(getCameraTarget()) then
+        -- An ordinary follow camera is already looking at the player, and the
+        -- player has already moved.
+        return
+    end
+    setCameraInterior(tonumber(target.interior) or 0)
+    -- Beside the entity and looking at it, the same offset a focus uses, so
+    -- arriving looks like the focus the player just had.
+    setCameraMatrix(x + 6, y + 6, z + 3.3, x, y, z, 0, 70)
 end)
 
 addEvent(PENDING_NOTICE_EVENT, true)

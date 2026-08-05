@@ -126,6 +126,12 @@ Locale.strings = {
     ["f7.filter"] = "Search Map Entity",
     ["f7.filterApply"] = "Search",
     ["f7.filterResult"] = "Showing %d of %d",
+    -- Deleted from the map, so it is no longer a Map Entity. The link was
+    -- made deliberately, so removing it is asked rather than assumed.
+    ["f7.deleted.question"] =
+        "\"%s\" is no longer on map \"%s\". Remove its saved link?",
+    ["f7.deleted.forget"] = "Remove",
+    ["f7.deleted.keep"] = "Keep",
     ["f7.copyOriginal"] = "Original / renamed",
     ["f7.copyNew"] = "New copy",
     ["f7.copyDecisionHint"] =
@@ -307,6 +313,8 @@ Locale.strings = {
     ["notice.studyStateUnavailable"] =
         "Card states and the next card are unavailable: %s",
     ["notice.spatialOpenFailed"] = "The card did not open: %s",
+    ["notice.teleportFailed"] = "Teleport did not happen: %s",
+    ["notice.forgetFailed"] = "The Map Entity was not removed: %s",
     ["notice.linkFailed"] = "Spatial Link was not activated: %s",
     ["notice.adoptFailed"] = "The object was not adopted: %s",
     ["notice.entityUpdateFailed"] = "The entity was not changed: %s",
