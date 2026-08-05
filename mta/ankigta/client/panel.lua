@@ -411,11 +411,17 @@ ANKIGTA.EntityTypes = ANKIGTA.EntityTypes or {
 local PANEL_ENTITY_TYPES = ANKIGTA.EntityTypes.order
 local PANEL_ENTITY_TYPE = ANKIGTA.EntityTypes.supported
 
+--- Is this element EDF's own drawing of another element rather than the
+--- element itself?
+--
+-- Read off the element, because that is all `edfIsRepresentation` does
+-- (`edf/edf.lua`: `return getElementData(elem, "edf:rep")`) and because the
+-- export exists server-side only -- `edf/meta.xml` lists a much shorter client
+-- half. Calling it here failed every time and wrote a line to
+-- `clientscript.log` on every list refresh; the `pcall` around it turned the
+-- failure into "nothing is ever a representation".
 local function isEditorRepresentation(element)
-    local ok, answer = pcall(function()
-        return exports.edf:edfIsRepresentation(element)
-    end)
-    return ok and answer == true
+    return getElementData(element, "edf:rep") == true
 end
 
 --- Resolve the real copy of a Map Entity when editor and play-test copies

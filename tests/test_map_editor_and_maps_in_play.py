@@ -458,8 +458,48 @@ def test_an_entity_stored_against_a_scratch_map_is_reported_as_missing(
     }
 
     assert "object (bin) (1)" in rows, "a scratch row is never hidden"
-    assert rows["object (bin) (1)"]["link"]["state"] == "Entity missing"
-    assert rows["object (bin) (1)"]["link"]["editorScratchMap"] is True
+    link = rows["object (bin) (1)"]["link"]
+    assert link["state"] == "Entity missing"
+    assert link["editorScratchMap"] is True
+    # Told, in words the panel can show, rather than left to be guessed at.
+    assert link["guidanceKey"] == "guidance.editorScratchMap"
+    # And still there afterwards: reporting a row is not deleting it.
+    assert server.connection.raw.execute(
+        "SELECT COUNT(*) FROM map_entities"
+    ).fetchone()[0] == 1
+
+
+def test_a_spatial_link_on_a_scratch_map_can_be_removed(
+    server: MtaSandbox,
+) -> None:
+    """The other half of the decision: keep the entity, drop the link."""
+    seed_link(
+        server,
+        map_id="editor_dump",
+        entity_id="object (bin) (1)",
+        card_id=42,
+        resource_name="editor_dump",
+    )
+    player = study_player(server, dimension=0)
+
+    server.eval(
+        """
+        function(player)
+            return unlinkCardFromEntity(player, "editor_dump",
+                "object (bin) (1)",
+                {collectionUuid = "%s", cardId = 42})
+        end
+        """
+        % UUID
+    )(player)
+
+    assert server.connection.raw.execute(
+        "SELECT COUNT(*) FROM spatial_links"
+    ).fetchone()[0] == 0
+    # The Map Entity itself is kept, so nothing the player named is lost.
+    assert server.connection.raw.execute(
+        "SELECT COUNT(*) FROM map_entities"
+    ).fetchone()[0] == 1
 
 
 def test_a_spatial_link_on_a_scratch_map_can_be_relinked(
@@ -776,3 +816,131 @@ def test_a_database_holding_map_preferences_opens_and_stops_carrying_them(
         assert history["canUndo"] is False
     finally:
         second.close()
+
+
+# --- the panel, on the client's half of the editor -----------------------------
+
+
+@pytest.fixture
+def panel_client() -> Iterator[MtaSandbox]:
+    sandbox = MtaSandbox()
+    try:
+        sandbox.load("shared/settings.lua")
+        sandbox.load("shared/locale.lua")
+        sandbox.load("shared/entity_types.lua")
+        sandbox.load("client/layout.lua")
+        sandbox.load("client/panel.lua")
+        sandbox.eval(
+            """
+            function()
+                triggerEvent("ankigta:setAuthorized", resourceRoot, true)
+                togglePanel()
+                triggerEvent("ankigta:panelAction", resourceRoot, "ready", "{}")
+            end
+            """
+        )()
+        yield sandbox
+    finally:
+        sandbox.close()
+
+
+def to_lua(sandbox: MtaSandbox, value: Any) -> Any:
+    if isinstance(value, dict):
+        return sandbox.lua.table_from(
+            {key: to_lua(sandbox, item) for key, item in value.items()}
+        )
+    if isinstance(value, list):
+        return sandbox.lua.table_from([to_lua(sandbox, item) for item in value])
+    return value
+
+
+def test_the_panel_skips_a_representation_without_asking_a_server_export(
+    panel_client: MtaSandbox,
+) -> None:
+    """`edf/meta.xml` exports `edfIsRepresentation` server-side only.
+
+    Calling it from the client fails, and the client half of ANKIGTA swallowed
+    the failure into "nothing is ever a representation" -- so the list resolved
+    rows to EDF's drawing of an element as readily as to the element, and wrote
+    a line into `clientscript.log` on every refresh.
+    """
+    panel_client.eval(
+        """
+        function()
+            exports.edf.edfIsRepresentation = function()
+                error("client-side edf has no such export")
+            end
+        end
+        """
+    )()
+    representation = panel_client.add_world_element(
+        "object", map_id="gate-17", x=999, y=999, z=999
+    )
+    representation["edf:rep"] = True
+    representation["ankigtaEntityId"] = "gate-17"
+    real = panel_client.add_world_element(
+        "object", map_id="gate-17", x=10.25, y=-20.5, z=3
+    )
+    real["ankigtaEntityId"] = "gate-17"
+    panel_client.eval(
+        """
+        function(snapshot)
+            triggerEvent("ankigta:f7Snapshot", resourceRoot, snapshot)
+        end
+        """
+    )(
+        to_lua(
+            panel_client,
+            {
+                "visible": True,
+                "cardPicker": {"enabled": True},
+                "history": {"canUndo": False, "canRedo": False},
+                "currentMap": {
+                    "resourceName": "current-map",
+                    "mapIds": ["current-map-id"],
+                },
+                "cardLinks": [],
+                "entities": [
+                    {
+                        "mapEntity": {
+                            "mapId": "current-map-id",
+                            "entityId": "gate-17",
+                            "type": "object",
+                            "model": 1337,
+                            "map": {
+                                "resourceName": "current-map",
+                                "mapName": "Current Map",
+                            },
+                            "authored": {
+                                "position": {"x": 0, "y": 0, "z": 0},
+                                "rotation": {"x": 0, "y": 0, "z": 0},
+                                "world": {"interior": 0, "dimension": 0},
+                            },
+                        },
+                        "runtimeInstance": {
+                            "available": True,
+                            "referenceId": "gate-17",
+                        },
+                        "metadata": {
+                            "name": "",
+                            "entityTag": "",
+                            "radius": 3,
+                            "showRadius": False,
+                        },
+                        "link": {"state": "Unlinked"},
+                    }
+                ],
+            },
+        )
+    )
+
+    panel_client.eval(
+        """
+        function()
+            triggerEvent("ankigta:panelAction", resourceRoot, "focusEntity",
+                '{"mapId":"current-map-id","entityId":"gate-17"}')
+        end
+        """
+    )()
+
+    assert panel_client.camera_matrix[3:6] == (10.25, -20.5, 3.0)
