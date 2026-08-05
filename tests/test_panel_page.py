@@ -784,7 +784,7 @@ def test_clearing_the_field_asks_to_follow_the_global_again() -> None:
         ]
     )
 
-    assert actions(answer, "setEntityRadius") == [{"radius": False}]
+    assert actions(answer, "setEntityMarks") == [{"radius": False}]
 
 
 def test_a_typed_radius_is_sent_as_the_number_it_is() -> None:
@@ -796,7 +796,7 @@ def test_a_typed_radius_is_sent_as_the_number_it_is() -> None:
         ]
     )
 
-    assert actions(answer, "setEntityRadius") == [{"radius": 7.5}]
+    assert actions(answer, "setEntityMarks") == [{"radius": 7.5}]
 
 
 # --- the list stops fighting the player --------------------------------------

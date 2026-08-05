@@ -1027,7 +1027,7 @@ def test_the_panel_skips_a_representation_without_asking_a_server_export(
                             "name": "",
                             "entityTag": "",
                             "radius": 3,
-                            "showRadius": False,
+                            "showCorona": False,
                         },
                         "link": {"state": "Unlinked"},
                     }

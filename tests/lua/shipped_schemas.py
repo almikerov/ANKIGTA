@@ -53,7 +53,7 @@ SHIPPED_VERSIONS = ("v1", "v2", "v3legacy", "v3", "v4", "v5", "v6", "v7")
 #: still pass. `Store.open()` returning true is the strong claim -- it refuses
 #: any database not at exactly the current version -- and this guards the
 #: direction: raise it in the ticket whose migration raises the schema.
-MIGRATED_SCHEMA_FLOOR = 7
+MIGRATED_SCHEMA_FLOOR = 8
 
 
 _MAPS = """

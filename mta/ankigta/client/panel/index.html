@@ -95,13 +95,30 @@
               <span class="inherited-mark" id="entity-radius-inherited"
                     data-i18n="f7.radiusInherited" hidden></span>
             </label>
+            <!-- A property of the entity, not a way of looking: the corona
+                 stands where the thing stands and everyone sees it. Drawing
+                 the selected row's radius is the other half of what
+                 `Draw always` used to confuse, and it is in Settings. -->
             <label class="inline check">
-              <input type="checkbox" id="entity-draw-now" />
-              <span data-i18n="f7.showRadius"></span>
+              <input type="checkbox" id="entity-show-corona" />
+              <span data-i18n="f7.showCorona"></span>
             </label>
-            <label class="inline check">
-              <input type="checkbox" id="entity-draw-always" />
-              <span data-i18n="f7.drawAlways"></span>
+            <label class="inline">
+              <span data-i18n="f7.coronaColor"></span>
+              <!-- A mount point, not markup: the picker is the one ticket 03
+                   built, because a native colour dialog has nowhere to open
+                   over a page rendered into a game window. -->
+              <span id="entity-corona-color"></span>
+              <span class="inherited-mark" id="entity-corona-color-inherited"
+                    data-i18n="f7.coronaInherited" hidden></span>
+            </label>
+            <label class="inline">
+              <span data-i18n="f7.coronaOpacity"></span>
+              <input type="number" id="entity-corona-opacity" min="0" max="1"
+                     step="0.05" data-inherited="false"
+                     data-i18n-title="f7.coronaOpacityClearHint" />
+              <span class="inherited-mark" id="entity-corona-opacity-inherited"
+                    data-i18n="f7.coronaInherited" hidden></span>
             </label>
           </div>
         </div>

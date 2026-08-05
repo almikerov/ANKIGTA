@@ -499,6 +499,15 @@ class MtaSandbox:
         #: these, so a test can ask whether one was drawn and how wide it is
         #: rather than whether a function was reached.
         self.drawn_lines_3d: list[dict[str, float]] = []
+        #: Every `dxDrawMaterialLine3D`, which is the standing beam the Next
+        #: Card Indicator marks a spot with.
+        self.drawn_material_lines_3d: list[dict[str, Any]] = []
+        #: Markers the resource created, live and destroyed alike. A live one
+        #: is `isElement`; the list keeps both so a test can say a corona was
+        #: taken out of the world rather than merely never made.
+        self.markers: list[Any] = []
+        #: `attachElements(element, target)` pairs, in the order they happened.
+        self.attachments: list[tuple[Any, Any]] = []
         #: What `guiGetScreenSize()` reports. Tests move it to run the same
         #: layout at 1280x720, 1920x1080 and 3840x2160.
         self.screen_width = 1920.0
@@ -762,8 +771,15 @@ class MtaSandbox:
                 self._elements.discard(id(value))
                 return True
             if lua_type(value) == "table" and value["__element"] is True:
-                value["__destroyed"] = True
                 index = value["__widget"]
+                if index is None:
+                    # MTA raises this *before* the element goes, so `source` is
+                    # still a valid element inside the handler -- which is the
+                    # window a resource destroying its own elements has to
+                    # recognize them in. A CEGUI control is not a world element
+                    # and raises no such event.
+                    self.trigger("onClientElementDestroy", value)
+                value["__destroyed"] = True
                 if index is not None:
                     self._destroy_widget(int(index))
                 return True
@@ -1844,6 +1860,22 @@ class MtaSandbox:
                 element["__destroyed"] = True
             if lua_type(element) != "table":
                 return False
+            # An attached element is wherever its target has got to, plus the
+            # offset -- MTA writes that in every frame (`DoAttaching`), so
+            # asking one where it is never answers with where it was attached.
+            target = element["__attachedTo"]
+            if lua_type(target) == "table":
+                offset = element["__attachedOffset"]
+                shift = (
+                    (float(offset[1]), float(offset[2]), float(offset[3]))
+                    if offset is not None
+                    else (0.0, 0.0, 0.0)
+                )
+                return (
+                    float(target["x"] or 0) + shift[0],
+                    float(target["y"] or 0) + shift[1],
+                    float(target["z"] or 0) + shift[2],
+                )
             return element["x"], element["y"], element["z"]
 
         def get_element_velocity(element: Any) -> Any:
@@ -1957,7 +1989,152 @@ class MtaSandbox:
             return blip
 
         g.createBlip = create_blip
-        g.dxDrawMaterialLine3D = lambda *_a, **_k: True
+
+        def dx_draw_material_line_3d(
+            start_x: Any = 0, start_y: Any = 0, start_z: Any = 0,
+            end_x: Any = 0, end_y: Any = 0, end_z: Any = 0,
+            material: Any = None, width: Any = 1, color: Any = None,
+            *_rest: Any,
+        ) -> bool:
+            # `dxDrawMaterialLine3D(startX, startY, startZ, endX, endY, endZ,
+            # material, width, colour, ...)`. The width is the thing worth
+            # asking about: it is how wide the mark stands, and the defect
+            # ticket 04 fixed was one that drew it at a default.
+            self.drawn_material_lines_3d.append(
+                {
+                    "startX": float(start_x), "startY": float(start_y),
+                    "startZ": float(start_z), "endX": float(end_x),
+                    "endY": float(end_y), "endZ": float(end_z),
+                    "width": float(width), "color": color,
+                }
+            )
+            return True
+
+        g.dxDrawMaterialLine3D = dx_draw_material_line_3d
+
+        # --- markers ---------------------------------------------------------
+        #
+        # A marker is a world element like any other: it answers
+        # `getElementsByType("marker")`, which is exactly why the panel has to
+        # be able to tell ANKIGTA's own coronas from a Map Entity.
+        def create_marker(
+            x: float,
+            y: float,
+            z: float,
+            kind: str = "default",
+            size: float = 4.0,
+            red: float = 0,
+            green: float = 0,
+            blue: float = 255,
+            alpha: float = 255,
+            *_rest: Any,
+        ) -> Any:
+            self._element_handle += 1
+            marker = self.lua.table_from(
+                {
+                    "__element": True,
+                    "__handle": self._element_handle,
+                    "__streamed": True,
+                    "type": "marker",
+                    "x": float(x),
+                    "y": float(y),
+                    "z": float(z),
+                    "markerType": str(kind),
+                    "size": float(size),
+                    "red": int(red),
+                    "green": int(green),
+                    "blue": int(blue),
+                    "alpha": int(alpha),
+                    "interior": 0,
+                    "dimension": 0,
+                }
+            )
+            self.markers.append(marker)
+            self.world_elements.append(marker)
+            self._elements.add(id(marker))
+            # MTA raises this for a client-created element from inside
+            # `createMarker`, which is *before* the call returns the element
+            # there is to write down -- so a resource recording ownership
+            # afterwards is always too late, and this stub has to reproduce
+            # that or the window would not exist to be got wrong.
+            self.trigger("onClientElementCreate", marker)
+            return marker
+
+        g.createMarker = create_marker
+        g.getMarkerType = lambda marker=None, *_r: (
+            str(marker["markerType"]) if lua_type(marker) == "table" else False
+        )
+        g.getMarkerSize = lambda marker=None, *_r: (
+            float(marker["size"]) if lua_type(marker) == "table" else False
+        )
+
+        def set_marker_size(marker: Any = None, size: Any = 0, *_rest: Any) -> bool:
+            # `CStaticFunctionDefinitions::SetMarkerSize` resizes the marker in
+            # place -- it does not replace it -- so the element and everything
+            # attached to it survive the change.
+            if lua_type(marker) != "table" or marker["type"] != "marker":
+                return False
+            marker["size"] = float(size)
+            return True
+
+        def set_marker_color(
+            marker: Any = None,
+            red: Any = 0,
+            green: Any = 0,
+            blue: Any = 0,
+            alpha: Any = 255,
+            *_rest: Any,
+        ) -> bool:
+            if lua_type(marker) != "table" or marker["type"] != "marker":
+                return False
+            marker["red"] = int(red)
+            marker["green"] = int(green)
+            marker["blue"] = int(blue)
+            marker["alpha"] = int(alpha)
+            return True
+
+        g.setMarkerSize = set_marker_size
+        g.setMarkerColor = set_marker_color
+        g.getMarkerColor = lambda marker=None, *_r: (
+            (marker["red"], marker["green"], marker["blue"], marker["alpha"])
+            if lua_type(marker) == "table"
+            else False
+        )
+
+        def attach_elements(
+            element: Any = None,
+            target: Any = None,
+            offset_x: Any = 0,
+            offset_y: Any = 0,
+            offset_z: Any = 0,
+            *_rest: Any,
+        ) -> bool:
+            # `CClientEntity::DoAttaching` writes the target's matrix plus the
+            # offset into the attached element every frame, so an attached
+            # element genuinely *is* wherever its target has got to -- which is
+            # the whole reason a mark is attached rather than moved in Lua.
+            # `getElementPosition` reads through the attachment below.
+            if lua_type(element) != "table" or lua_type(target) != "table":
+                return False
+            element["__attachedTo"] = target
+            element["__attachedOffset"] = self.lua.table_from(
+                [float(offset_x), float(offset_y), float(offset_z)]
+            )
+            self.attachments.append((element, target))
+            return True
+
+        def detach_elements(element: Any = None, *_rest: Any) -> bool:
+            if lua_type(element) != "table":
+                return False
+            element["__attachedTo"] = None
+            element["__attachedOffset"] = None
+            return True
+
+        g.attachElements = attach_elements
+        g.detachElements = detach_elements
+        g.getElementAttachedTo = lambda element=None, *_r: (
+            element["__attachedTo"] if lua_type(element) == "table" else False
+        ) or False
 
         def dx_draw_line_3d(
             start_x: Any = 0, start_y: Any = 0, start_z: Any = 0,

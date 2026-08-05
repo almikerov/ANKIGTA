@@ -1033,7 +1033,7 @@ function MapIdentity.linkSnapshot(row)
         -- gives everywhere else. Coercing it to 3 here would make one row say
         -- two different things about its own Activation Zone.
         radius = tonumber(row.radius) or false,
-        showRadius = tonumber(row.show_radius) == 1,
+        showCorona = tonumber(row.show_radius) == 1,
     }
     local pending = pendingByEntity[entityKey(row.map_id, row.entity_id)]
     if ANKIGTA.Store.rowIsIdentityCollision(row) then

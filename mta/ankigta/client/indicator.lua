@@ -142,8 +142,8 @@ function Indicator.plan(player, candidates, cardIdentity)
     local plan = {
         blip = true,
         sphere = Indicator.mode == MODE_SPHERE_AND_MINIMAP,
-        -- An Activation Zone already occupies this spot, so the indicator
-        -- emphasizes that sphere instead of drawing a second one on top.
+        -- A corona already marks this spot, so the indicator emphasizes that
+        -- mark instead of putting a second one on top of it.
         emphasized = target.hasActivationZone == true,
         mapId = target.mapId,
         entityId = target.entityId,
@@ -151,8 +151,15 @@ function Indicator.plan(player, candidates, cardIdentity)
         y = target.y,
         z = target.z,
     }
-    if plan.sphere and plan.emphasized then
-        plan.sphereRadius = tonumber(target.radius)
+    if plan.sphere then
+        -- The Activation Zone actually in force, never the shipped default.
+        -- This read `tonumber(target.radius)` and fell back to 3 at the draw,
+        -- so every entity following the global was marked at three metres
+        -- however wide its zone really was -- and the mark is the only thing
+        -- telling the player where the card will open.
+        plan.sphereRadius = ANKIGTA.WorldMarks
+            and ANKIGTA.WorldMarks.radiusInForce(target.radius)
+            or tonumber(target.radius)
     end
     return plan
 end
@@ -285,18 +292,17 @@ function Indicator.render()
     if not current.sphere then
         return
     end
-    -- A pulse rather than a second sphere: where an Activation Zone already
-    -- occupies this spot, the indicator emphasizes that one.
+    -- A pulse rather than a second mark: where a corona already marks this
+    -- spot, the indicator emphasizes that one.
     hud.pulse = (hud.pulse + 1) % 120
     local emphasis = current.emphasized and (0.5 + 0.5 * math.abs(60 - hud.pulse) / 60) or 1
-    dxDrawMaterialLine3D(
+    -- Through the marks module, which is where the one rule about how far
+    -- ANKIGTA draws lives. A mark that reached for `dxDrawMaterialLine3D`
+    -- itself would be a second answer to a question with one.
+    ANKIGTA.WorldMarks.beam(
         current.x,
         current.y,
-        current.z - 1,
-        current.x,
-        current.y,
-        current.z + 2,
-        nil,
+        current.z,
         (current.sphereRadius or 3) * emphasis,
         tocolor(120, 200, 255, 160)
     )

@@ -58,6 +58,12 @@ def can_write(sandbox: MtaSandbox, side: str, key: str) -> Any:
         ("activationDelaySeconds", "server"),
         ("maxActivationSpeedKmh", "server"),
         ("reviewMode", "server"),
+        # What a corona looks like is a property of the world every player
+        # sees; whether the selected row's zone is drawn is one player's way
+        # of looking.
+        ("coronaColor", "server"),
+        ("coronaOpacity", "server"),
+        ("drawRadius", "client"),
         ("indicatorMode", "client"),
         ("reviewProtection", "client"),
         ("disablePlayerControls", "client"),
@@ -492,25 +498,10 @@ def test_every_setting_is_writable_by_exactly_one_side_unless_local(
 
 # --- a colour is a value the schema knows about ------------------------------
 #
-# Nothing in the schema is a colour yet: tickets 04 and 06 each add one. The
-# rule ships here because the picker that chooses one does, and because a rule
-# added alongside its first setting would be a rule written twice. Until then
-# it is exercised against a schema entry the test adds, which is exactly what
-# those tickets will add for real.
-
-
-def with_a_colour(sandbox: MtaSandbox, **definition: Any) -> None:
-    sandbox.eval(
-        """
-        function(key, default)
-            ANKIGTA.Settings.schema[key] = {
-                authority = ANKIGTA.Settings.SERVER,
-                default = default,
-                rule = {kind = "color"},
-            }
-        end
-        """
-    )(definition["key"], definition["default"])
+# The rule shipped with ticket 03, which built the picker that chooses one, and
+# was exercised against a schema entry the test invented because nothing in the
+# schema was a colour yet. Ticket 04 added the first real one, so these ask the
+# shipped setting instead.
 
 
 @pytest.mark.parametrize(
@@ -520,8 +511,6 @@ def with_a_colour(sandbox: MtaSandbox, **definition: Any) -> None:
 def test_a_colour_is_accepted_as_six_hex_digits(
     settings: MtaSandbox, value: str
 ) -> None:
-    with_a_colour(settings, key="coronaColor", default="#38bdf8")
-
     assert validate(settings, "coronaColor", value) is True
 
 
@@ -534,8 +523,6 @@ def test_anything_that_is_not_a_colour_is_refused_with_a_reason(
 ) -> None:
     """Half a hex code is not a colour, and a control that quietly picks black
     on a typo is worse than one that says no."""
-    with_a_colour(settings, key="coronaColor", default="#38bdf8")
-
     ok, why = validate(settings, "coronaColor", value)
 
     assert ok is False
@@ -545,13 +532,69 @@ def test_anything_that_is_not_a_colour_is_refused_with_a_reason(
 def test_a_colour_is_stored_under_one_spelling(settings: MtaSandbox) -> None:
     """`#FFAA00` and `#ffaa00` compared as text are two stored values for one
     colour, which is a comparison that starts reporting changes nobody made."""
-    with_a_colour(settings, key="coronaColor", default="#38bdf8")
-
     normalized = settings.eval(
         "function(k, v) return ANKIGTA.Settings.normalize(k, v) end"
     )("coronaColor", "#FFAA00")
 
     assert normalized == "#ffaa00"
+
+
+def test_the_shipped_corona_colour_is_a_colour_by_its_own_rule(
+    settings: MtaSandbox,
+) -> None:
+    """A default that fails the rule is a resource that ships unusable."""
+    shipped = settings.eval(
+        "function() return ANKIGTA.Settings.default('coronaColor') end"
+    )()
+
+    assert validate(settings, "coronaColor", shipped) is True
+
+
+def test_a_colour_is_read_as_the_channels_it_is_drawn_in(
+    settings: MtaSandbox,
+) -> None:
+    """One reader of the format, beside the rule that decides it."""
+    channels = settings.eval(
+        "function(v) return ANKIGTA.Settings.colorChannels(v) end"
+    )
+
+    assert tuple(channels("#3cc8ff")) == (0x3C, 0xC8, 0xFF)
+    assert tuple(channels("#000000")) == (0, 0, 0)
+
+
+@pytest.mark.parametrize(
+    "value", ["#3cc8f", "3cc8ff", "rebeccapurple", "", 0, True, None]
+)
+def test_a_colour_the_rule_would_refuse_has_no_channels_at_all(
+    settings: MtaSandbox, value: Any
+) -> None:
+    """`nil` rather than three zeroes: whatever draws with this has to be able
+    to fall back, and black is a colour somebody could have chosen."""
+    assert settings.eval(
+        "function(v) return ANKIGTA.Settings.colorChannels(v) end"
+    )(value) is None
+
+
+def test_corona_opacity_ships_at_six_tenths(settings: MtaSandbox) -> None:
+    """The number the ticket states. It is also the number a value stored by a
+    schema that no longer exists must not quietly outrank -- which is
+    `test_migrations.py`'s to hold, because only the store can."""
+    assert settings.eval(
+        "function() return ANKIGTA.Settings.default('coronaOpacity') end"
+    )() == 0.6
+    assert validate(settings, "coronaOpacity", 0.6) is True
+    assert validate(settings, "coronaOpacity", 1.4)[0] is False
+    assert validate(settings, "coronaOpacity", -0.1)[0] is False
+
+
+def test_drawing_the_selected_zone_is_off_until_the_player_asks(
+    settings: MtaSandbox,
+) -> None:
+    """A way of looking is nobody's default: a zone drawn around whatever row
+    happens to be selected is a line across the world nobody asked for."""
+    assert settings.eval(
+        "function() return ANKIGTA.Settings.default('drawRadius') end"
+    )() is False
 
 
 def test_the_reason_a_colour_is_refused_has_words_behind_it(

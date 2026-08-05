@@ -142,7 +142,7 @@ def panel_entry(
             "name": name,
             "entityTag": "",
             "radius": 3,
-            "showRadius": False,
+            "showCorona": False,
         },
         "link": {"state": "Unlinked"},
     }
@@ -662,86 +662,6 @@ def test_naming_something_the_list_only_offered_takes_it_in(
     assert links[0] == 0
 
 
-def test_a_zone_that_asks_to_be_shown_is_drawn_at_its_own_radius(
-    panel_client: MtaSandbox,
-) -> None:
-    """`showRadius` had no drawing behind it at all.
-
-    It only told the Next Card Indicator to pulse its own column where a zone
-    happened to coincide -- so a zone appeared for the one card the scheduler
-    had chosen next, in one indicator mode, and never otherwise. Turning the
-    setting on therefore did nothing visible, which is what was reported.
-    """
-    quiet = panel_entry()
-    shown = panel_entry(entity_id="gate-18")
-    shown["metadata"]["showRadius"] = True
-    shown["metadata"]["radius"] = 7.5
-    push_client_snapshot(panel_client, entities=[quiet, shown])
-
-    panel_client.trigger("onClientRender")
-    ring = panel_client.drawn_lines_3d
-
-    assert ring, "the zone was not drawn"
-    # A ring around the entity, at the radius the entity carries.
-    x, y = 10.25, -20.5
-    distances = {
-        round(((p["startX"] - x) ** 2 + (p["startY"] - y) ** 2) ** 0.5, 3)
-        for p in ring
-    }
-    assert distances == {7.5}
-    # One ring, not two: the row that did not ask for one contributed nothing.
-    assert len(ring) == 24
-    assert {segment["width"] for segment in ring} == {2.0}
-
-
-def test_draw_always_outlives_the_panel_and_draw_it_does_not(
-    panel_client: MtaSandbox,
-) -> None:
-    """Two answers, and only one of them is about the entity.
-
-    `Draw it` is a look the player asked for in this opening of F7, so it goes
-    when F7 does. `Draw always` is what the entity itself says, and the world
-    shows it whether or not the panel is open.
-    """
-    standing = panel_entry(entity_id="gate-18")
-    standing["metadata"]["showRadius"] = True
-    glance = panel_entry()
-    glance["metadata"]["showRadius"] = False
-    push_client_snapshot(panel_client, entities=[standing, glance])
-    panel_action(
-        panel_client, "select", {"mapId": "current-map-id", "entityId": "gate-17"}
-    )
-    panel_action(panel_client, "setEntityRadius", {"drawNow": True})
-
-    panel_client.trigger("onClientRender")
-    assert len(panel_client.drawn_lines_3d) == 48, "both zones while F7 is open"
-
-    # Closing F7 drops the look and keeps the standing answer.
-    panel_client.eval("function() togglePanel() end")()
-    panel_client.drawn_lines_3d.clear()
-    panel_client.trigger("onClientRender")
-
-    assert len(panel_client.drawn_lines_3d) == 24
-
-
-def test_a_look_is_never_written_to_the_entity(
-    panel_client: MtaSandbox,
-) -> None:
-    """`Draw it` is not a decision about the thing, so nothing is stored."""
-    push_client_snapshot(panel_client, entities=[panel_entry()])
-    panel_action(
-        panel_client, "select", {"mapId": "current-map-id", "entityId": "gate-17"}
-    )
-
-    panel_action(panel_client, "setEntityRadius", {"drawNow": True})
-
-    assert [
-        event
-        for event in panel_client.recorder.server_events
-        if event.name == "ankigta:updateEntityMetadata"
-    ] == []
-
-
 def test_an_entity_stored_under_one_map_is_written_to_from_another(
     server: MtaSandbox,
 ) -> None:
@@ -778,7 +698,7 @@ def test_an_entity_stored_under_one_map_is_written_to_from_another(
         server.lua.globals().resourceRoot,
         "current-map",
         "stairs-9",
-        server.lua.table_from({"showRadius": True}),
+        server.lua.table_from({"showCorona": True}),
         client=player,
     )
 
@@ -800,7 +720,7 @@ def test_an_already_stamped_element_is_listed_as_the_entity_it_is(
     """Not offered again under empty metadata.
 
     The owner's stairs had a row under one map while the world held it under
-    another, so it was listed as something to take in -- with `showRadius`
+    another, so it was listed as something to take in -- with `showCorona`
     hardcoded false over a row that said otherwise. Ticking the box wrote
     correctly and the next snapshot put it straight back.
     """
@@ -832,7 +752,7 @@ def test_an_already_stamped_element_is_listed_as_the_entity_it_is(
 
     assert "stairs-9" in rows, sorted(rows)
     stairs = rows["stairs-9"]
-    assert stairs["metadata"]["showRadius"] is True
+    assert stairs["metadata"]["showCorona"] is True
     # A stored row, not an offer: an offer carries `adoptable`.
     assert "adoptable" not in stairs
     # And exactly once: an entity is one row, not a row and an offer of itself.
@@ -1300,26 +1220,6 @@ def test_a_row_with_its_own_radius_says_it_was_chosen(
     assert row["radiusInherited"] is False
 
 
-def test_a_zone_is_drawn_at_the_radius_actually_in_force(
-    panel_client: MtaSandbox,
-) -> None:
-    """A ring drawn at 3 while the setting says 10 is a ring that lies about
-    where the card will open."""
-    announce_global(panel_client, activationRadius=10)
-    shown = follows_the_global()
-    shown["metadata"]["showRadius"] = True
-    push_client_snapshot(panel_client, entities=[shown])
-
-    panel_client.trigger("onClientRender")
-
-    x, y = 10.25, -20.5
-    distances = {
-        round(((p["startX"] - x) ** 2 + (p["startY"] - y) ** 2) ** 0.5, 3)
-        for p in panel_client.drawn_lines_3d
-    }
-    assert distances == {10.0}
-
-
 def test_emptying_the_radius_asks_the_server_to_stop_holding_one(
     panel_client: MtaSandbox,
 ) -> None:
@@ -1330,7 +1230,7 @@ def test_emptying_the_radius_asks_the_server_to_stop_holding_one(
         panel_client, "select", {"mapId": "current-map-id", "entityId": "gate-17"}
     )
 
-    panel_action(panel_client, "setEntityRadius", {"radius": False})
+    panel_action(panel_client, "setEntityMarks", {"radius": False})
 
     sent = [
         event
@@ -1367,7 +1267,7 @@ def test_naming_an_entity_leaves_its_radius_following_the_global(
 ) -> None:
     """The bug in the owner's own database: three of five metadata rows carry a
     radius of 3 that nobody chose, written by the act of naming the thing or of
-    ticking Draw always. Every one of them stopped following the global the
+    ticking the box that is now `Show corona`. Every one of them stopped following the global the
     moment it was written."""
     seed_entity(
         server,

@@ -140,6 +140,11 @@ function ClientSettings.apply()
     if ANKIGTA.Indicator then
         ANKIGTA.Indicator.setMode(values.indicatorMode)
     end
+    if ANKIGTA.WorldMarks then
+        -- A way of looking, so it is this side's to apply. What a corona looks
+        -- like arrives from the server instead, further down.
+        ANKIGTA.WorldMarks.applySettings({drawRadius = values.drawRadius})
+    end
     if setReviewProtection then
         setReviewProtection(values.reviewProtection, values.disablePlayerControls)
     end
@@ -213,6 +218,17 @@ function ClientSettings.receiveServerSettings(values)
             defaultRadius = accepted.activationRadius,
             delaySeconds = accepted.activationDelaySeconds,
             maxSpeedKmh = accepted.maxActivationSpeedKmh,
+        })
+    end
+    if ANKIGTA.WorldMarks then
+        -- What a corona looks like where the entity says nothing of its own,
+        -- and the zone radius behind an entity that has none. Server-owned, so
+        -- they arrive here rather than being read out of the local file, and
+        -- reach the marks by the same path the activation rules take.
+        ANKIGTA.WorldMarks.applySettings({
+            coronaColor = accepted.coronaColor,
+            coronaOpacity = accepted.coronaOpacity,
+            activationRadius = accepted.activationRadius,
         })
     end
     return true

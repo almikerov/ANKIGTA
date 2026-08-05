@@ -38,6 +38,10 @@
     <script src="client/review_mode.lua" type="client" cache="false" />
     <script src="client/activation.lua" type="client" cache="false" />
     <script src="client/indicator.lua" type="client" cache="false" />
+    <!-- Everything ANKIGTA draws into the world, and the one distance it stops
+         at. Before the polling below, which asks it whether a corona already
+         marks a spot before the indicator puts a second mark on top of one. -->
+    <script src="client/world_marks.lua" type="client" cache="false" />
     <!-- After both: it is the world-polling that feeds them, and it hands the
          indicator the source its markers follow. -->
     <script src="client/spatial.lua" type="client" cache="false" />
