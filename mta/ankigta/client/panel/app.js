@@ -289,6 +289,21 @@
     hexLabel.appendChild(hex);
     popup.panel.appendChild(hexLabel);
 
+    /* A per-entity colour needs a way back to the one Settings holds, and an
+     * emptied hex box cannot be it: half a hex code is refused, so "" would be
+     * refused too. Only offered where following is a thing this picker's value
+     * can do -- a global has nothing above it to follow. */
+    if (spec.onClear) {
+      var follow = element("button", "picker-clear", t("f7.coronaFollowSettings"));
+      follow.type = "button";
+      follow.setAttribute("data-picker-clear", spec.name);
+      follow.addEventListener("click", function () {
+        popup.open(false);
+        spec.onClear();
+      });
+      popup.panel.appendChild(follow);
+    }
+
     picker.setValue = function (value) {
       picker.value = isColor(value) ? String(value).toLowerCase() : false;
       swatch.style.background = picker.value || "transparent";
@@ -642,6 +657,29 @@
    * same thing does not wipe what is half-typed into these boxes. */
   var reportedEntity = null;
 
+  /* The corona's colour, drawn in the page like every other choice here. Built
+   * once and kept: rebuilding it on each state push would take away the
+   * surface the player has open, which is what "a menu closes while I am
+   * choosing from it" was. */
+  var coronaColorPicker = colorPicker({
+    /* Named apart from the Settings row for the same value: both are on the
+     * page at once, and one name for two controls is one control a test -- or
+     * a click -- can reach by accident. */
+    name: "entityCoronaColor",
+    value: false,
+    onChoose: function (value) {
+      send("setEntityMarks", {coronaColor: value});
+    },
+    /* Emptied means "follow Settings again" rather than "no colour", which is
+     * the same answer the radius box gives. */
+    onClear: function () {
+      send("setEntityMarks", {coronaColor: false});
+    }
+  });
+  document
+    .getElementById("entity-corona-color")
+    .appendChild(coronaColorPicker.root);
+
   /* On screen whether or not a row is selected. It used to appear with the
    * selection and vanish with it, so the panel jumped every time the player
    * moved down the list; the fields are disabled rather than removed, which
@@ -651,17 +689,20 @@
     var name = document.getElementById("entity-name");
     var radius = document.getElementById("entity-radius");
     var mark = document.getElementById("entity-radius-inherited");
-    var drawNow = document.getElementById("entity-draw-now");
-    var drawAlways = document.getElementById("entity-draw-always");
+    var showCorona = document.getElementById("entity-show-corona");
+    var opacity = document.getElementById("entity-corona-opacity");
+    var colorMark = document.getElementById("entity-corona-color-inherited");
+    var opacityMark = document.getElementById("entity-corona-opacity-inherited");
 
-    /* What these three say comes from `applyLocale`, like every other fixed
-     * word on the page; what this decides is which of them are on screen and
-     * whether the fields can be typed into. */
+    /* What these say comes from `applyLocale`, like every other fixed word on
+     * the page; what this decides is which of them are on screen and whether
+     * the fields can be typed into. */
     empty.hidden = !!entity;
     name.disabled = !entity;
     radius.disabled = !entity;
-    drawNow.disabled = !entity;
-    drawAlways.disabled = !entity;
+    showCorona.disabled = !entity;
+    opacity.disabled = !entity;
+    coronaColorPicker.button.disabled = !entity;
 
     if (!entity) {
       reportedEntity = null;
@@ -669,8 +710,12 @@
       radius.value = "";
       radius.setAttribute("data-inherited", "false");
       mark.hidden = true;
-      drawNow.checked = false;
-      drawAlways.checked = false;
+      showCorona.checked = false;
+      opacity.value = "";
+      opacity.setAttribute("data-inherited", "false");
+      opacityMark.hidden = true;
+      coronaColorPicker.setValue(false);
+      colorMark.hidden = true;
       return;
     }
 
@@ -679,7 +724,10 @@
       entity.entityId,
       entity.givenName || "",
       entity.radius,
-      entity.radiusInherited === true
+      entity.radiusInherited === true,
+      entity.coronaOpacity,
+      entity.coronaOpacityInherited === true,
+      entity.coronaColor
     ]);
     if (reported !== reportedEntity) {
       reportedEntity = reported;
@@ -691,15 +739,28 @@
        * global it follows. An empty box was meant to read as "whatever
        * Settings says" and reads as no value at all. */
       radius.value = entity.radius;
+      opacity.value = entity.coronaOpacity;
+      /* The colour the corona will really be, which for an entity that has
+       * chosen none is the one Settings holds. A swatch showing nothing would
+       * say the corona has no colour, and it has one.
+       *
+       * Inside the guard with the other two, because the picker owns a hex box
+       * somebody may be halfway through typing into: a state push happens
+       * whenever anything at all changes -- a car streaming in will do it --
+       * and one that reports the same colour must not take the half-typed code
+       * out from under them. */
+      coronaColorPicker.setValue(entity.coronaColor);
     }
     /* Shown, and said: a number that came from Settings looks exactly like a
      * number somebody chose. */
     radius.setAttribute("data-inherited", String(entity.radiusInherited === true));
     mark.hidden = entity.radiusInherited !== true;
-    drawNow.checked = entity.drawNow === true;
-    /* Independent of the look: "always" is a standing answer about the entity,
-     * so it can be given without first asking to see the zone. */
-    drawAlways.checked = entity.showAlways === true;
+    showCorona.checked = entity.showCorona === true;
+    colorMark.hidden = entity.coronaColorInherited !== true;
+    opacity.setAttribute(
+      "data-inherited", String(entity.coronaOpacityInherited === true)
+    );
+    opacityMark.hidden = entity.coronaOpacityInherited !== true;
   }
 
   /* --- the card editor --------------------------------------------------- */
@@ -1182,7 +1243,7 @@
    * stored, so a later change to the global moves this entity with it. */
   document.getElementById("entity-radius").addEventListener("change", function () {
     var typed = document.getElementById("entity-radius").value;
-    send("setEntityRadius", {
+    send("setEntityMarks", {
       radius: String(typed) === "" ? false : parseFloat(typed)
     });
   });
@@ -1191,19 +1252,24 @@
       name: document.getElementById("entity-name").value
     });
   });
-  /* Two answers, not one. "Draw it" is a look that lasts as long as this
-   * opening of F7; "Draw always" is what the entity itself says, and the world
-   * shows it whether or not the panel is open. */
-  document.getElementById("entity-draw-now").addEventListener("change", function () {
-    send("setEntityRadius", {
-      drawNow: document.getElementById("entity-draw-now").checked
+  /* What the entity itself says about how it is marked. The world shows it
+   * whether or not the panel is open and whoever is looking, which is what
+   * makes it the entity's rather than this player's. */
+  document.getElementById("entity-show-corona").addEventListener("change", function () {
+    send("setEntityMarks", {
+      showCorona: document.getElementById("entity-show-corona").checked
     });
   });
-  document.getElementById("entity-draw-always").addEventListener("change", function () {
-    send("setEntityRadius", {
-      showAlways: document.getElementById("entity-draw-always").checked
+  /* Sent when the field is left rather than on every keystroke, and emptied
+   * means "follow Settings again" -- the same two rules the radius box has. */
+  document
+    .getElementById("entity-corona-opacity")
+    .addEventListener("change", function () {
+      var typed = document.getElementById("entity-corona-opacity").value;
+      send("setEntityMarks", {
+        coronaOpacity: String(typed) === "" ? false : parseFloat(typed)
+      });
     });
-  });
 
   document.getElementById("toggle-inspector").addEventListener("click", function () {
     inspectorOpen = !inspectorOpen;

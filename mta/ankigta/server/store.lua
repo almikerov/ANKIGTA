@@ -1,7 +1,7 @@
 ANKIGTA = ANKIGTA or {}
 
 local DATABASE_PATH = "ankigta.sqlite"
-local CURRENT_SCHEMA_VERSION = 7
+local CURRENT_SCHEMA_VERSION = 8
 local HISTORY_LIMIT = 100
 
 -- The volume ticket 30 states its thresholds against. Nothing here is a limit:
@@ -254,6 +254,147 @@ local function radiusOverrideStep(mapId, entityId, radius)
     }
 end
 
+-- --- Map Entity metadata rows ------------------------------------------------
+--
+-- Written from six places: a metadata edit, either side of an undone relink,
+-- an undone removal, a relink and a copy. Each of them wrote the column list
+-- out again, so adding a column meant finding all six -- and the one that was
+-- missed would quietly write a default over whatever the entity said.
+
+--- The opacity that means "this entity has nothing of its own to say".
+--
+-- Out of the setting's range on purpose: opacity is 0..1, so nothing a player
+-- can choose collides with it. See the `CREATE TABLE` for why this is a value
+-- rather than NULL.
+local CORONA_FOLLOWS_SETTING = -1
+
+local METADATA_INSERT = [[
+    INSERT OR REPLACE INTO map_entity_metadata (
+        map_id, entity_id, name, entity_tag, radius, show_radius,
+        corona_color, corona_opacity, presence_state
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+]]
+
+--- A stored colour, or `false` where the entity follows the setting.
+--
+-- `false` rather than `nil`, which is the word the store already uses for a
+-- column holding nothing: a SQL NULL reaches Lua as `false`, so a reader that
+-- has to tell "unset" from "set" already tests for it.
+local function coronaColorOf(row)
+    local stored = row and row.corona_color
+    if type(stored) ~= "string" or stored == "" then
+        return false
+    end
+    return stored
+end
+
+local function coronaOpacityOf(row)
+    local stored = tonumber(row and row.corona_opacity)
+    if stored == nil or stored < 0 then
+        return false
+    end
+    return stored
+end
+
+--- What a row says its corona should look like, where it says anything.
+--
+-- Exposed because the F7 snapshot is built out of rows this module hands over,
+-- and "an empty colour means follow the setting" is this module's rule about
+-- its own storage rather than the snapshot's.
+function Store.coronaOf(row)
+    return coronaColorOf(row), coronaOpacityOf(row)
+end
+
+--- Does this metadata want a corona, whichever version wrote it down?
+--
+-- Change History is persisted as JSON, so a row journalled before the flag was
+-- renamed still says `showRadius` -- and it is exactly the rows that predate an
+-- upgrade that Undo exists to put back. Reading only the current name would
+-- turn every such undo into "and also switch the corona off".
+--
+-- The old name is read only where the new one is absent, so a row carrying
+-- both cannot have the stale half win.
+local function wantsCorona(metadata)
+    if metadata.showCorona ~= nil then
+        return metadata.showCorona == true
+    end
+    return metadata.showRadius == true
+end
+
+--- The values `METADATA_INSERT` binds, for one metadata table.
+local function metadataValues(mapId, entityId, metadata)
+    metadata = metadata or {}
+    local color = metadata.coronaColor
+    local opacity = tonumber(metadata.coronaOpacity)
+    return {
+        mapId,
+        entityId,
+        tostring(metadata.name or ""),
+        tostring(metadata.entityTag or ""),
+        -- The inert NOT NULL column, kept fed. What the entity actually says
+        -- about its Activation Zone is `radius_override`, written beside it.
+        tonumber(metadata.radius) or 3,
+        wantsCorona(metadata) and 1 or 0,
+        type(color) == "string" and color or "",
+        opacity or CORONA_FOLLOWS_SETTING,
+        metadata.presenceState or "identified",
+    }
+end
+
+--- Write one metadata row, override and all.
+--
+-- Two statements, always together: `radius` cannot hold "this entity has none"
+-- and `radius_override` is where that is said, so a caller that wrote only the
+-- insert would put an entity back on the global every time it saved a name.
+local function metadataSteps(mapId, entityId, metadata)
+    return {
+        {METADATA_INSERT, metadataValues(mapId, entityId, metadata)},
+        radiusOverrideStep(mapId, entityId, (metadata or {}).radius),
+    }
+end
+
+--- The same, read straight off a row rather than out of a metadata table.
+--
+-- The two differ in one thing: a row names its columns and a metadata table
+-- names the fields the rest of the resource uses. Everything else about "what
+-- one metadata row holds" stays in `metadataValues`.
+local function metadataStepsFromRow(mapId, entityId, row, presenceState)
+    return metadataSteps(mapId, entityId, {
+        name = row.entity_name or "",
+        entityTag = row.entity_tag or "",
+        radius = tonumber(row.radius),
+        showCorona = tonumber(row.show_radius) == 1,
+        coronaColor = coronaColorOf(row) or nil,
+        coronaOpacity = coronaOpacityOf(row) or nil,
+        presenceState = presenceState,
+    })
+end
+
+--- Add every step of a metadata write to a step list being built.
+local function addMetadataSteps(steps, mapId, entityId, metadata)
+    for _, step in ipairs(metadataSteps(mapId, entityId, metadata)) do
+        table.insert(steps, step)
+    end
+    return steps
+end
+
+--- Columns `map_entity_metadata` has grown since it was first created.
+--
+-- Listed rather than written out at each call site, so the repair below and
+-- the `CREATE TABLE` above cannot disagree about what a metadata row holds. An
+-- entry here is added to a database that lacks it; the `CREATE` is what a
+-- fresh one gets, and the two have to say the same thing.
+local METADATA_COLUMN_ADDITIONS = {
+    {
+        name = "presence_state",
+        declaration = "TEXT NOT NULL DEFAULT 'identified'",
+    },
+    -- The defaults are the "follows Settings" values, so a row that already
+    -- exists gains them already saying what it said before: nothing of its own.
+    {name = "corona_color", declaration = "TEXT NOT NULL DEFAULT ''"},
+    {name = "corona_opacity", declaration = "REAL NOT NULL DEFAULT -1"},
+}
+
 local function ensureChangeHistorySchema()
     local created, errorMessage = transaction(Store.connection, {
         {
@@ -299,7 +440,23 @@ local function ensureChangeHistorySchema()
                     -- NULL means the entity follows the global. Every read
                     -- goes through this one.
                     radius_override REAL,
+                    -- Whether the entity wears a corona. Still spelled
+                    -- `show_radius`: the column is the same standing answer it
+                    -- always was, and renaming a column in SQLite means
+                    -- rebuilding a table that is the child of a cascading
+                    -- foreign key. What it *means* is named everywhere it is
+                    -- read, which is where a reader looks.
                     show_radius INTEGER NOT NULL DEFAULT 0,
+                    -- Not a colour and not an opacity where the entity has
+                    -- nothing of its own to say -- the settings value is then
+                    -- the answer, and a copy of it written here would go stale
+                    -- the moment the setting changed. Said with an empty
+                    -- string and an out-of-range number rather than with NULL,
+                    -- because a bound parameter list is a Lua array and a nil
+                    -- in the middle of one ends it: `unpack` would drop this
+                    -- column and every column after it.
+                    corona_color TEXT NOT NULL DEFAULT '',
+                    corona_opacity REAL NOT NULL DEFAULT -1,
                     presence_state TEXT NOT NULL DEFAULT 'identified'
                         CHECK (presence_state IN ('identified', 'entity_missing')),
                     PRIMARY KEY (map_id, entity_id),
@@ -329,16 +486,23 @@ local function ensureChangeHistorySchema()
         for _, column in ipairs(columns) do
             present[column.name] = true
         end
-        if not present.presence_state then
-            local altered, alterError = execute(
-                Store.connection,
-                [[
-                    ALTER TABLE map_entity_metadata
-                    ADD COLUMN presence_state TEXT NOT NULL DEFAULT 'identified'
-                ]]
-            )
-            if not altered then
-                return false, alterError
+        -- Repaired in place rather than through a numbered migration, the way
+        -- `presence_state` already was. This table is created on every open
+        -- regardless of schema version -- it arrived with Change History -- so
+        -- a database can be carrying it while sitting at any version, and a
+        -- version step would only run for some of them. Each addition here is
+        -- a column an older shape simply lacks, never one whose meaning
+        -- changed, so adding it is the whole repair.
+        for _, addition in ipairs(METADATA_COLUMN_ADDITIONS) do
+            if not present[addition.name] then
+                local altered, alterError = execute(
+                    Store.connection,
+                    "ALTER TABLE map_entity_metadata ADD COLUMN "
+                        .. addition.name .. " " .. addition.declaration
+                )
+                if not altered then
+                    return false, alterError
+                end
             end
         end
         -- `radius_override` is *not* repaired here. It rewrites rows, and
@@ -816,6 +980,45 @@ local function migrateRadiusOverride()
     })
 end
 
+--- Throw away the `coronaOpacity` a schema that no longer exists wrote down.
+--
+-- The owner's database carries one. A build that never reached this trunk
+-- stored it, the setting was not in the schema afterwards, and every start
+-- since has logged `discarded_stored_setting: coronaOpacity
+-- (settings.error.unknown)` and fallen back to the default -- correctly, since
+-- nothing knew what the key meant.
+--
+-- Ticket 04 gives the key a meaning again, and that is the moment the stored
+-- value stops being discarded and becomes the value in force. It is worth
+-- nothing: it describes a build nobody kept, at a default nobody chose, and on
+-- the owner's disk it is 0.2 against a shipped 0.6 -- a corona so faint the
+-- feature would read as not working. A value whose schema was deleted is not a
+-- preference; it is a leftover, and the shipped default is the honest answer
+-- until somebody chooses otherwise.
+--
+-- One key rather than "everything the schema does not know": that is the row
+-- this build can name as stale. A blanket sweep would also delete a setting a
+-- *newer* build stored, which is data this one has no business reading, let
+-- alone removing.
+local function migrateVersionEight()
+    local steps = {}
+    -- `user_settings` is created by `ensureChangeHistorySchema`, which runs
+    -- after migrations do, so a database old enough not to have it yet has no
+    -- row to retire -- and a DELETE against a table that does not exist would
+    -- roll the whole step back and refuse to start the server.
+    if tableExists("user_settings") then
+        table.insert(steps, {
+            "DELETE FROM user_settings WHERE setting_key = ?",
+            {"coronaOpacity"},
+        })
+    end
+    table.insert(steps, {
+        "UPDATE schema_meta SET version = ? WHERE singleton = 1",
+        {8},
+    })
+    return transaction(Store.connection, steps)
+end
+
 local MIGRATIONS = {
     {
         id = "rotation_columns",
@@ -866,6 +1069,12 @@ local MIGRATIONS = {
         from = 6,
         to = 7,
         apply = migrateVersionSeven,
+    },
+    {
+        id = "retire_orphaned_corona_opacity",
+        from = 7,
+        to = 8,
+        apply = migrateVersionEight,
     },
     -- A shape repair, and last: it probes the shape rather than the number, so
     -- it applies to any database whose metadata table predates the column and
@@ -1341,7 +1550,9 @@ function Store.forgetMapEntity(mapId, entityId)
             -- would record "it followed the global" as "it was pinned at the
             -- global's current value", and Undo would put back the second.
             radius = tonumber(row.radius),
-            showRadius = tonumber(row.show_radius) == 1,
+            showCorona = tonumber(row.show_radius) == 1,
+            coronaColor = coronaColorOf(row),
+            coronaOpacity = coronaOpacityOf(row),
             presenceState = row.entity_state or "identified",
         },
         link = row.link_state and {
@@ -1602,48 +1813,24 @@ local function applyHistoryStateSteps(operation, target, state)
         })
         if state.phase == "before" then
             if sourceRow.entity_id or sourceRow.entityId then
-                table.insert(steps, {
-                    [[
-                        INSERT OR REPLACE INTO map_entity_metadata (
-                            map_id, entity_id, name, entity_tag, radius,
-                            show_radius, presence_state
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ]],
-                    {
-                        sourceMapId,
-                        sourceEntityId,
-                        sourceRow.entity_name or "",
-                        sourceRow.entity_tag or "",
-                        tonumber(sourceRow.radius) or 3,
-                        tonumber(sourceRow.show_radius) == 1 and 1 or 0,
-                        sourceRow.entity_state or "entity_missing",
-                    },
-                })
-                table.insert(steps, radiusOverrideStep(
-                    sourceMapId, sourceEntityId, sourceRow.radius
-                ))
+                for _, step in ipairs(metadataStepsFromRow(
+                    sourceMapId,
+                    sourceEntityId,
+                    sourceRow,
+                    sourceRow.entity_state or "entity_missing"
+                )) do
+                    table.insert(steps, step)
+                end
             end
             if targetRow.entity_id or targetRow.entityId then
-                table.insert(steps, {
-                    [[
-                        INSERT OR REPLACE INTO map_entity_metadata (
-                            map_id, entity_id, name, entity_tag, radius,
-                            show_radius, presence_state
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ]],
-                    {
-                        targetMapId,
-                        targetEntityId,
-                        targetRow.entity_name or "",
-                        targetRow.entity_tag or "",
-                        tonumber(targetRow.radius) or 3,
-                        tonumber(targetRow.show_radius) == 1 and 1 or 0,
-                        targetRow.entity_state or "identified",
-                    },
-                })
-                table.insert(steps, radiusOverrideStep(
-                    targetMapId, targetEntityId, targetRow.radius
-                ))
+                for _, step in ipairs(metadataStepsFromRow(
+                    targetMapId,
+                    targetEntityId,
+                    targetRow,
+                    targetRow.entity_state or "identified"
+                )) do
+                    table.insert(steps, step)
+                end
             end
             local sourceIdentity = sourceRow.collection_uuid and {
                 collectionUuid = sourceRow.collection_uuid,
@@ -1691,25 +1878,15 @@ local function applyHistoryStateSteps(operation, target, state)
             end
         else
             local identity = targetRow.collectionUuid and targetRow or nil
-            table.insert(steps, {
-                [[
-                    INSERT OR REPLACE INTO map_entity_metadata (
-                        map_id, entity_id, name, entity_tag, radius,
-                        show_radius, presence_state
-                    ) VALUES (?, ?, ?, ?, ?, ?, 'identified')
-                ]],
-                {
-                    targetMapId,
-                    targetEntityId,
-                    targetRow.entityName or "",
-                    targetRow.entityTag or "",
-                    tonumber(targetRow.radius) or 3,
-                    targetRow.showRadius and 1 or 0,
-                },
+            addMetadataSteps(steps, targetMapId, targetEntityId, {
+                name = targetRow.entityName,
+                entityTag = targetRow.entityTag,
+                radius = tonumber(targetRow.radius),
+                showCorona = wantsCorona(targetRow),
+                coronaColor = targetRow.coronaColor,
+                coronaOpacity = targetRow.coronaOpacity,
+                presenceState = "identified",
             })
-            table.insert(steps, radiusOverrideStep(
-                targetMapId, targetEntityId, targetRow.radius
-            ))
             table.insert(steps, {
                 "UPDATE map_entity_metadata SET presence_state = 'entity_missing' "
                     .. "WHERE map_id = ? AND entity_id = ?",
@@ -1784,28 +1961,11 @@ local function applyHistoryStateSteps(operation, target, state)
         end
         local metadata = state.metadata
         if type(metadata) == "table" then
-            table.insert(steps, {
-                [[
-                    INSERT INTO map_entity_metadata (
-                        map_id, entity_id, name, entity_tag, radius,
-                        show_radius, presence_state
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                ]],
-                {
-                    target.mapId, target.entityId,
-                    metadata.name or "",
-                    metadata.entityTag or "",
-                    tonumber(metadata.radius) or 3,
-                    metadata.showRadius and 1 or 0,
-                    metadata.presenceState or "identified",
-                },
-            })
-            -- The insert above fills the NOT NULL legacy column; this is the
-            -- one anything reads. Without it, undoing a removal brings the
-            -- entity back following the global, whatever radius it had.
-            table.insert(steps, radiusOverrideStep(
-                target.mapId, target.entityId, metadata.radius
-            ))
+            -- The insert fills the NOT NULL legacy column and the override
+            -- step is the one anything reads. Without the second, undoing a
+            -- removal brings the entity back following the global, whatever
+            -- radius it had.
+            addMetadataSteps(steps, target.mapId, target.entityId, metadata)
         end
         local link = state.link
         if type(link) == "table" then
@@ -1847,29 +2007,11 @@ local function applyHistoryStateSteps(operation, target, state)
                 {target.mapId, target.entityId},
             })
         else
-            table.insert(steps, {
-                [[
-                    INSERT OR REPLACE INTO map_entity_metadata (
-                        map_id, entity_id, name, entity_tag, radius, show_radius,
-                        presence_state
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                ]],
-                {
-                    target.mapId,
-                    target.entityId,
-                    state.name or "",
-                    state.entityTag or "",
-                    tonumber(state.radius) or 3,
-                    state.showRadius and 1 or 0,
-                    state.presenceState or "identified",
-                },
-            })
             -- Undo has to put back "it followed the global" as faithfully as
             -- it puts back a number, or one Undo quietly pins an entity to
-            -- whatever the global happened to say.
-            table.insert(steps, radiusOverrideStep(
-                target.mapId, target.entityId, state.radius
-            ))
+            -- whatever the global happened to say -- and the same holds for a
+            -- corona colour and opacity the entity did not have.
+            addMetadataSteps(steps, target.mapId, target.entityId, state)
         end
     elseif operation == "user_setting" then
         if type(target) ~= "table" or type(target.settingKey) ~= "string"
@@ -2245,6 +2387,12 @@ function Store.listMapEntities()
                 -- is what made every row look like a decision somebody took.
                 map_entity_metadata.radius_override AS radius,
                 COALESCE(map_entity_metadata.show_radius, 0) AS show_radius,
+                -- The "nothing of its own" values for a row that has no
+                -- metadata at all, so the corona of an untouched entity is
+                -- decided by Settings rather than by a missing join.
+                COALESCE(map_entity_metadata.corona_color, '') AS corona_color,
+                COALESCE(map_entity_metadata.corona_opacity, -1)
+                    AS corona_opacity,
                 spatial_links.collection_uuid,
                 spatial_links.card_id,
                 spatial_links.state AS link_state,
@@ -2373,6 +2521,8 @@ function Store.getMapEntity(mapId, entityId)
                 map_entity_metadata.entity_tag AS entity_tag,
                 map_entity_metadata.radius_override AS radius,
                 map_entity_metadata.show_radius AS show_radius,
+                map_entity_metadata.corona_color AS corona_color,
+                map_entity_metadata.corona_opacity AS corona_opacity,
                 spatial_links.collection_uuid,
                 spatial_links.card_id,
                 spatial_links.state AS link_state,
@@ -2475,51 +2625,26 @@ function Store.relinkEntity(value)
             entityName = source.entity_name or "",
             entityTag = source.entity_tag or "",
             radius = tonumber(source.radius) or false,
-            showRadius = tonumber(source.show_radius) == 1,
+            showCorona = tonumber(source.show_radius) == 1,
+            coronaColor = coronaColorOf(source),
+            coronaOpacity = coronaOpacityOf(source),
             collectionUuid = source.collection_uuid,
             cardId = tonumber(source.card_id),
             verifiedMapSha256 = source.verified_map_sha256,
         },
     }
-    local steps = {
-        {
-            [[
-                INSERT OR IGNORE INTO map_entity_metadata
-                    (map_id, entity_id, name, entity_tag, radius, show_radius, presence_state)
-                VALUES (?, ?, ?, ?, ?, ?, 'identified')
-            ]],
-            {
-                value.targetMapId,
-                value.targetEntityId,
-                source.entity_name or "",
-                source.entity_tag or "",
-                tonumber(source.radius) or 3,
-                tonumber(source.show_radius) == 1 and 1 or 0,
-            },
-        },
-        {
-            [[
-                UPDATE map_entity_metadata
-                SET name = ?, entity_tag = ?, radius = ?, show_radius = ?,
-                    presence_state = 'identified'
-                WHERE map_id = ? AND entity_id = ?
-            ]],
-            {
-                source.entity_name or "",
-                source.entity_tag or "",
-                tonumber(source.radius) or 3,
-                tonumber(source.show_radius) == 1 and 1 or 0,
-                value.targetMapId,
-                value.targetEntityId,
-            },
-        },
-        -- Relink moves the entity's metadata, and "it follows the global" is
-        -- part of that metadata. Without this the forward path silently drops
-        -- an override while Redo -- which replays the recorded state -- puts it
-        -- back, so the two disagreed about the same relink.
-        radiusOverrideStep(
-            value.targetMapId, value.targetEntityId, source.radius
-        ),
+    -- The target takes on everything the source said about itself, in one
+    -- statement rather than an insert-if-absent followed by an update: those
+    -- two had to be kept saying the same thing, and a column added to one of
+    -- them and not the other is a column that survives a relink only when the
+    -- target row happened not to exist yet. "It follows the global" is part of
+    -- what moves, which is why the override step travels with it -- without it
+    -- the forward path dropped an override while Redo, which replays the
+    -- recorded state, put it back.
+    local steps = metadataStepsFromRow(
+        value.targetMapId, value.targetEntityId, source, "identified"
+    )
+    for _, step in ipairs({
         {
             [[
                 INSERT INTO spatial_links (
@@ -2546,7 +2671,9 @@ function Store.relinkEntity(value)
         },
         -- DELETE FROM map_entities is intentionally not executed: the
         -- persistent Map Entity remains available for a reversible relink.
-    }
+    }) do
+        table.insert(steps, step)
+    end
     local committed, errorMessage = historyTransaction(
         "relink_entity",
         -- `historyTarget`, not the table itself. Every other caller encodes it
@@ -2573,7 +2700,9 @@ function Store.relinkEntity(value)
             name = source.entity_name or "",
             entityTag = source.entity_tag or "",
             radius = tonumber(source.radius) or false,
-            showRadius = tonumber(source.show_radius) == 1,
+            showCorona = tonumber(source.show_radius) == 1,
+            coronaColor = coronaColorOf(source),
+            coronaOpacity = coronaOpacityOf(source),
         },
         link = {
             collectionUuid = source.collection_uuid,
@@ -3030,7 +3159,9 @@ function Store.updateEntityMetadata(mapId, entityId, metadata)
         -- answer from 3 and has to survive a round trip through Change
         -- History as itself.
         radius = tonumber(existing.radius) or false,
-        showRadius = tonumber(existing.show_radius) == 1,
+        showCorona = tonumber(existing.show_radius) == 1,
+        coronaColor = coronaColorOf(existing),
+        coronaOpacity = coronaOpacityOf(existing),
         presenceState = existing.entity_state or "identified",
     }
     local after = {
@@ -3038,7 +3169,13 @@ function Store.updateEntityMetadata(mapId, entityId, metadata)
         name = tostring(metadata.name or ""),
         entityTag = tostring(metadata.entityTag or ""),
         radius = tonumber(metadata.radius) or false,
-        showRadius = metadata.showRadius == true,
+        showCorona = wantsCorona(metadata),
+        -- `false` is a colour the entity does not have, which is how "follow
+        -- the setting" is said. Anything else is stored as given: the caller
+        -- has already checked it against the schema's own colour rule.
+        coronaColor = type(metadata.coronaColor) == "string"
+            and metadata.coronaColor or false,
+        coronaOpacity = tonumber(metadata.coronaOpacity) or false,
         presenceState = metadata.presenceState or existing.entity_state or "identified",
     }
     local committed, errorMessage = historyTransaction(
@@ -3046,28 +3183,7 @@ function Store.updateEntityMetadata(mapId, entityId, metadata)
         historyTarget(mapId, entityId),
         before,
         after,
-        {
-            {
-                [[
-                    INSERT OR REPLACE INTO map_entity_metadata (
-                        map_id, entity_id, name, entity_tag, radius, show_radius,
-                        presence_state
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                ]],
-                {
-                    mapId,
-                    entityId,
-                    after.name,
-                    after.entityTag,
-                    -- The inert column, kept fed because it is NOT NULL. What
-                    -- the entity actually says is the step below.
-                    after.radius or 3,
-                    after.showRadius and 1 or 0,
-                    after.presenceState,
-                },
-            },
-            radiusOverrideStep(mapId, entityId, after.radius),
-        }
+        metadataSteps(mapId, entityId, after)
     )
     if not committed then
         return false, "entity_metadata_update_failed: " .. tostring(errorMessage)

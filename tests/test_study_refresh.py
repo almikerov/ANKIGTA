@@ -228,12 +228,13 @@ def test_the_candidate_set_carries_identities_and_never_coordinates(
 
     candidates = as_list(last_payload(server, "ankigta:spatialCandidates"))
     assert len(candidates) == 1
+    # No corona flag either: whether a mark already stands here is a question
+    # about what is being drawn right now, which only the client can answer.
     assert candidates[0] == {
         "mapId": MAP_ID,
         "entityId": "e1",
         "cardIdentity": {"collectionUuid": UUID, "cardId": 11},
         "radius": 7.5,
-        "showRadius": True,
         "eligible": True,
     }
 

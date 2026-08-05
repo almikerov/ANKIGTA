@@ -42,6 +42,17 @@ local function toggle()
     return {kind = "boolean"}
 end
 
+--- A colour the user picks, as `#rrggbb`.
+--
+-- Text rather than three numbers because that is what the picker hands back
+-- and what a person reads out of a settings file. Prose here says colour and
+-- identifiers say color, which is what the rest of this resource already does
+-- (`ZONE_COLOR`, `settings.colorHex`); one spelling in code is worth more than
+-- agreement with the sentence above it.
+local function color()
+    return {kind = "color"}
+end
+
 --- Where the movable surfaces sit, as a fraction of the screen.
 --
 -- Normalized rather than absolute so the same file describes the same corner
@@ -78,6 +89,17 @@ Settings.schema = {
         default = "allow_due",
         rule = choice({"allow_due", "allow_all"}),
     },
+    -- What a corona looks like where the entity does not say otherwise. Owned
+    -- by the server for the same reason `activationRadius` is: these are the
+    -- defaults behind a value stored on the Map Entity itself, and a default
+    -- kept on one player's machine would describe a marker every other player
+    -- sees differently.
+    coronaColor = {authority = SERVER, default = "#3cc8ff", rule = color()},
+    coronaOpacity = {
+        authority = SERVER,
+        default = 0.6,
+        rule = numeric(0, 1, nil, 2),
+    },
     -- No `includeInStudy`. Which maps take part is not a preference: a Map
     -- Entity is in play when its map is loaded, which the world already
     -- answers. The switch offered a row per map ANKIGTA had ever seen --
@@ -85,6 +107,14 @@ Settings.schema = {
     -- narrowing study at all.
 
     -- Presentation, input and audio: this player's machine only.
+    -- A way of looking rather than a property of the thing looked at: while it
+    -- is on, the selected row's Activation Zone is drawn for as long as the
+    -- panel is open. The answer outlives F7 and the drawing does not -- it is
+    -- about the row being worked on, and nothing is being worked on with the
+    -- window shut. `Show corona` is the other half of the pair and lives on the
+    -- entity, because that one is a property of the thing, everyone sees it,
+    -- and it is there whether or not anybody has a window open.
+    drawRadius = {authority = CLIENT, default = false, rule = toggle()},
     indicatorMode = {
         authority = CLIENT,
         default = "none",
@@ -134,6 +164,11 @@ Settings.order = {
     "activationDelaySeconds",
     "maxActivationSpeedKmh",
     "reviewMode",
+    -- The three that decide what ANKIGTA draws into the world, together: the
+    -- way of looking first, then what the mark the entity wears looks like.
+    "drawRadius",
+    "coronaColor",
+    "coronaOpacity",
     "indicatorMode",
     "focusOnSelect",
     "reviewProtection",
@@ -411,6 +446,24 @@ function Settings.normalize(key, value)
         return result
     end
     return value
+end
+
+--- A stored `#rrggbb` as the three channels something is drawn in.
+--
+-- Here rather than beside the drawing, because this is where the format is
+-- decided: the rule above says what a colour may be, and one reader of it
+-- keeps "what a colour looks like" from being answered twice.
+--
+-- Returns `nil` for anything the rule would have refused, so a corrupted or
+-- hand-edited value falls back to a default rather than being drawn as black
+-- -- black is a colour somebody could have chosen, and this never is.
+function Settings.colorChannels(value)
+    if type(value) ~= "string" or not string.find(value, "^#%x%x%x%x%x%x$") then
+        return nil
+    end
+    return tonumber(string.sub(value, 2, 3), 16),
+        tonumber(string.sub(value, 4, 5), 16),
+        tonumber(string.sub(value, 6, 7), 16)
 end
 
 ANKIGTA.Settings = Settings

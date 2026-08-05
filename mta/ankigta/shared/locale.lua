@@ -33,6 +33,11 @@ Locale.strings = {
     ["settings.maxActivationSpeedKmh"] =
         "Open cards when speed lower than:",
     ["settings.reviewMode"] = "Review mode",
+    -- A way of looking, so it says what it does to the view rather than what
+    -- it does to any entity: `f7.showCorona` is the entity's own.
+    ["settings.drawRadius"] = "Draw the selected row's radius while F7 is open",
+    ["settings.coronaColor"] = "Corona colour",
+    ["settings.coronaOpacity"] = "Corona opacity (0–1)",
     ["settings.indicatorMode"] = "Next Card Indicator",
     ["settings.focusOnSelect"] = "Look at a Map Entity when I select it",
     ["settings.reviewProtection"] = "Review Protection",
@@ -193,10 +198,18 @@ Locale.strings = {
     -- rather than leaving the player to guess whether it was chosen.
     ["f7.radiusInherited"] = "following Settings",
     ["f7.radiusClearHint"] = "Empty the box to follow Settings again",
-    ["f7.showRadius"] = "Draw radius",
-    -- The standing answer, kept on the entity: the world shows it
-    -- whether or not F7 is open.
-    ["f7.drawAlways"] = "Draw always",
+    -- What `Draw always` became. That switch made a drawn radius permanent,
+    -- which confused a way of looking with a property of the thing looked at.
+    -- This half is the thing's: a corona standing where it stands, the same
+    -- for anyone looking. The other half is `settings.drawRadius`.
+    ["f7.showCorona"] = "Show corona",
+    ["f7.coronaColor"] = "Corona colour",
+    ["f7.coronaOpacity"] = "Corona opacity",
+    -- Two fields showing a value nobody chose for this entity, which is not
+    -- something the value alone conveys.
+    ["f7.coronaInherited"] = "following Settings",
+    ["f7.coronaFollowSettings"] = "Follow Settings",
+    ["f7.coronaOpacityClearHint"] = "Empty the box to follow Settings again",
     ["f7.replaceTitle"] = "Replace the linked card?",
     ["f7.replaceWarning"] = "The current link is discarded. The card"
         .. " itself is not touched.",

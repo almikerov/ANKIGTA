@@ -249,6 +249,10 @@ local function entityContract(row)
     -- this runs once per row inside F7's two-second envelope.
     local element =
         ANKIGTA.World.runtimeInstances(row.map_id, row.entity_id, 1)[1]
+    -- `false` where the entity says nothing of its own and its corona follows
+    -- Settings. What that looks like is the client's to resolve: the settings
+    -- value it falls back to is one the client already holds.
+    local coronaColor, coronaOpacity = ANKIGTA.Store.coronaOf(row)
     return {
         mapEntity = {
             mapId = row.map_id,
@@ -263,7 +267,9 @@ local function entityContract(row)
                 name = row.entity_name or "",
                 entityTag = row.entity_tag or "",
                 radius = tonumber(row.radius) or false,
-                showRadius = tonumber(row.show_radius) == 1,
+                showCorona = tonumber(row.show_radius) == 1,
+                coronaColor = coronaColor,
+                coronaOpacity = coronaOpacity,
             },
             authored = {
                 position = {
@@ -287,7 +293,9 @@ local function entityContract(row)
             name = row.entity_name or "",
             entityTag = row.entity_tag or "",
             radius = tonumber(row.radius) or false,
-            showRadius = tonumber(row.show_radius) == 1,
+            showCorona = tonumber(row.show_radius) == 1,
+            coronaColor = coronaColor,
+            coronaOpacity = coronaOpacity,
         },
         link = link,
         copyCollision = link.copyCollision == true,
@@ -336,7 +344,8 @@ local function candidateContract(element, name, resourceName)
             model = getElementModel(element),
             map = {resourceName = resourceName, mapName = resourceName},
             display = {
-                name = "", entityTag = "", radius = false, showRadius = false
+                name = "", entityTag = "", radius = false, showCorona = false,
+                coronaColor = false, coronaOpacity = false,
             },
             authored = {
                 position = {x = x or 0, y = y or 0, z = z or 0},
@@ -354,7 +363,8 @@ local function candidateContract(element, name, resourceName)
             referenceId = getElementID(element) or "",
         },
         metadata = {
-            name = "", entityTag = "", radius = false, showRadius = false,
+            name = "", entityTag = "", radius = false, showCorona = false,
+            coronaColor = false, coronaOpacity = false,
         },
         link = {state = "Not adopted", guidanceKey = "f7.guidance.notAdopted"},
         copyCollision = false,
@@ -1858,35 +1868,53 @@ addEventHandler(ENTITY_METADATA_REQUEST_EVENT, resourceRoot, function(
         )
         return
     end
-    -- Three answers, not two. A number is an override; `false` is the field
-    -- emptied, which means "follow the global again" and stores nothing; and
-    -- absent means this message is not about the radius at all, so whatever
-    -- the row already said stands.
-    local radius
-    if metadata.radius == nil then
-        radius = tonumber(row.radius) or false
-    elseif metadata.radius == false then
-        radius = false
-    else
-        radius = tonumber(metadata.radius)
-        -- The schema's own rule for the global radius, applied to the
-        -- per-entity one: a number cannot be legal in Settings and illegal
-        -- here, and the schema is the side both can reach.
-        local valid, reason = false, "settings.error.not_a_number"
-        if radius ~= nil then
-            valid, reason = ANKIGTA.Settings.validate(
-                "activationRadius",
-                ANKIGTA.Settings.normalize("activationRadius", radius)
-            )
+    --- One overridable field as it will be stored, or the reason it will not be.
+    --
+    -- Three answers, not two, and one rule for all three of them. A value is
+    -- an override; `false` is the field emptied, which means "follow the
+    -- global again" and stores nothing; and absent means this message is not
+    -- about that field at all, so whatever the row already said stands.
+    --
+    -- Checked against the schema's own rule for the setting it overrides,
+    -- because a value cannot be legal in Settings and illegal here, and the
+    -- schema is the side both can reach. Validated before it is normalized,
+    -- which is the order every other caller uses: normalizing first hands
+    -- whatever arrived over the wire straight to the rule's own conversion,
+    -- and `coronaColor` lowercases -- so a client sending `true` would take
+    -- the handler down instead of being told no.
+    local function proposed(sent, stored, key)
+        if sent == nil then
+            return stored
         end
+        if sent == false then
+            return false
+        end
+        local valid, reason = ANKIGTA.Settings.validate(key, sent)
         if not valid then
-            triggerClientEvent(
-                client, PENDING_NOTICE_EVENT, resourceRoot,
-                "notice.entityUpdateFailed", reason
-            )
-            return
+            return nil, reason
         end
+        return ANKIGTA.Settings.normalize(key, sent)
     end
+
+    local storedColor, storedOpacity = ANKIGTA.Store.coronaOf(row)
+    local radius, radiusRefused = proposed(
+        metadata.radius, tonumber(row.radius) or false, "activationRadius"
+    )
+    local coronaColor, colorRefused = proposed(
+        metadata.coronaColor, storedColor, "coronaColor"
+    )
+    local coronaOpacity, opacityRefused = proposed(
+        metadata.coronaOpacity, storedOpacity, "coronaOpacity"
+    )
+    local refused = radiusRefused or colorRefused or opacityRefused
+    if refused then
+        triggerClientEvent(
+            client, PENDING_NOTICE_EVENT, resourceRoot,
+            "notice.entityUpdateFailed", refused
+        )
+        return
+    end
+
     local updated, updateError = ANKIGTA.Store.updateEntityMetadata(
         mapId,
         entityId,
@@ -1897,10 +1925,12 @@ addEventHandler(ENTITY_METADATA_REQUEST_EVENT, resourceRoot, function(
                 or (row.entity_name or ""),
             entityTag = row.entity_tag or "",
             radius = radius,
-            showRadius = metadata.showRadius ~= nil
-                and metadata.showRadius == true
-                or (metadata.showRadius == nil
+            showCorona = metadata.showCorona ~= nil
+                and metadata.showCorona == true
+                or (metadata.showCorona == nil
                     and tonumber(row.show_radius) == 1),
+            coronaColor = coronaColor,
+            coronaOpacity = coronaOpacity,
         }
     )
     if not updated then
@@ -2377,12 +2407,16 @@ addEventHandler(CARD_STATES_REFRESHED_EVENT, resourceRoot, function(
                     collectionUuid = row.collection_uuid,
                     cardId = tonumber(row.card_id),
                 }
+                -- No corona flag on a candidate. Whether something already
+                -- marks this spot is a question about what is being drawn
+                -- right now, which is the client's own answer -- a corona
+                -- appears when its Runtime Instance is here and goes when it
+                -- is not, and neither is something the server watches.
                 local candidate = {
                     mapId = row.map_id,
                     entityId = row.entity_id,
                     cardIdentity = cardIdentity,
                     radius = tonumber(row.radius) or false,
-                    showRadius = tonumber(row.show_radius) == 1,
                     eligible = true,
                 }
                 table.insert(candidates, candidate)

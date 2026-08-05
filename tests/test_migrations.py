@@ -211,6 +211,85 @@ def test_the_early_review_boolean_becomes_the_review_mode_it_meant(
         sandbox.close()
 
 
+def test_a_setting_stored_by_a_schema_that_no_longer_existed_is_retired(
+    workspace: Path,
+) -> None:
+    """The owner's database carries a `coronaOpacity` of 0.2, written by a
+    build that never reached this trunk.
+
+    Every start since has logged `discarded_stored_setting: coronaOpacity` and
+    fallen back to the default, correctly: nothing knew what the key meant.
+    Ticket 04 gives it a meaning again, and that is the moment the leftover
+    would stop being discarded and start being the value in force -- 0.2
+    against a shipped 0.6, which is a corona faint enough to read as the
+    feature not working. So the value goes, and the shipped default is what is
+    in force until somebody chooses otherwise.
+    """
+    database = workspace / "ankigta.sqlite"
+    shipped_schemas.build(database, "v7", history=True)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO user_settings (setting_key, setting_value)"
+            " VALUES ('coronaOpacity', '[0.2]')"
+        )
+
+    sandbox = server(workspace)
+    try:
+        assert opened(sandbox) is True
+
+        assert rows(
+            database,
+            "SELECT setting_key FROM user_settings"
+            " WHERE setting_key = 'coronaOpacity'",
+        ) == []
+
+        # And what the server acts on is the shipped default, not the leftover.
+        sandbox.execute("ANKIGTA.SettingsStore = nil")
+        sandbox.load("server/settings_store.lua")
+        sandbox.eval("function() return ANKIGTA.SettingsStore.load() end")()
+        assert sandbox.eval(
+            "function() return ANKIGTA.SettingsStore.get('coronaOpacity') end"
+        )() == 0.6
+    finally:
+        sandbox.close()
+
+
+def test_retiring_it_leaves_a_value_the_owner_chooses_afterwards_alone(
+    workspace: Path,
+) -> None:
+    """Retiring is a one-off about one leftover, not a rule that eats the
+    setting. A value written after the upgrade survives every later start."""
+    database = workspace / "ankigta.sqlite"
+    shipped_schemas.build(database, "v7", history=True)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO user_settings (setting_key, setting_value)"
+            " VALUES ('coronaOpacity', '[0.2]')"
+        )
+
+    first = server(workspace)
+    try:
+        assert opened(first) is True
+        first.load("server/settings_store.lua")
+        first.eval("function() return ANKIGTA.SettingsStore.load() end")()
+        assert first.eval(
+            "function() return ANKIGTA.SettingsStore.set('coronaOpacity', 0.35) end"
+        )() is True
+    finally:
+        first.close()
+
+    second = server(workspace)
+    try:
+        assert opened(second) is True
+        second.load("server/settings_store.lua")
+        second.eval("function() return ANKIGTA.SettingsStore.load() end")()
+        assert second.eval(
+            "function() return ANKIGTA.SettingsStore.get('coronaOpacity') end"
+        )() == 0.35
+    finally:
+        second.close()
+
+
 def test_the_version_one_heading_becomes_the_rotation_it_meant(
     workspace: Path,
 ) -> None:

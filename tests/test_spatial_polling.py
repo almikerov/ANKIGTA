@@ -43,15 +43,16 @@ def link(
     map_id: str = "m1",
     card_id: int = 7,
     radius: float = 3.0,
-    show_radius: bool = False,
     eligible: bool = True,
 ) -> dict[str, Any]:
+    # No corona flag: a Spatial Link says which card hangs where and how close
+    # you must stand, never what is being drawn -- that is the client's, and
+    # `client/world_marks.lua` is the side that knows.
     return {
         "mapId": map_id,
         "entityId": entity_id,
         "cardIdentity": {"collectionUuid": UUID, "cardId": card_id},
         "radius": radius,
-        "showRadius": show_radius,
         "eligible": eligible,
     }
 

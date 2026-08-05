@@ -536,6 +536,10 @@ SERVER_VALUES = {
     "activationDelaySeconds": 2.5,
     "maxActivationSpeedKmh": 45,
     "reviewMode": "allow_all",
+    # What a corona looks like where the entity says nothing of its own. The
+    # world's, not one machine's: every player sees the same marker.
+    "coronaColor": "#ffaa00",
+    "coronaOpacity": 0.35,
 }
 
 
@@ -641,6 +645,8 @@ def test_a_snapshot_carries_every_answerable_setting_and_no_secret(
         "activationDelaySeconds",
         "maxActivationSpeedKmh",
         "reviewMode",
+        "coronaColor",
+        "coronaOpacity",
         "connectionPort",
     } == keys
     assert "connectionToken" not in keys
@@ -766,6 +772,8 @@ def test_the_client_may_not_write_a_setting_the_server_owns(
 
 CLIENT_VALUES = {
     "indicatorMode": "sphere_and_minimap",
+    # A way of looking, so it is this machine's answer rather than the world's.
+    "drawRadius": True,
     "focusOnSelect": False,
     "reviewProtection": False,
     "disablePlayerControls": False,

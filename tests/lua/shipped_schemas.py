@@ -22,9 +22,11 @@ each of which is the inverse of a shipped shape:
 - **v5** — `map_entities` widened again so a card can hang on a marker.
 - **v6** — v5's tables; what changed is a row, the `allowEarlyReview` boolean
   rewritten as the `reviewMode` it meant.
-- **v7** — the current shape. `map_preferences` is gone: which maps take part
-  in study is not a stored preference any more, so the table and the Change
-  History entries that replayed into it go with it.
+- **v7** — the last shape that shipped. `map_preferences` is gone: which maps
+  take part in study is not a stored preference any more, so the table and the
+  Change History entries that replayed into it go with it. Version 8 changes no
+  table: it retires one `user_settings` row a schema that no longer exists left
+  behind, so a v7 database is what an upgrade to it starts from.
 
 `history=True` adds the tables ticket 11 introduced. They are created by
 `ensureChangeHistorySchema` on every open regardless of version, so any database
@@ -53,7 +55,7 @@ SHIPPED_VERSIONS = ("v1", "v2", "v3legacy", "v3", "v4", "v5", "v6", "v7")
 #: still pass. `Store.open()` returning true is the strong claim -- it refuses
 #: any database not at exactly the current version -- and this guards the
 #: direction: raise it in the ticket whose migration raises the schema.
-MIGRATED_SCHEMA_FLOOR = 7
+MIGRATED_SCHEMA_FLOOR = 8
 
 
 _MAPS = """

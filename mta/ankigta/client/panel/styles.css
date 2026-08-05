@@ -342,6 +342,10 @@ label {
 .picker-color-value { overflow: hidden; text-overflow: ellipsis; }
 .picker-hex { gap: var(--space-1); }
 .picker-hex input[aria-invalid="true"] { border-color: var(--danger); }
+/* The way back to the value Settings holds. Only a per-entity override has one
+   -- a global has nothing above it to follow -- so the button is absent rather
+   than disabled where following is not a thing this value can do. */
+.picker-clear { white-space: nowrap; }
 
 /* Fixed widths, not fitted: a deck called `Chinese::HSK 1::Vocabulary` would
    otherwise size its button and push the rest of the row off the panel, and a
