@@ -344,8 +344,11 @@ def entity(**over: Any) -> dict[str, Any]:
         "linkState": "Unlinked",
         "radius": 3,
         "radiusInherited": True,
-        "showAlways": False,
-        "drawNow": False,
+        "showCorona": False,
+        "coronaColor": "#3cc8ff",
+        "coronaColorInherited": True,
+        "coronaOpacity": 0.6,
+        "coronaOpacityInherited": True,
         "linkedCard": False,
         "recheckAvailable": False,
         "copyCollision": False,
@@ -785,6 +788,150 @@ def test_clearing_the_field_asks_to_follow_the_global_again() -> None:
     )
 
     assert actions(answer, "setEntityMarks") == [{"radius": False}]
+
+
+# --- how the entity says it is marked ----------------------------------------
+
+
+def test_the_pane_offers_show_corona_and_no_draw_always() -> None:
+    """`Draw always` made a drawn radius permanent, which confused a way of
+    looking with a property of the thing. What is on the pane is the second;
+    the first is a client setting now."""
+    answer = run_page([{"receive": selecting(entity(showCorona=True))}])
+
+    assert node(answer, "entity-show-corona")["checked"] is True
+    for gone in ("entity-draw-always", "entity-draw-now"):
+        with pytest.raises(AssertionError):
+            node(answer, gone)
+
+
+def test_showing_a_corona_is_sent_to_the_entity() -> None:
+    answer = run_page(
+        [
+            {"receive": selecting(entity())},
+            {"check": {"id": "entity-show-corona", "value": True}},
+            {"change": {"id": "entity-show-corona"}},
+        ]
+    )
+
+    assert actions(answer, "setEntityMarks") == [{"showCorona": True}]
+
+
+def test_a_corona_colour_is_chosen_with_the_picker_the_page_draws() -> None:
+    """The same component the Settings rows use: a native colour dialog has
+    nowhere to open over a page rendered offscreen into a game window."""
+    answer = run_page(
+        [
+            {"receive": selecting(entity())},
+            {
+                "click": {
+                    "under": "entity-corona-color",
+                    "attr": "data-picker",
+                    "is": "entityCoronaColor",
+                }
+            },
+            {
+                "click": {
+                    "under": "entity-corona-color",
+                    "attr": "data-value",
+                    "is": "#ef4444",
+                }
+            },
+        ]
+    )
+
+    assert actions(answer, "setEntityMarks") == [{"coronaColor": "#ef4444"}]
+
+
+def test_an_inherited_colour_shows_the_one_settings_holds() -> None:
+    """A swatch showing nothing would say the corona has no colour, and it has
+    one -- the same rule the radius box follows."""
+    answer = run_page(
+        [
+            {
+                "receive": selecting(
+                    entity(coronaColor="#38bdf8", coronaColorInherited=True),
+                    locale={"f7.coronaInherited": "following Settings"},
+                )
+            }
+        ]
+    )
+
+    swatch = [
+        candidate
+        for candidate in walk(node(answer, "entity-corona-color"))
+        if candidate["attrs"].get("data-picker") == "entityCoronaColor"
+    ][0]
+    assert swatch["attrs"]["data-value"] == "#38bdf8"
+    mark = node(answer, "entity-corona-color-inherited")
+    assert mark["hidden"] is False
+    assert mark["text"] == "following Settings"
+
+
+def test_a_colour_can_be_handed_back_to_settings() -> None:
+    """An emptied hex box cannot say it: half a hex code is refused, so `""`
+    would be refused too. The picker offers the way back explicitly."""
+    answer = run_page(
+        [
+            {
+                "receive": selecting(
+                    entity(coronaColor="#ff8000", coronaColorInherited=False)
+                )
+            },
+            {
+                "click": {
+                    "under": "entity-corona-color",
+                    "attr": "data-picker-clear",
+                    "is": "entityCoronaColor",
+                }
+            },
+        ]
+    )
+
+    assert actions(answer, "setEntityMarks") == [{"coronaColor": False}]
+
+
+def test_an_emptied_opacity_asks_to_follow_settings_again() -> None:
+    answer = run_page(
+        [
+            {
+                "receive": selecting(
+                    entity(coronaOpacity=0.25, coronaOpacityInherited=False)
+                )
+            },
+            {"set": {"id": "entity-corona-opacity", "value": ""}},
+            {"change": {"id": "entity-corona-opacity"}},
+        ]
+    )
+
+    assert actions(answer, "setEntityMarks") == [{"coronaOpacity": False}]
+
+
+def test_a_typed_opacity_is_sent_as_the_number_it_is() -> None:
+    answer = run_page(
+        [
+            {"receive": selecting(entity())},
+            {"set": {"id": "entity-corona-opacity", "value": "0.25"}},
+            {"change": {"id": "entity-corona-opacity"}},
+        ]
+    )
+
+    assert actions(answer, "setEntityMarks") == [{"coronaOpacity": 0.25}]
+
+
+def test_with_nothing_selected_the_marks_controls_are_disabled() -> None:
+    """The pane keeps its place rather than coming and going, so the fields are
+    disabled instead of removed."""
+    answer = run_page([{"receive": state()}])
+
+    assert node(answer, "entity-show-corona")["disabled"] is True
+    assert node(answer, "entity-corona-opacity")["disabled"] is True
+    picker = [
+        candidate
+        for candidate in walk(node(answer, "entity-corona-color"))
+        if candidate["attrs"].get("data-picker") == "entityCoronaColor"
+    ][0]
+    assert picker["disabled"] is True
 
 
 def test_a_typed_radius_is_sent_as_the_number_it_is() -> None:
