@@ -70,11 +70,16 @@ to scope the Map Entity list to the map in front of the player; study asks the
 same question of the same answer rather than growing a second one that can
 disagree with it.
 
-The session's card set, the counters, the spatial candidates and the Text Label
-set each narrow by that answer. The Text Label set's refusal to label an entity on
-an excluded map, and the `map_excluded` reason it reports to the panel row, go
-with the switch — an entity on a map that is not loaded has no Runtime Instance to
-carry a label anyway.
+The session's card set, the counters and the spatial candidates each narrow by
+that answer, taken from one place. Text Labels do not exist on this trunk yet —
+ticket 06 builds them, and it inherits this rule rather than growing its own.
+
+**Almost all of this is server-side.** `includeInStudy` lives in
+`server/settings_store.lua`, `server/store.lua` and `server/main.lua`; teleport is
+`server/teleport.lua`. The client carries three references to `includeInStudy` in
+`panel.lua` (the per-map settings row it draws) and about seven lines of teleport
+wiring across `panel.lua` and `app.js`. Ticket 03 rewrites those two files, so
+keep this ticket's touch on them to the minimum the work actually needs.
 
 **Unloading a map still removes nothing.** A Spatial Link is not the map, and
 loading the map again brings the link back exactly as it was.
@@ -102,9 +107,8 @@ loading the map again brings the link back exactly as it was.
 - [ ] Settings offers no per-map row, and no way to exclude a map
 - [ ] A Map Entity on a loaded map is in play; one on an unloaded map is not
 - [ ] Loading that map again brings its links back untouched
-- [ ] Counters, spatial candidates and Text Labels all narrow by the same answer,
-      taken from one place
+- [ ] The session's card set, the counters and the spatial candidates all narrow
+      by the same answer, taken from one place
 - [ ] A database holding stored per-map preferences opens without complaint, and
       stops carrying them
-- [ ] The panel row no longer has a `map_excluded` state to report
 - [ ] `Active Map Set` in CONTEXT.md no longer mentions the switch

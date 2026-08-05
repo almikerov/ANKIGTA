@@ -75,6 +75,13 @@ own id→name table.
 `docs/agents/lua-testing.md` forbids by name — rewrite it against behaviour or
 delete it. `.inspector-actions` in `styles.css` is dead.
 
+**Runs beside ticket 02.** That one is almost entirely server-side; the two share
+`shared/locale.lua` and `shared/settings.lua`, both of which are tables each side
+appends to. **This ticket merges first**, because it rewrites `panel.lua`,
+`app.js` and `index.html` wholesale and 02 touches them in about ten lines —
+re-applying ten lines onto a finished panel is work; re-applying a rewrite is not.
+Do not merge to main yourself.
+
 **Blocked by:** 01.
 
 **Status:** ready-for-agent
