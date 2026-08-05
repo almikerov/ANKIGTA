@@ -417,6 +417,11 @@ class MtaSandbox:
         #: parsed once per entity and a document parsed once look identical
         #: from their answers, and only differ here.
         self.xml_loads: list[str] = []
+        #: Every element type `getElementsByType` was asked for, in call
+        #: order. A world walked once and a world walked once per map
+        #: give the same answers and differ only here -- and the study
+        #: refresh runs on a two-second timer.
+        self.element_type_reads: list[str] = []
         #: Parsed nodes, so a Lua handle can index back to its element.
         self._xml_nodes: list[ElementTree.Element] = []
         #: Failures to inject at the MTA API boundary.
@@ -1152,10 +1157,7 @@ class MtaSandbox:
             element = export_argument(args, 0)
             if lua_type(element) != "table":
                 return False
-            return (
-                element["edf:rep"] is True
-                or element["__edf_representation"] is True
-            )
+            return element["edf:rep"] is True
 
         def edf_set_element_property(*args: Any) -> bool:
             element = export_argument(args, 0)
@@ -1927,9 +1929,13 @@ class MtaSandbox:
             return table
 
         g.getVehicleOccupants = get_vehicle_occupants
-        g.getElementsByType = lambda kind, *_rest: self.lua.table_from(
-            [e for e in self.world_elements if str(e["type"]) == str(kind)]
-        )
+        def get_elements_by_type(kind: Any, *_rest: Any) -> Any:
+            self.element_type_reads.append(str(kind))
+            return self.lua.table_from(
+                [e for e in self.world_elements if str(e["type"]) == str(kind)]
+            )
+
+        g.getElementsByType = get_elements_by_type
         g.getElementData = lambda element, key, *_rest: (
             element[str(key)] if lua_type(element) == "table" else False
         )

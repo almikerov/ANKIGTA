@@ -40,8 +40,6 @@ Locale.strings = {
     ["settings.cardAudioEnabled"] = "Card audio",
     ["settings.muteGameWorld"] = "Mute world while reviewing",
     ["settings.uiScale"] = "UI scale",
-    -- Per map, and about that map's entities rather than about a list of
-    -- maps: the old plural read as a global switch over all of them.
     ["settings.uiPlacement"] = "Window placement",
     ["settings.connectionPort"] = "Companion port",
     ["settings.connectionToken"] = "Companion token",

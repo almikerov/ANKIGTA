@@ -287,6 +287,46 @@ def test_every_map_entity_type_can_be_linked(
     assert linked["state"] == "Pending Map Save"
 
 
+def test_a_pending_save_is_bound_to_the_id_the_map_file_will_carry(
+    server: MtaSandbox,
+) -> None:
+    """The read-back matches the saved `<object id="...">` against this.
+
+    `me:ID` is the editor's own copy of that id and it is written only where
+    the editor had to invent one -- an element the `.map` already named
+    uniquely never carries it (editor_main/server/IDhandler.lua). Binding to it
+    left the read-back comparing the saved id against `false`.
+    """
+    editor_root = open_map_in_editor(server)
+    seed_entity(server, map_id="mymap", entity_id="object (bin) (1)")
+    editor_element(server, editor_root, entity_id="object (bin) (1)")
+    player = study_player(server)
+
+    linked, reason = link_card(server, player, "mymap", "object (bin) (1)")
+
+    assert reason is False, reason
+    assert linked["editorElementId"] == "object (bin) (1)"
+
+
+def test_an_element_the_editor_renamed_is_bound_to_the_name_it_gave_it(
+    server: MtaSandbox,
+) -> None:
+    """Where the editor did invent an id, `me:ID` is what the save will use."""
+    editor_root = open_map_in_editor(server)
+    seed_entity(server, map_id="mymap", entity_id="renamed")
+    element = server.add_world_element(
+        "object", map_id="", dimension=200, ankigtaEntityId="renamed"
+    )
+    element["__parent"] = editor_root
+    element["me:ID"] = "object (bin) (2)"
+    player = study_player(server)
+
+    linked, reason = link_card(server, player, "mymap", "renamed")
+
+    assert reason is False, reason
+    assert linked["editorElementId"] == "object (bin) (2)"
+
+
 def test_an_entity_the_editor_reloaded_is_still_found_by_its_map_id(
     server: MtaSandbox,
 ) -> None:
@@ -357,6 +397,63 @@ def test_teleport_outside_the_editor_lands_in_the_right_dimension(
     assert source == "runtime"
     assert server.moved[-1]["dimension"] == 7
     assert server.moved[-1]["position"][0] == 42
+
+
+def test_teleport_reaches_the_only_copy_even_when_it_is_the_editors(
+    server: MtaSandbox,
+) -> None:
+    """One copy is not a choice, so the player's own world does not veto it.
+
+    A Map Entity whose only instance is the one the editor is holding is still
+    that entity, and ADR 0005 says teleport goes straight to the target. The
+    alternative -- refusing, or falling back to the authored snapshot -- would
+    put the player somewhere the entity is not, which is the thing this ticket
+    is about.
+    """
+    editor_root = open_map_in_editor(server)
+    seed_entity(
+        server, map_id="mymap", entity_id="object (bin) (1)", dimension=0, x=5
+    )
+    editor_element(
+        server, editor_root, entity_id="object (bin) (1)", dimension=200, x=99
+    )
+    player = study_player(server, dimension=0)
+
+    moved, source = teleport(server, player, "mymap", "object (bin) (1)")
+
+    assert moved is True
+    assert source == "runtime"
+    assert server.moved[-1]["dimension"] == 200
+    assert server.moved[-1]["position"][0] == 99
+
+
+def test_teleport_falls_back_to_the_record_when_copies_cannot_be_told_apart(
+    server: MtaSandbox,
+) -> None:
+    """Two copies in the player's own world are a question, not an answer.
+
+    Linking refuses outright, because it writes; teleport only moves the
+    player, so it goes where the record says rather than picking whichever
+    copy the walk happened to reach.
+    """
+    editor_root = open_map_in_editor(server)
+    seed_entity(
+        server, map_id="mymap", entity_id="object (bin) (1)", dimension=7, x=5
+    )
+    editor_element(
+        server, editor_root, entity_id="object (bin) (1)", dimension=200, x=99
+    )
+    editor_element(
+        server, editor_root, entity_id="object (bin) (1)", dimension=200, x=42
+    )
+    player = study_player(server, dimension=200)
+
+    moved, source = teleport(server, player, "mymap", "object (bin) (1)")
+
+    assert moved is True
+    assert source == "authored"
+    assert server.moved[-1]["dimension"] == 7
+    assert server.moved[-1]["position"][0] == 5
 
 
 def test_teleport_uses_the_authored_snapshot_when_nothing_is_loaded(
@@ -944,3 +1041,43 @@ def test_the_panel_skips_a_representation_without_asking_a_server_export(
     )()
 
     assert panel_client.camera_matrix[3:6] == (10.25, -20.5, 3.0)
+
+
+def test_the_active_map_set_reads_the_world_once_however_many_maps(
+    server: MtaSandbox,
+) -> None:
+    """Study asks this every two seconds, not once per F7 open.
+
+    Deciding it per map means walking every element in the world once per map,
+    and each of those walks climbs the element tree against every running
+    resource. On a reference-sized world that is the whole world, several times
+    over, on a timer.
+    """
+    for name in ("map-a", "map-b", "map-c"):
+        server.add_resource(name, resource_type="map")
+        seed_link(server, map_id=name, entity_id="here", card_id=11)
+    rows = server.eval("function() return ANKIGTA.Store.listMapEntities() end")()
+
+    server.element_type_reads.clear()
+    loaded = server.to_python(
+        server.eval("function(r) return ANKIGTA.World.loadedMapIds(r) end")(rows)
+    )
+
+    assert set(loaded) == {"map-a", "map-b", "map-c"}
+    # One pass: the map identity type, then the four Map Entity types.
+    assert len(server.element_type_reads) == 5
+
+
+def test_the_active_map_set_does_not_read_the_world_when_nothing_is_loaded(
+    server: MtaSandbox,
+) -> None:
+    seed_link(server, map_id="stowed-map", entity_id="here", card_id=11)
+    rows = server.eval("function() return ANKIGTA.Store.listMapEntities() end")()
+
+    server.element_type_reads.clear()
+    loaded = server.to_python(
+        server.eval("function(r) return ANKIGTA.World.loadedMapIds(r) end")(rows)
+    )
+
+    assert loaded == {}
+    assert server.element_type_reads == []

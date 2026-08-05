@@ -623,6 +623,15 @@ local function migrateVersionSix()
     return transaction(Store.connection, steps)
 end
 
+local function tableExists(name)
+    local ok, rows = execute(
+        Store.connection,
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        name
+    )
+    return ok and rows[1] ~= nil
+end
+
 --- Version 7: the per-map `Include in study` switch stops being stored.
 --
 -- Which maps take part is not a preference any more -- a Map Entity is in play
@@ -634,15 +643,6 @@ end
 -- The cursor is walked back to the newest surviving entry rather than left
 -- pointing at a deleted one, which Undo would report as a missing entry and
 -- never get past.
-local function tableExists(name)
-    local ok, rows = execute(
-        Store.connection,
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
-        name
-    )
-    return ok and rows[1] ~= nil
-end
-
 local function migrateVersionSeven()
     local steps = {}
     -- The history tables are created after migrations run, so a database old
@@ -673,14 +673,6 @@ local function migrateVersionSeven()
     return transaction(Store.connection, steps)
 end
 
-local function hasIdentityCollisionTable()
-    local ok, rows = execute(
-        Store.connection,
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'identity_collisions'"
-    )
-    return ok and rows[1] ~= nil
-end
-
 local function migrateIdentityCollisionTable()
     return transaction(Store.connection, {
         {
@@ -701,7 +693,7 @@ local function migrateIdentityCollisionTable()
 end
 
 local function ensureIdentityCollisionTable()
-    if hasIdentityCollisionTable() then
+    if tableExists("identity_collisions") then
         return true
     end
     return migrateIdentityCollisionTable()
@@ -763,7 +755,7 @@ local MIGRATIONS = {
         id = "identity_collisions_table",
         from = 3,
         needed = function()
-            return not hasIdentityCollisionTable()
+            return not tableExists("identity_collisions")
         end,
         apply = migrateIdentityCollisionTable,
     },
@@ -2091,18 +2083,16 @@ function Store.getMapEntity(mapId, entityId)
                 maps.map_name,
                 map_entities.entity_id,
                 map_entities.entity_type,
-                map_entities.model,
                 -- Where the map says the entity stands. Teleport falls back to
                 -- this whenever no Runtime Instance is loaded, and without it
                 -- every teleport to an unloaded entity refused as
                 -- `invalid_target` -- which is exactly the case teleport
-                -- exists for.
+                -- exists for. Position, interior and dimension only: the
+                -- teleport snapshot is those five, and a row read here is
+                -- copied into Change History by relink.
                 map_entities.authored_x,
                 map_entities.authored_y,
                 map_entities.authored_z,
-                map_entities.rotation_x,
-                map_entities.rotation_y,
-                map_entities.rotation_z,
                 map_entities.interior,
                 map_entities.dimension,
                 map_entity_metadata.name AS entity_name,

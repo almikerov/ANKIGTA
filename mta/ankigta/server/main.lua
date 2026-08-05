@@ -233,8 +233,10 @@ local function entityContract(row)
     local link = ANKIGTA.MapIdentity.linkSnapshot(row)
     -- Whether there is a Runtime Instance at all, which is a different
     -- question from which of several copies is in front of the player -- two
-    -- copies still means the entity is there.
-    local element = ANKIGTA.World.runtimeInstances(row.map_id, row.entity_id)[1]
+    -- copies still means the entity is there. Stopped at the first, because
+    -- this runs once per row inside F7's two-second envelope.
+    local element =
+        ANKIGTA.World.runtimeInstances(row.map_id, row.entity_id, 1)[1]
     return {
         mapEntity = {
             mapId = row.map_id,
@@ -743,7 +745,7 @@ function validatePickEntity(player, entityElement, mode)
     if not SUPPORTED_ENTITY_TYPES[entityType] then
         return false, "target_type_not_supported"
     end
-    if exports.edf:edfIsRepresentation(entityElement) then
+    if isEditorRepresentation(entityElement) then
         return false, "entity_not_managed"
     end
     local persistentId = getElementData(entityElement, "ankigtaEntityId")

@@ -455,10 +455,11 @@
     return "set-" + row.key;
   }
 
+  /* Every setting is named by the string table. The one row that carried its
+     own text was the per-map switch, which named a map -- the user's words --
+     and there is no per-map row any more. */
   function settingLabel(row) {
-    return row.labelText !== undefined && row.labelText !== null
-      ? row.labelText
-      : t(row.labelKey || "settings." + row.key);
+    return t(row.labelKey || "settings." + row.key);
   }
 
   function settingRow(row) {

@@ -59,11 +59,6 @@ refused with `invalid_target`, because `Store.getMapEntity` never selected the
 authored coordinates — so teleport to an entity with no Runtime Instance could
 not work at all. Both are fixed and tested here.
 
-**Two neighbouring problems, found and not fixed.** `zone_marks.lua:254`
-(`attempt to call field 'selection'`) repeats in `clientscript.log` — ticket 04's
-file. And `client/settings_store.lua` still discards a stored `language` and
-`drawRadius` on every start, which is left over from before ticket 01.
-
 ## The editor's scratch maps are not the player's
 
 `editor_dump` and `editor_test` are what the editor calls the throwaway resources
@@ -143,7 +138,9 @@ loading the map again brings the link back exactly as it was.
 - [x] An entity is not adopted while an editor scratch resource owns it
 - [x] Working in the Map Editor normally still adopts from the map being edited
 - [x] Entities already stored against a scratch map are identifiable as such
-- [x] The player is told, rather than having rows silently deleted
+- [x] The player is told, rather than having rows silently deleted — the row
+      turns `Entity missing` and offers Relink, and carries a reason; see
+      "Found on the way" for why nothing renders the reason yet
 - [x] A Spatial Link made against one can be relinked or removed deliberately
 - [x] Nothing is written into any editor resource
 - [x] Settings offers no per-map row, and no way to exclude a map
@@ -153,7 +150,42 @@ loading the map again brings the link back exactly as it was.
       by the same answer, taken from one place
 - [x] A database holding stored per-map preferences opens without complaint, and
       stops carrying them
-- [x] `Active Map Set` in CONTEXT.md no longer mentions the switch
+- [x] `Active Map Set` in CONTEXT.md no longer mentions the switch — it names
+      it only to say it is abolished, which is how CONTEXT.md retires a term
+      (see `String Table` on `Localization`)
+
+## Found on the way, and left for whoever owns the file
+
+**Nothing renders `guidanceKey`.** `panel.lua` puts it in the page state and
+`app.js` and `index.html` never read it — so `guidance.saveWithEditor`,
+`guidance.retrySave`, `guidance.cardMissing`, `guidance.copyBlocked`,
+`f7.guidance.notAdopted` and this ticket's `guidance.editorScratchMap` are all
+written and never shown. A scratch row therefore says `Entity missing` and
+offers Relink, which is the state and the action, but not the reason. Ticket 03
+rewrites both files and should render it once for all six.
+
+**`zone_marks.lua:254`** repeats `attempt to call field 'selection'` in
+`clientscript.log`. Ticket 04's file.
+
+**`client/settings_store.lua`** still discards stored `language` and
+`drawRadius` on every start — settings that no longer exist, left from before
+ticket 01.
+
+## What this ticket touched that it was not asked for
+
+Three, each because a checklist item could not otherwise be met:
+
+- **`Store.relinkEntity` passed a bare table as its Change History target**,
+  which SQLite cannot bind, so every relink failed with a transaction error.
+  Only source-text tests covered relink, so nothing had ever run it. Needed for
+  *A Spatial Link made against one can be relinked*.
+- **`Store.getMapEntity` never selected the authored coordinates**, so teleport
+  to an entity with no Runtime Instance answered `invalid_target` — reproduced
+  live on four of the owner's five stored entities. Needed for *Teleport still
+  works outside the editor*.
+- **`me:ID` dropped as a gate in the two Pick Entity prepare paths as well as
+  the Link path**, because it is the same mistake: `assignID` writes it only
+  when the editor has to invent an id.
 
 ## What a person still has to look at
 

@@ -60,14 +60,15 @@ end
 -- it and stamped `edf:rep`. Counting one of those as a second copy is what
 -- made every link fail: inside the editor the count was never one.
 --
--- `pcall`, because `exports.edf:...` on a resource that is not running is a
--- script error rather than `false`, and ANKIGTA runs with and without the
--- editor.
+-- Read off the element rather than asked of `edf`, because that is the whole
+-- of `edfIsRepresentation` (`edf/edf.lua`: `return getElementData(elem,
+-- "edf:rep")`). Asking the resource needs a `pcall` -- calling an export on a
+-- resource that is not running is a script error, and ANKIGTA runs with and
+-- without the editor -- and this is asked once per element on paths with a
+-- two-second budget. It is also the same answer the client can reach, where
+-- the export does not exist at all.
 function World.isEditorRepresentation(element)
-    local ok, answer = pcall(function()
-        return exports.edf:edfIsRepresentation(element)
-    end)
-    return ok and answer == true
+    return getElementData(element, "edf:rep") == true
 end
 
 --- What the stock Map Editor currently holds, or `false` if it is not running.
@@ -89,15 +90,22 @@ function World.editor()
     }
 end
 
---- Every ANKIGTA map identity a resource's own elements carry.
-function World.mapIdsForOwner(owner)
-    local mapIds = {}
+--- Every ANKIGTA map identity the world carries, by the resource that owns it.
+--
+-- One walk for every resource rather than one walk each. `owningResource` is
+-- itself a walk up the element tree against every running resource, so asking
+-- per map turned a reference-sized world into that walk once per map -- and
+-- the study refresh asks this every two seconds, not once per F7 open.
+function World.mapIdsByOwner()
+    local byOwner = {}
     local function collect(kind)
         for _, element in ipairs(getElementsByType(kind)) do
-            if World.owningResource(element) == owner then
-                local mapId = getElementData(element, "ankigtaMapId")
-                if type(mapId) == "string" and mapId ~= "" then
-                    mapIds[mapId] = true
+            local mapId = getElementData(element, "ankigtaMapId")
+            if type(mapId) == "string" and mapId ~= "" then
+                local owner = World.owningResource(element)
+                if owner then
+                    byOwner[owner] = byOwner[owner] or {}
+                    byOwner[owner][mapId] = true
                 end
             end
         end
@@ -106,7 +114,13 @@ function World.mapIdsForOwner(owner)
     for _, kind in ipairs(SUPPORTED_ENTITY_ORDER) do
         collect(kind)
     end
-    return next(mapIds) and mapIds or false
+    return byOwner
+end
+
+--- Every ANKIGTA map identity one resource's own elements carry.
+function World.mapIdsForOwner(owner, byOwner)
+    local mapIds = (byOwner or World.mapIdsByOwner())[owner]
+    return (mapIds and next(mapIds)) and mapIds or false
 end
 
 local function playerWorldScore(owner, player)
@@ -246,27 +260,32 @@ end
 function World.loadedMapIds(storedRows)
     local loaded = {}
     local loadedResources = {}
-    local restrictions = {}
     local editor = World.editor()
+    local anyLoaded = false
     for _, row in ipairs(storedRows or {}) do
         local resourceName = row.resource_name
-        if type(resourceName) == "string" and resourceName ~= "" then
-            if loadedResources[resourceName] == nil then
-                loadedResources[resourceName] =
-                    World.isMapResourceLoaded(resourceName, editor)
-                if loadedResources[resourceName] then
-                    -- Read once per resource, not once per entity: the walk is
-                    -- over every element in the world, and study asks this on
-                    -- every refresh.
-                    restrictions[resourceName] =
-                        World.mapIdsForOwner(resourceName) or false
-                end
-            end
-            if loadedResources[resourceName] then
-                local restriction = restrictions[resourceName]
-                if not restriction or restriction[row.map_id] then
-                    loaded[row.map_id] = true
-                end
+        if type(resourceName) == "string" and resourceName ~= ""
+            and loadedResources[resourceName] == nil
+        then
+            loadedResources[resourceName] =
+                World.isMapResourceLoaded(resourceName, editor)
+            anyLoaded = anyLoaded or loadedResources[resourceName]
+        end
+    end
+    if not anyLoaded then
+        -- Nothing to narrow, and no reason to read the world to find that out.
+        return loaded
+    end
+
+    local byOwner = World.mapIdsByOwner()
+    for _, row in ipairs(storedRows or {}) do
+        if loadedResources[row.resource_name] then
+            -- A resource whose own elements name ANKIGTA map identities only
+            -- brings those maps in: the same `.map` saved again under a new
+            -- identity leaves the old one stored but nowhere in the world.
+            local restriction = World.mapIdsForOwner(row.resource_name, byOwner)
+            if not restriction or restriction[row.map_id] then
+                loaded[row.map_id] = true
             end
         end
     end
@@ -282,13 +301,19 @@ end
 --
 -- The editor's own EDF representations are not elements the player can be
 -- taken to and are not second copies of anything.
-function World.runtimeInstances(mapId, entityId)
+--
+-- `limit` stops the walk early, for the caller that only wants to know whether
+-- there is an instance at all. The F7 snapshot asks that once per stored row.
+function World.runtimeInstances(mapId, entityId, limit)
     local found = {}
     if type(entityId) ~= "string" or entityId == "" then
         return found
     end
     for _, kind in ipairs(SUPPORTED_ENTITY_ORDER) do
         for _, element in ipairs(getElementsByType(kind)) do
+            if limit and #found >= limit then
+                return found
+            end
             if isElement(element) and not World.isEditorRepresentation(element)
             then
                 local stamp = getElementData(element, "ankigtaEntityId")
@@ -323,6 +348,13 @@ end
 -- when the copies cannot be told apart. Two copies in the player's own world
 -- are a genuine duplicate, and guessing between them would write to whichever
 -- the walk happened to reach first.
+--
+-- One copy is not a choice, so the player's world does not veto it: a Map
+-- Entity whose only instance is the one the editor is holding is still that
+-- entity, and taking the player somewhere it is not is the thing this exists
+-- to stop. What the two callers do with a refusal differs on purpose --
+-- linking writes, so it refuses and says which; teleport only moves the
+-- player, so it goes where the record says instead.
 function World.instanceInFrontOf(elements, player)
     local total = #elements
     if total <= 1 then
