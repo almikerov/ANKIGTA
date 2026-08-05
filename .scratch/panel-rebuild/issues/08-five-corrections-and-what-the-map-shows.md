@@ -51,27 +51,37 @@ the bottom of a scroll.
 
 ## Corona opacity reads as `0.60000002`
 
-Not a wrong value: a wrong *rendering* of the right one. `0.6` has no exact
-single-precision representation, and MTA writes a Lua number to JSON as a
-single-precision float. The repository already documents the same behaviour from
-the other side — see `_card_id_or_none` in
-`companion/ankigta_companion/http_server.py`, which exists because a card id
-arrives as `1784032937016.0`.
+Not a wrong value: a wrong *rendering* of the right one.
+
+**Measured on the owner's running server, not guessed.** The first guess was
+MTA's JSON, and it was wrong — `toJSON(0.6)` writes `0.6` and reads back as a
+double. What loses the precision is **every server→client hop**: MTA packs a
+non-integer Lua number as a 32-bit float on the wire. Both paths do it:
 
 ```
-0.6  -> float32 -> 0.6000000238418579
-0.5  -> float32 -> 0.5
-0.55 -> float32 -> 0.550000011920929
+triggerClientEvent  0.6  -> 0.60000001999999997
+                    0.55 -> 0.55000000999999998
+                    0.25 -> 0.25
+setElementData      0.6  -> 0.60000001999999997
 ```
 
-So the fix is not to retreat to `0.5`, which only hides it for one value while
-`0.55` and every other two-decimal setting keeps the tail. The setting's rule
-already declares its precision — `numeric(0, 1, nil, 2)` — and a value shown to
-the player should be shown at the precision its own rule states. Round at the
-boundary, once, for every numeric setting rather than for this one.
+`0.25` survives because a power-of-two fraction is exact in single precision.
+`0.5` survives for the same reason — which is the whole of why retreating to it
+would appear to work. It would hide the tail for one value while `0.55`, `0.1`
+and most other two-decimal settings kept it, and every server-owned numeric
+setting crosses that wire.
 
-The owner said `0.5` would be acceptable if the tail cannot be removed. It can,
+So the setting's rule already declares its precision — `numeric(0, 1, nil, 2)` —
+and a value shown to the player is shown at the precision its own rule states.
+Round at the boundary, once, for every numeric setting rather than for this one.
+
+The owner offered `0.5` as a fallback if the tail could not be removed. It can,
 so the default stays `0.6`.
+
+Related, and not the same thing: `_card_id_or_none` in
+`companion/ankigta_companion/http_server.py` exists because a card id reaches
+the add-on as `1784032937016.0`. Same family — a number that changed shape in
+transit — different hop.
 
 ## Settings does not outlive the window it was opened in
 
@@ -98,6 +108,8 @@ the player has to notice and undo before doing the thing they opened it for.
 - [ ] `UI Scale` is the first row in Settings
 - [ ] Corona opacity reads `0.6`, not `0.60000002`
 - [ ] Every numeric setting is shown at the precision its own rule declares
+- [ ] A setting whose value crossed the wire still compares equal to the one
+      the player chose, so a redraw does not read as an edit
 - [ ] The default is still `0.6`
 - [ ] Closing F7 with Settings open and reopening lands on the list
 - [ ] The settings themselves are unchanged by that — only the screen resets
