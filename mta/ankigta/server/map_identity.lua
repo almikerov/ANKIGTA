@@ -490,6 +490,16 @@ local function mapWasCopiedOrRenamed(mapId, owner, mapLocator)
     if owner.resourceName == mapLocator.resourceName then
         return false
     end
+    -- Except when the other document is the editor's play-test copy, which is
+    -- a duplicate of whatever is open by construction: the editor writes it on
+    -- every Test press. On the owner's server both `editor_dump.map` and
+    -- `editor_test.map` carried the same `ankigtaMapId`, and counting that as
+    -- a copy is the same mistake as counting a resource name as a filename.
+    if ANKIGTA.World.isPlayTestResource(owner.resourceName)
+        or ANKIGTA.World.isPlayTestResource(mapLocator.resourceName)
+    then
+        return false
+    end
     local recorded = declaredMapFile(owner.resourceName)
     if not recorded then
         return false

@@ -440,3 +440,45 @@ def test_arriving_leaves_an_ordinary_follow_camera_alone(
     arrive(panel_client, 100.0, 200.0, 30.0)
 
     assert panel_client.camera_matrix == before
+
+
+def test_the_play_test_copy_of_a_map_is_not_a_copy_decision(
+    server: MtaSandbox,
+) -> None:
+    """The owner's server, exactly: both documents carry one identity.
+
+    `editor_test.map` is written from whatever map is open on every Test press,
+    so it is a duplicate by construction. Counting it as evidence that somebody
+    copied the resource is the same mistake as counting a resource name as a
+    filename -- and it kept the two buttons on screen after the first fix.
+    """
+    owners_world(server)
+    seed_owner_row(server)
+    server.write_file(
+        ":editor_test/meta.xml", '<meta><map src="editor_test.map" /></meta>'
+    )
+    server.write_file(":editor_test/editor_test.map", MAP_DOCUMENT)
+    server.eval(
+        "function() return ANKIGTA.Store.markEntityIdentityCollision("
+        '"editor_test", "object (bin) (1)",'
+        ' "copied_resource_or_rename_requires_decision") end'
+    )()
+
+    collision = server.eval(
+        """
+        function()
+            return ANKIGTA.MapIdentity.detectIdentityCollisions(
+                "editor_test", "object (bin) (1)",
+                ANKIGTA.MapIdentity.currentMapLocator()
+            )
+        end
+        """
+    )()
+    server.eval(
+        "function() return ANKIGTA.MapIdentity.recoverPersistedCollisions() end"
+    )()
+
+    assert collision is False
+    assert server.connection.raw.execute(
+        "SELECT COUNT(*) FROM identity_collisions"
+    ).fetchone()[0] == 0
