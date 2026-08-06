@@ -1502,10 +1502,41 @@ function togglePanel()
     triggerServerEvent(CONNECTION_SETTINGS_REQUEST_EVENT, resourceRoot)
 end
 
--- Through the schema, not by name. `activationKey` is refused when it names
--- a key ANKIGTA already answers to, and that refusal is only honest while
--- the list it reads is the list this binds from.
-bindKey(schema().reservedKeys.panel, "down", togglePanel)
+--- The key this panel opens on, when the schema cannot be asked.
+--
+-- Pinned equal to `Settings.reservedKeys.panel` by a test, so the two cannot
+-- drift while this exists to be used at all.
+local FALLBACK_PANEL_KEY = "F7"
+
+--- Through the schema, not by name. `activationKey` is refused when it names
+--- a key ANKIGTA already answers to, and that refusal is only honest while
+--- the list it reads is the list this binds from.
+--
+-- Asked when the resource starts rather than while this chunk loads, and asked
+-- defensively. A running client receives a changed `cache="false"` script one
+-- restart before a changed or newly added shared one -- the same window
+-- `ANKIGTA.EntityTypes` is guarded against above -- so `ANKIGTA.Settings` can
+-- still be absent here. It was: this line read it at load time from ticket 05
+-- until this fix, and a chunk that errors never reaches the command handlers
+-- below it. So F7 and `/ankigta-connection` went away together, which is the
+-- one combination that leaves no way back in.
+local function panelKey()
+    local settings = schema()
+    local reserved = settings and settings.reservedKeys
+    if reserved and reserved.panel then
+        return reserved.panel
+    end
+    outputDebugString(
+        "[ANKIGTA] settings schema absent while binding the panel key;"
+            .. " falling back to " .. FALLBACK_PANEL_KEY,
+        2
+    )
+    return FALLBACK_PANEL_KEY
+end
+
+addEventHandler("onClientResourceStart", resourceRoot, function()
+    bindKey(panelKey(), "down", togglePanel)
+end)
 
 -- Kept from the window this replaces: reachable by command as well as by key,
 -- because "always reachable" has to hold when the key is bound to something
@@ -2541,4 +2572,10 @@ ANKIGTA.Panel = {
     mapEntities = panelMapEntities,
     runtimeElements = runtimeElementsFor,
     entityKey = panelEntityKey,
+    -- Which key the panel actually bound, and the literal it falls back to.
+    -- Exposed so a test can hold the two equal: the fallback exists for the
+    -- window where the schema cannot be read, and a fallback that opens a
+    -- different key from the one the schema reserves is worse than none.
+    key = panelKey,
+    fallbackKey = FALLBACK_PANEL_KEY,
 }

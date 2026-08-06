@@ -39,6 +39,10 @@ def load_client() -> MtaSandbox:
     sandbox = MtaSandbox()
     for script in manifest_scripts("shared", "client"):
         sandbox.load(script)
+    # The panel binds its key on resource start rather than at chunk load, so
+    # that an incremental reload cannot run it before the shared schema is
+    # there. MTA always fires this; a client that has not is not a real one.
+    sandbox.trigger("onClientResourceStart")
     return sandbox
 
 
