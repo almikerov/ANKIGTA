@@ -25,12 +25,15 @@ suite.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Iterator
 
 import pytest
+
+from tests.lua import MtaSandbox
 
 
 REPO = Path(__file__).resolve().parent.parent
@@ -211,10 +214,14 @@ for (const step of script) {
   if (step.docclick) {
     for (const handler of documentListeners["click"] || []) handler({});
   }
+  /* `code` as well as `key`: a binding is a physical key, and the page reads
+     `event.code` for exactly that reason. A step may send either or both --
+     `code` alone is what a captured key really arrives as. */
   if (step.key) {
     for (const handler of documentListeners["keydown"] || []) {
       handler({
         key: step.key.key,
+        code: step.key.code,
         preventDefault() {},
         target: { tagName: step.key.tag || "BODY" },
       });
@@ -302,15 +309,34 @@ def actions(answer: dict[str, Any], name: str) -> list[dict[str, Any]]:
     return [payload for action, payload in answer["sent"] if action == name]
 
 
-def picker_button(answer: dict[str, Any], name: str) -> dict[str, Any]:
-    """The button of one drawn list, wherever on the page it was mounted."""
+def by_attribute(answer: dict[str, Any], name: str, value: str) -> dict[str, Any]:
     found = [
         candidate
         for candidate in walk(answer["tree"])
-        if candidate["attrs"].get("data-picker") == name
+        if candidate["attrs"].get(name) == value
     ]
-    assert len(found) == 1, f"{name}: {len(found)} pickers"
+    assert len(found) == 1, f"{name}={value}: {len(found)} nodes"
     return found[0]
+
+
+def picker_button(answer: dict[str, Any], name: str) -> dict[str, Any]:
+    """The button of one drawn list, wherever on the page it was mounted."""
+    return by_attribute(answer, "data-picker", name)
+
+
+def key_button(answer: dict[str, Any], name: str) -> dict[str, Any]:
+    """The button of one key control -- the thing that listens for a press."""
+    return by_attribute(answer, "data-key-capture", name)
+
+
+def key_refusal(answer: dict[str, Any], name: str) -> dict[str, Any]:
+    """What that control says about the last press it would not take."""
+    return by_attribute(answer, "data-key-refused", name)
+
+
+def restore_button(answer: dict[str, Any], field: str) -> dict[str, Any]:
+    """The one control that puts a field back on the global it follows."""
+    return by_attribute(answer, "data-restore-global", field)
 
 
 # --- the states Lua pushes ---------------------------------------------------
@@ -321,6 +347,10 @@ def state(**over: Any) -> dict[str, Any]:
     picker = dict(over.pop("picker", {}))
     base: dict[str, Any] = {
         "section": "entities",
+        # Settings is a column of the workspace rather than a section, so it is
+        # out or not out -- and which is Lua's answer, because the panel's own
+        # width follows it.
+        "settingsOpen": False,
         "locale": {},
         "connection": {"state": "connected"},
         "selected": {"mapId": False, "entityId": False, "cardId": False},
@@ -437,6 +467,18 @@ NUMBER_ROW = {
     "step": 0.5,
 }
 BOOLEAN_ROW = {"kind": "boolean", "key": "muteGameWorld", "value": False}
+#: The `Activation key` row. It carries no list to choose from -- the key is
+#: pressed -- but the two lists a press is judged against: every key MTA can
+#: name, and the part of that ANKIGTA is not already answering to. Both are the
+#: schema's, and `test_the_key_lists_the_page_judges_by_are_the_schemas` holds
+#: these shapes against the real ones.
+KEY_ROW = {
+    "kind": "key",
+    "key": "activationKey",
+    "value": "e",
+    "options": ["e", "q", "F9"],
+    "bindableKeys": ["e", "q", "F7", "F9", "escape"],
+}
 
 
 #: A setting a link can override, so the sweep's control is offered beside it.
@@ -802,6 +844,114 @@ def test_cancelling_is_a_real_answer() -> None:
     assert actions(answer, "clearEntityOverrides") == []
 
 
+def test_apply_to_all_is_on_the_row_of_the_field_it_applies() -> None:
+    """Under the field it belongs to, each setting took two rows and the screen
+    was twice as tall as it needed to be -- which is half of why Settings could
+    not sit beside the list it is about.
+
+    Asked of the tree rather than of the stylesheet: the control is a child of
+    the row and stands between the control it is about and the reason under it,
+    which is what "on the row" means in a grid whose cells flow in order."""
+    answer = run_page([{"receive": state(settings=settings(SWEEPABLE_ROW))}])
+
+    row = one(node(answer, "settings-rows"), cls="setting")
+    order = [child["cls"] for child in row["children"]]
+    assert "setting-apply-all" in order
+    # Label, then the field, then this, then the reason: one row, in reading
+    # order, with nothing of this setting's below it.
+    assert order.index("setting-apply-all") == order.index("setting-label") + 2
+    assert order.index("setting-apply-all") < order.index("field-error")
+
+
+# --- Settings sits beside the list, not on top of it -------------------------
+
+
+def test_settings_is_a_column_of_the_workspace_rather_than_a_section() -> None:
+    """It grew with every ticket in this wave and covered the Map Entity list.
+    That is the wrong shape twice over: the list is what the panel is for, and a
+    setting is usually changed while looking at what it affects."""
+    answer = run_page([{"receive": state(settingsOpen=True)}])
+
+    column = node(answer, "settings-column")
+    assert column["hidden"] is False
+    # A column of the workspace, beside the other columns -- and the first of
+    # them, so it is to the left of the list rather than off past the cards.
+    columns = [
+        child
+        for child in node(answer, "workspace")["children"]
+        if has_class(child, "column")
+    ]
+    assert [child["id"] for child in columns][0] == "settings-column"
+    # And not a section any more: nothing is left for `show()` to hide.
+    with pytest.raises(AssertionError):
+        node(answer, "section-settings")
+
+
+def test_the_entity_list_stays_readable_while_settings_is_open() -> None:
+    """The whole point: the list does not go off screen to change a setting
+    about it."""
+    answer = run_page(
+        [{"receive": state(entities=[entity()], settingsOpen=True)}]
+    )
+
+    assert node(answer, "section-entities")["hidden"] is False
+    assert node(answer, "rows")["hidden"] is False
+    assert descendants(node(answer, "rows"), cls="row")
+
+
+def test_settings_is_not_drawn_until_it_is_asked_for() -> None:
+    """A column permanently taking a third of the panel is a column taking it
+    from the lists."""
+    answer = run_page([{"receive": state()}])
+
+    assert node(answer, "settings-column")["hidden"] is True
+    assert "with-settings" not in str(node(answer, "workspace")["cls"]).split()
+
+
+def test_the_page_says_which_shape_it_is_in_so_lua_can_widen_the_panel() -> None:
+    """The page cannot resize its own window. It names the columns that are out
+    and `client/panel.lua` gives it the room -- the same arrangement the card
+    editor has, and the reason neither column is squeezed in beside the other.
+    """
+    both = run_page(
+        [
+            {
+                "receive": with_note(
+                    settingsOpen=True,
+                    selected={"mapId": False, "entityId": False, "cardId": "7"},
+                )
+            },
+            {"click": {"id": "toggle-inspector"}},
+        ]
+    )
+
+    shape = str(node(both, "workspace")["cls"]).split()
+    assert "with-settings" in shape
+    assert "editing" in shape
+
+
+def test_opening_and_closing_settings_is_lua_s_answer_not_the_page_s() -> None:
+    """The panel's own width follows it, and only Lua can change that -- so the
+    page asks and draws what comes back rather than deciding."""
+    asked = run_page(
+        [
+            {"receive": state()},
+            {"click": {"id": "settings"}},
+        ]
+    )
+    assert actions(asked, "openSettings") == [{}]
+    # Not opened by the click itself: Lua has not answered yet.
+    assert node(asked, "settings-column")["hidden"] is True
+
+    shut = run_page(
+        [
+            {"receive": state(settingsOpen=True)},
+            {"click": {"id": "close-settings"}},
+        ]
+    )
+    assert actions(shut, "closeSettings") == [{}]
+
+
 # --- a push does not destroy what the player is doing ------------------------
 
 
@@ -1024,6 +1174,121 @@ def test_clearing_the_field_asks_to_follow_the_global_again() -> None:
     assert actions(answer, "setEntityMarks") == [{"radius": "inherit"}]
 
 
+# --- one way back to the global, and only one --------------------------------
+#
+# An override was cleared in two different ways: a `Follow Settings` entry
+# inside each drawn list, and a second button inside the colour picker's own
+# surface. Two spellings of one idea -- and the list entry made "stop having an
+# opinion" look like one of the values a setting can hold.
+
+#: Every field on the entity pane that can hold this entity's own answer, and
+#: the value each is given so that it does. The pane is written out field by
+#: field in `index.html`, so this is written out too: a list derived from the
+#: page would agree with the page by construction and prove nothing.
+OVERRIDABLE_FIELDS = [
+    ("radius", 7.5),
+    ("activationType", "key"),
+    ("activationKey", "q"),
+    ("showCorona", True),
+    ("coronaColor", "#ff8000"),
+    ("coronaOpacity", 0.25),
+    ("textLabelField", "Back"),
+    ("textLabelColor", "#ff8000"),
+    ("textLabelSize", 2),
+]
+
+
+@pytest.mark.parametrize("field,value", OVERRIDABLE_FIELDS)
+def test_one_control_clears_an_override_wherever_one_can_be_set(
+    field: str, value: Any
+) -> None:
+    """The same button, named for what it does, on every one of them."""
+    answer = run_page(
+        [
+            {
+                "receive": selecting(
+                    entity(**{field: value, field + "Inherited": False})
+                )
+            },
+            {"click": {"attr": "data-restore-global", "is": field}},
+        ]
+    )
+
+    assert actions(answer, "setEntityMarks") == [{field: "inherit"}]
+
+
+def test_it_asks_to_follow_rather_than_storing_a_copy_of_todays_global() -> None:
+    """The distinction the whole control exists for: an entity that follows
+    moves when the global moves, and one holding a copy of today's value does
+    not. Both look identical on screen the day they are set."""
+    answer = run_page(
+        [
+            {"receive": selecting(entity(radius=7.5, radiusInherited=False))},
+            {"click": {"attr": "data-restore-global", "is": "radius"}},
+        ]
+    )
+
+    sent = actions(answer, "setEntityMarks")
+    assert sent == [{"radius": "inherit"}]
+    # Not the number that was on screen, which is what "clear" would mean if it
+    # were read as "set it to what Settings says right now".
+    assert sent[0]["radius"] != 7.5
+
+
+def test_follow_settings_is_gone_from_the_drawn_lists() -> None:
+    """A list of the values a setting can hold, and nothing else. "Follows the
+    global" is not one of them: it is the absence of an answer."""
+    answer = run_page(
+        [
+            {"receive": selecting(entity())},
+            {"receive": state(settings=settings(CHOICE_ROW))},
+        ]
+    )
+
+    offered = [
+        candidate["attrs"].get("data-value")
+        for candidate in walk(answer["tree"])
+        if has_class(candidate, "picker-option")
+    ]
+    assert offered, "no drawn list was built at all"
+    assert "inherit" not in offered
+
+
+def test_follow_settings_is_gone_from_the_colour_picker() -> None:
+    """The picker chooses a colour. Undoing a choice is the button beside it,
+    which is the same button the eight fields around it carry."""
+    answer = run_page(
+        [
+            {"receive": selecting(entity())},
+            {"receive": state(settings=settings(COLOR_ROW))},
+        ]
+    )
+
+    assert [
+        candidate
+        for candidate in walk(answer["tree"])
+        if "data-picker-clear" in candidate["attrs"]
+        or has_class(candidate, "picker-clear")
+    ] == []
+
+
+def test_a_field_already_following_has_nothing_to_restore() -> None:
+    """The control keeps its place and goes quiet, the way every field on this
+    pane does -- offering a change that changes nothing is worse than saying
+    there is nothing to change."""
+    following = run_page([{"receive": selecting(entity(radiusInherited=True))}])
+    assert restore_button(following, "radius")["disabled"] is True
+
+    own = run_page(
+        [{"receive": selecting(entity(radius=7.5, radiusInherited=False))}]
+    )
+    assert restore_button(own, "radius")["disabled"] is False
+
+    # And with no row selected there is nothing whose override to clear.
+    nothing = run_page([{"receive": state()}])
+    assert restore_button(nothing, "radius")["disabled"] is True
+
+
 # --- how the entity says it is marked ----------------------------------------
 
 
@@ -1067,25 +1332,14 @@ def test_showing_a_corona_is_sent_to_the_entity() -> None:
 
 
 def test_an_entity_can_be_put_back_on_the_global_that_governs_it() -> None:
-    """Every list in the pane carries the way back, because a list has nowhere
-    to be empty -- which is how the number boxes say the same thing."""
+    """`Restore global`, the one control that does this on every field.
+
+    It used to be the last entry in the list, which made "stop having an
+    opinion" look like one of the values `Show corona` can hold."""
     answer = run_page(
         [
             {"receive": selecting(entity(showCorona=True, showCoronaInherited=False))},
-            {
-                "click": {
-                    "under": "entity-show-corona",
-                    "attr": "data-picker",
-                    "is": "entityShowCorona",
-                }
-            },
-            {
-                "click": {
-                    "under": "entity-show-corona",
-                    "attr": "data-value",
-                    "is": "inherit",
-                }
-            },
+            {"click": {"attr": "data-restore-global", "is": "showCorona"}},
         ]
     )
 
@@ -1145,7 +1399,12 @@ def test_an_inherited_colour_shows_the_one_settings_holds() -> None:
 
 def test_a_colour_can_be_handed_back_to_settings() -> None:
     """An emptied hex box cannot say it: half a hex code is refused, so `""`
-    would be refused too. The picker offers the way back explicitly."""
+    would be refused too. `Restore global` beside the field says it.
+
+    In the word the store keeps for "nothing of its own", which is the bug this
+    replaces rather than only the duplicate control: the picker's own button
+    sent `false`, the server understands only `"inherit"`, and clearing a corona
+    colour had been refused as `settings.error.not_a_color` since ticket 05."""
     answer = run_page(
         [
             {
@@ -1153,17 +1412,11 @@ def test_a_colour_can_be_handed_back_to_settings() -> None:
                     entity(coronaColor="#ff8000", coronaColorInherited=False)
                 )
             },
-            {
-                "click": {
-                    "under": "entity-corona-color",
-                    "attr": "data-picker-clear",
-                    "is": "entityCoronaColor",
-                }
-            },
+            {"click": {"attr": "data-restore-global", "is": "coronaColor"}},
         ]
     )
 
-    assert actions(answer, "setEntityMarks") == [{"coronaColor": False}]
+    assert actions(answer, "setEntityMarks") == [{"coronaColor": "inherit"}]
 
 
 def test_a_push_does_not_take_a_half_typed_colour_out_from_under_the_player() -> None:
@@ -1378,6 +1631,8 @@ def test_the_text_label_colour_is_chosen_in_the_picker_this_panel_already_has(
 
 
 def test_the_text_label_colour_can_be_handed_back_to_settings() -> None:
+    """By the same button every other field on the pane carries, rather than by
+    a second one hidden inside the colour picker's own surface."""
     answer = run_page(
         [
             {
@@ -1387,13 +1642,7 @@ def test_the_text_label_colour_can_be_handed_back_to_settings() -> None:
                     )
                 )
             },
-            {
-                "click": {
-                    "under": "entity-text-label-color",
-                    "attr": "data-picker-clear",
-                    "is": "entityTextLabelColor",
-                }
-            },
+            {"click": {"attr": "data-restore-global", "is": "textLabelColor"}},
         ]
     )
 
@@ -1693,7 +1942,7 @@ def test_with_nothing_selected_the_marks_controls_are_disabled() -> None:
 
     assert picker_button(answer, "entityShowCorona")["disabled"] is True
     assert picker_button(answer, "entityActivationType")["disabled"] is True
-    assert picker_button(answer, "entityActivationKey")["disabled"] is True
+    assert key_button(answer, "entityActivationKey")["disabled"] is True
     assert node(answer, "entity-corona-opacity")["disabled"] is True
     picker = [
         candidate
@@ -1713,6 +1962,412 @@ def test_a_typed_radius_is_sent_as_the_number_it_is() -> None:
     )
 
     assert actions(answer, "setEntityMarks") == [{"radius": 7.5}]
+
+
+# --- a key is bound, not chosen ----------------------------------------------
+#
+# It was a dropdown over every key MTA can name, so a player who wanted `E`
+# scrolled a hundred entries looking for it -- and the list was the wrong shape
+# for the question anyway. The answer is a key, and the way a person says which
+# key is to press it.
+
+
+def press(code: str, key: str | None = None) -> dict[str, Any]:
+    """One keydown, as CEF delivers one.
+
+    `code` is the physical key and is what a binding is made of: MTA binds a
+    virtual key, so the key marked A binds `a` on a Russian layout too, where
+    `event.key` would be `ф`.
+    """
+    return {"key": {"code": code, "key": key if key is not None else code}}
+
+
+def start_capture(name: str) -> dict[str, Any]:
+    return {"click": {"attr": "data-key-capture", "is": name}}
+
+
+def test_the_key_control_is_not_a_list_of_a_hundred_names() -> None:
+    answer = run_page([{"receive": state(settings=settings(KEY_ROW))}])
+
+    row = node(answer, "settings-rows")
+    assert descendants(row, cls="picker-option") == []
+    assert key_button(answer, "activationKey")["text"] == "e"
+
+
+def test_the_globally_set_key_is_answered_by_pressing_it() -> None:
+    answer = run_page(
+        [
+            {
+                "receive": state(
+                    settings=settings(KEY_ROW),
+                    locale={"f7.pressAKey": "Press a key…"},
+                )
+            },
+            start_capture("activationKey"),
+            press("KeyQ", "q"),
+        ]
+    )
+
+    assert actions(answer, "setSetting") == [
+        {"key": "activationKey", "value": "q"}
+    ]
+    # And it stops listening once it has an answer.
+    assert key_button(answer, "activationKey")["attrs"]["aria-pressed"] == "false"
+    assert key_button(answer, "activationKey")["text"] == "q"
+
+
+def test_the_control_says_it_is_waiting_rather_than_looking_unchanged() -> None:
+    answer = run_page(
+        [
+            {
+                "receive": state(
+                    settings=settings(KEY_ROW),
+                    locale={"f7.pressAKey": "Press a key… (Esc cancels)"},
+                )
+            },
+            start_capture("activationKey"),
+        ]
+    )
+
+    button = key_button(answer, "activationKey")
+    assert button["text"] == "Press a key… (Esc cancels)"
+    assert button["attrs"]["aria-pressed"] == "true"
+
+
+def test_a_per_link_key_is_set_the_same_way() -> None:
+    """One control, wherever the question is asked. The entity's is an override
+    and the global's is a setting, which is the only difference between them --
+    and both judge a press by the same two lists, which arrive on the same
+    settings row.
+    """
+    answer = run_page(
+        [
+            {"receive": selecting(entity(), settings=settings(KEY_ROW))},
+            start_capture("entityActivationKey"),
+            press("KeyQ", "q"),
+        ]
+    )
+
+    assert actions(answer, "setEntityMarks") == [{"activationKey": "q"}]
+
+    refused = run_page(
+        [
+            {
+                "receive": selecting(
+                    entity(),
+                    settings=settings(KEY_ROW),
+                    locale={"settings.error.key_in_use": "already in use"},
+                )
+            },
+            start_capture("entityActivationKey"),
+            press("F7"),
+        ]
+    )
+    assert actions(refused, "setEntityMarks") == []
+    assert key_refusal(refused, "entityActivationKey")["text"] == "already in use"
+
+
+def test_a_list_and_a_control_waiting_for_a_key_are_not_both_open() -> None:
+    """Only one of them can be what the next click or press is for."""
+    listening = run_page(
+        [
+            {"receive": selecting(entity(), settings=settings(KEY_ROW))},
+            {
+                "click": {
+                    "under": "entity-show-corona",
+                    "attr": "data-picker",
+                    "is": "entityShowCorona",
+                }
+            },
+            start_capture("entityActivationKey"),
+        ]
+    )
+    assert one(node(listening, "entity-show-corona"), cls="picker-panel")[
+        "hidden"
+    ] is True
+
+    opened = run_page(
+        [
+            {"receive": selecting(entity(), settings=settings(KEY_ROW))},
+            start_capture("entityActivationKey"),
+            {
+                "click": {
+                    "under": "entity-show-corona",
+                    "attr": "data-picker",
+                    "is": "entityShowCorona",
+                }
+            },
+            press("KeyQ", "q"),
+        ]
+    )
+    assert actions(opened, "setEntityMarks") == []
+
+
+@pytest.mark.parametrize(
+    "code,name",
+    [
+        ("KeyE", "e"),
+        ("Digit4", "4"),
+        ("F9", "F9"),
+        ("Numpad3", "num_3"),
+        ("NumpadEnter", "num_enter"),
+        ("ArrowLeft", "arrow_l"),
+        ("PageDown", "pgdn"),
+        ("ShiftRight", "rshift"),
+        ("Space", "space"),
+    ],
+)
+def test_the_key_that_was_pressed_is_named_the_way_mta_names_it(
+    code: str, name: str
+) -> None:
+    """A stored key is the word `bindKey` takes, so the press has to arrive as
+    that word rather than as whatever the keyboard produced."""
+    row = dict(KEY_ROW, options=[name], bindableKeys=[name])
+    answer = run_page(
+        [
+            {"receive": state(settings=settings(row))},
+            start_capture("activationKey"),
+            {"key": {"code": code}},
+        ]
+    )
+
+    assert actions(answer, "setSetting") == [{"key": "activationKey", "value": name}]
+
+
+def test_a_key_ankigta_already_answers_to_is_refused_on_the_press() -> None:
+    """Refused rather than allowed to shadow: the panel's own key opening a card
+    instead is a different feature breaking for a reason nobody could see. The
+    reason is said where the press happened, at the moment it happened."""
+    answer = run_page(
+        [
+            {
+                "receive": state(
+                    settings=settings(KEY_ROW),
+                    locale={
+                        "settings.error.key_in_use": "ANKIGTA already uses that key"
+                    },
+                )
+            },
+            start_capture("activationKey"),
+            press("F7"),
+        ]
+    )
+
+    assert actions(answer, "setSetting") == []
+    refusal = key_refusal(answer, "activationKey")
+    assert refusal["hidden"] is False
+    assert refusal["text"] == "ANKIGTA already uses that key"
+    # Still listening: the answer to "not that one" is another key, and a
+    # control that shut itself would have to be found and opened again.
+    assert key_button(answer, "activationKey")["attrs"]["aria-pressed"] == "true"
+    assert key_button(answer, "activationKey")["text"] != "F7"
+
+
+def test_a_key_mta_cannot_name_is_refused_rather_than_stored() -> None:
+    """`bindKey` refuses a name it does not know, and a refusal there is a
+    setting that reads as saved and binds nothing. `F8` is the honest case: MTA
+    keeps it for its own console, so it is a real key with no name here."""
+    answer = run_page(
+        [
+            {
+                "receive": state(
+                    settings=settings(KEY_ROW),
+                    locale={
+                        "settings.error.not_a_key":
+                            "That is not a key ANKIGTA can bind"
+                    },
+                )
+            },
+            start_capture("activationKey"),
+            press("F8"),
+            press("PrintScreen"),
+        ]
+    )
+
+    assert actions(answer, "setSetting") == []
+    refusal = key_refusal(answer, "activationKey")
+    assert refusal["hidden"] is False
+    assert refusal["text"] == "That is not a key ANKIGTA can bind"
+
+
+def test_escape_stops_the_control_waiting_rather_than_closing_the_panel() -> None:
+    """It is a key ANKIGTA already answers to, so it can never be the answer --
+    which leaves it free to be the way out, and a control with no way out of it
+    is worse than one that cannot be given `escape`."""
+    answer = run_page(
+        [
+            {"receive": state(settings=settings(KEY_ROW))},
+            start_capture("activationKey"),
+            {"key": {"key": "Escape", "code": "Escape"}},
+        ]
+    )
+
+    assert actions(answer, "close") == []
+    assert actions(answer, "setSetting") == []
+    assert key_button(answer, "activationKey")["attrs"]["aria-pressed"] == "false"
+
+
+def test_a_control_waiting_for_a_key_takes_the_arrows_too() -> None:
+    """Every key on the keyboard is a possible answer here, including the ones
+    that walk the Map Entity list."""
+    answer = run_page(
+        [
+            {
+                "receive": selecting(
+                    entity(), settings=settings(KEY_ROW)
+                )
+            },
+            start_capture("entityActivationKey"),
+            press("ArrowDown", "ArrowDown"),
+        ]
+    )
+
+    # The list did not move: one row was selected before the press and the same
+    # row is selected after it.
+    assert actions(answer, "select") == []
+
+
+def test_only_one_control_waits_at_a_time() -> None:
+    """Two controls both listening would both take the same press."""
+    answer = run_page(
+        [
+            {"receive": selecting(entity(), settings=settings(KEY_ROW))},
+            start_capture("activationKey"),
+            start_capture("entityActivationKey"),
+            press("KeyQ", "q"),
+        ]
+    )
+
+    assert actions(answer, "setSetting") == []
+    assert actions(answer, "setEntityMarks") == [{"activationKey": "q"}]
+
+
+def test_clicking_away_stops_a_control_waiting() -> None:
+    answer = run_page(
+        [
+            {"receive": state(settings=settings(KEY_ROW))},
+            start_capture("activationKey"),
+            {"docclick": True},
+            press("KeyQ", "q"),
+        ]
+    )
+
+    assert actions(answer, "setSetting") == []
+
+
+#: What a key MTA names is called in a browser keyboard event, for the families
+#: that are a rule rather than a list.
+#:
+#: The inverse of the page's own table, written from the DOM's `code` values
+#: rather than from `app.js`: the point of the check below is that the two
+#: independently agree, and a table copied out of the page would agree with the
+#: page by construction.
+DOM_CODES = {
+    "space": "Space", "enter": "Enter", "tab": "Tab",
+    "backspace": "Backspace", "capslock": "CapsLock",
+    "lshift": "ShiftLeft", "rshift": "ShiftRight",
+    "lctrl": "ControlLeft", "rctrl": "ControlRight",
+    "lalt": "AltLeft", "ralt": "AltRight",
+    "insert": "Insert", "delete": "Delete", "home": "Home", "end": "End",
+    "pgup": "PageUp", "pgdn": "PageDown",
+    "arrow_l": "ArrowLeft", "arrow_u": "ArrowUp",
+    "arrow_r": "ArrowRight", "arrow_d": "ArrowDown",
+    "num_enter": "NumpadEnter", "escape": "Escape",
+}
+
+
+def dom_code(name: str) -> str:
+    """The press that should produce MTA's `name`."""
+    if len(name) == 1 and name.isalpha():
+        return "Key" + name.upper()
+    if len(name) == 1 and name.isdigit():
+        return "Digit" + name
+    if re.fullmatch(r"F[0-9]{1,2}", name):
+        return name
+    if re.fullmatch(r"num_[0-9]", name):
+        return "Numpad" + name[-1]
+    assert name in DOM_CODES, f"no browser code written down for {name}"
+    return DOM_CODES[name]
+
+
+def schema_key_lists() -> tuple[list[str], list[str]]:
+    """Every key ANKIGTA can bind, and the part of it still free.
+
+    Out of the loaded schema, because that is the side that decides: the page
+    refuses from these two lists and the rule validates against the same ones.
+    """
+    sandbox = MtaSandbox()
+    try:
+        sandbox.load("shared/settings.lua")
+        bindable = sandbox.eval("ANKIGTA.Settings.bindableKeys")
+        offered = sandbox.eval("ANKIGTA.Settings.offeredKeys()")
+        return (
+            [str(bindable[index]) for index in bindable.keys()],
+            [str(offered[index]) for index in offered.keys()],
+        )
+    finally:
+        sandbox.close()
+
+
+def test_every_key_the_schema_offers_can_actually_be_pressed() -> None:
+    """The list is gone, so nothing enumerates the keys on screen any more --
+    which makes "can this key be given at all" a question only a press answers.
+
+    A key the schema is willing to bind and the page cannot name is a key no
+    player can choose, and it would look exactly like the key simply not
+    working.
+    """
+    bindable, offered = schema_key_lists()
+    row = dict(KEY_ROW, options=offered, bindableKeys=bindable)
+
+    script: list[dict[str, Any]] = [{"receive": state(settings=settings(row))}]
+    for name in offered:
+        script.append(start_capture("activationKey"))
+        script.append({"key": {"code": dom_code(name)}})
+    answer = run_page(script)
+
+    assert [sent["value"] for sent in actions(answer, "setSetting")] == offered
+
+
+def test_the_keys_ankigta_reserves_are_refused_by_the_same_press() -> None:
+    """The other half: every key the schema keeps is one the page will not take,
+    for the reason the schema gives. `escape` is the exception on purpose -- it
+    is how a control stops waiting, so it can never reach the refusal."""
+    bindable, offered = schema_key_lists()
+    row = dict(KEY_ROW, options=offered, bindableKeys=bindable)
+    reserved = [name for name in bindable if name not in offered]
+
+    assert reserved, "the schema reserves nothing, so this proves nothing"
+    for name in reserved:
+        if name == "escape":
+            continue
+        answer = run_page(
+            [
+                {"receive": state(settings=settings(row))},
+                start_capture("activationKey"),
+                {"key": {"code": dom_code(name)}},
+            ]
+        )
+        assert actions(answer, "setSetting") == [], name
+        assert (
+            key_refusal(answer, "activationKey")["text"]
+            == "settings.error.key_in_use"
+        ), name
+
+
+def test_losing_the_selection_stops_the_entity_control_waiting() -> None:
+    """A control still listening with no row under it would store the next press
+    against whatever happens to be selected by then."""
+    answer = run_page(
+        [
+            {"receive": selecting(entity(), settings=settings(KEY_ROW))},
+            start_capture("entityActivationKey"),
+            {"receive": state(settings=settings(KEY_ROW))},
+            press("KeyQ", "q"),
+        ]
+    )
+
+    assert actions(answer, "setEntityMarks") == []
 
 
 # --- the list stops fighting the player --------------------------------------

@@ -1521,25 +1521,48 @@ def test_a_row_with_its_own_radius_says_it_was_chosen(
     assert row["radiusInherited"] is False
 
 
-def test_emptying_the_radius_asks_the_server_to_stop_holding_one(
+def overridable_fields(sandbox: MtaSandbox) -> list[str]:
+    """Every field a Map Entity can hold its own answer in, out of the schema.
+
+    Read rather than listed, so a setting that gains an override is covered by
+    gaining it. The panel's `Restore global` is offered for each of these, and a
+    clear that arrived under the wrong spelling would be refused rather than
+    stored -- which is what happened to the corona colour for four tickets.
+    """
+    keys = sandbox.eval("ANKIGTA.Settings.entityOverridableKeys()")
+    field = sandbox.eval("function(k) return ANKIGTA.Settings.entityOverrideField(k) end")
+    return [str(field(str(keys[index]))) for index in keys.keys()]
+
+
+def test_clearing_an_override_asks_the_server_to_stop_holding_one(
     panel_client: MtaSandbox,
 ) -> None:
-    """An emptied box is a different answer both from a number and from this
-    message not being about the radius at all, so it travels as its own."""
+    """A cleared field is a different answer both from a value and from this
+    message not being about that field at all, so it travels as its own -- and
+    in one word, whichever field it is.
+
+    `"inherit"` rather than `false`: `false` is a value `Show corona` can hold,
+    and it is a colour nothing can hold -- which is why the corona colour's own
+    clear was refused as `settings.error.not_a_color` until this ticket.
+    """
     push_client_snapshot(panel_client, entities=[panel_entry()])
     panel_action(
         panel_client, "select", {"mapId": "current-map-id", "entityId": "gate-17"}
     )
 
-    panel_action(panel_client, "setEntityMarks", {"radius": False})
+    fields = overridable_fields(panel_client)
+    assert fields, "the schema declares no overrides, so this proves nothing"
+    for field in fields:
+        panel_action(panel_client, "setEntityMarks", {field: "inherit"})
 
     sent = [
         event
         for event in panel_client.recorder.server_events
         if event.name == "ankigta:updateEntityMetadata"
     ]
-    assert len(sent) == 1
-    assert panel_client.to_python(sent[0].args[2])["radius"] is False
+    assert len(sent) == len(fields)
+    for field, event in zip(fields, sent):
+        assert panel_client.to_python(event.args[2])[field] == "inherit", field
 
 
 def write_metadata(

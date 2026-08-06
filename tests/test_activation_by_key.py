@@ -1372,7 +1372,10 @@ def test_every_word_this_ticket_puts_on_screen_has_a_string() -> None:
         "f7.activationType",
         "f7.activationKey",
         "f7.activationPrompt",
-        "f7.followSettings",
+        # `f7.followSettings` was the last entry in each drawn list, and the way
+        # back is one button beside the field now -- so the words this ticket
+        # needs for it are the button's.
+        "f7.restoreGlobal",
     ):
         assert key in table, key
 

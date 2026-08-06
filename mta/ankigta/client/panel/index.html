@@ -54,6 +54,25 @@
   <section class="section entities" id="section-entities" hidden>
     <div class="workspace" id="workspace">
 
+      <!-- Beside the list rather than over it. A setting is usually changed
+           while looking at what it affects, and the list is what the panel is
+           for; a screen that covers it makes every change a round trip. It is
+           a column of the workspace like the card editor, and the panel widens
+           for it the same way rather than the other columns being squeezed. -->
+      <div class="column settings-column" id="settings-column" hidden>
+        <div class="column-head">
+          <h2 data-i18n="settings.title"></h2>
+          <button type="button" id="close-settings" class="quiet"
+                  data-i18n="common.close"></button>
+        </div>
+        <div class="settings-rows" id="settings-rows"></div>
+        <div class="column-actions">
+          <button type="button" id="edit-hud" data-i18n="ui.editHud"
+                  aria-pressed="false"></button>
+          <button type="button" id="reset-layout" data-i18n="ui.reset"></button>
+        </div>
+      </div>
+
       <div class="column">
         <div class="column-head">
           <h2><span data-i18n="f7.title"></span></h2>
@@ -84,11 +103,23 @@
               <input type="text" id="entity-name" />
             </label>
             <h3 data-i18n="f7.activation"></h3>
+            <!-- Every field below that can hold an override carries the same
+                 button, named for what it does: it drops this entity's own
+                 answer so the field follows Settings again. One control at one
+                 scale, where there were two spellings of it — an entry inside
+                 each drawn list, and a button inside the colour picker.
+                 Which fields have one is said here, once, and `app.js` binds
+                 whichever are declared: the pane is written out field by field,
+                 so a second list of them in the page would be a list to keep in
+                 step with this one. -->
             <label class="inline">
               <span data-i18n="f7.radius"></span>
               <input type="number" id="entity-radius" min="0.5" max="100"
                      step="0.5" data-inherited="false"
                      data-i18n-title="f7.radiusClearHint" />
+              <button type="button" class="restore-global"
+                      data-restore-global="radius" data-i18n="f7.restoreGlobal"
+                      data-i18n-title="f7.restoreGlobalHint"></button>
               <!-- Shown when the entity has no radius of its own: the box then
                    holds the global that is actually in force, and this says
                    that is what it is. -->
@@ -102,12 +133,23 @@
             <label class="inline">
               <span data-i18n="f7.activationType"></span>
               <span id="entity-activation-type"></span>
+              <button type="button" class="restore-global"
+                      data-restore-global="activationType"
+                      data-i18n="f7.restoreGlobal"
+                      data-i18n-title="f7.restoreGlobalHint"></button>
               <span class="inherited-mark" id="entity-activation-type-inherited"
                     data-i18n="f7.inherited" hidden></span>
             </label>
+            <!-- A mount point: the key is answered by pressing it, so the
+                 control listens for the next key rather than offering a list of
+                 a hundred names to scroll. -->
             <label class="inline">
               <span data-i18n="f7.activationKey"></span>
               <span id="entity-activation-key"></span>
+              <button type="button" class="restore-global"
+                      data-restore-global="activationKey"
+                      data-i18n="f7.restoreGlobal"
+                      data-i18n-title="f7.restoreGlobalHint"></button>
               <span class="inherited-mark" id="entity-activation-key-inherited"
                     data-i18n="f7.inherited" hidden></span>
             </label>
@@ -136,6 +178,10 @@
             <label class="inline">
               <span data-i18n="f7.showCorona"></span>
               <span id="entity-show-corona"></span>
+              <button type="button" class="restore-global"
+                      data-restore-global="showCorona"
+                      data-i18n="f7.restoreGlobal"
+                      data-i18n-title="f7.restoreGlobalHint"></button>
               <span class="inherited-mark" id="entity-show-corona-inherited"
                     data-i18n="f7.inherited" hidden></span>
             </label>
@@ -145,6 +191,10 @@
                    built, because a native colour dialog has nowhere to open
                    over a page rendered into a game window. -->
               <span id="entity-corona-color"></span>
+              <button type="button" class="restore-global"
+                      data-restore-global="coronaColor"
+                      data-i18n="f7.restoreGlobal"
+                      data-i18n-title="f7.restoreGlobalHint"></button>
               <span class="inherited-mark" id="entity-corona-color-inherited"
                     data-i18n="f7.inherited" hidden></span>
             </label>
@@ -153,6 +203,10 @@
               <input type="number" id="entity-corona-opacity" min="0" max="1"
                      step="0.05" data-inherited="false"
                      data-i18n-title="f7.coronaOpacityClearHint" />
+              <button type="button" class="restore-global"
+                      data-restore-global="coronaOpacity"
+                      data-i18n="f7.restoreGlobal"
+                      data-i18n-title="f7.restoreGlobalHint"></button>
               <span class="inherited-mark" id="entity-corona-opacity-inherited"
                     data-i18n="f7.inherited" hidden></span>
             </label>
@@ -167,6 +221,10 @@
               <input type="text" id="entity-text-label-field"
                      data-inherited="false"
                      data-i18n-title="f7.textLabel.clearHint" />
+              <button type="button" class="restore-global"
+                      data-restore-global="textLabelField"
+                      data-i18n="f7.restoreGlobal"
+                      data-i18n-title="f7.restoreGlobalHint"></button>
               <span class="inherited-mark" id="entity-text-label-field-inherited"
                     data-i18n="f7.inherited" hidden></span>
             </label>
@@ -177,6 +235,10 @@
                    rendered into a game window, and a third way to choose a
                    colour would be a third thing to keep in step. -->
               <span id="entity-text-label-color"></span>
+              <button type="button" class="restore-global"
+                      data-restore-global="textLabelColor"
+                      data-i18n="f7.restoreGlobal"
+                      data-i18n-title="f7.restoreGlobalHint"></button>
               <span class="inherited-mark" id="entity-text-label-color-inherited"
                     data-i18n="f7.inherited" hidden></span>
             </label>
@@ -185,6 +247,10 @@
               <input type="number" id="entity-text-label-size" min="0.25"
                      max="5" step="0.05" data-inherited="false"
                      data-i18n-title="f7.textLabel.clearHint" />
+              <button type="button" class="restore-global"
+                      data-restore-global="textLabelSize"
+                      data-i18n="f7.restoreGlobal"
+                      data-i18n-title="f7.restoreGlobalHint"></button>
               <span class="inherited-mark" id="entity-text-label-size-inherited"
                     data-i18n="f7.inherited" hidden></span>
             </label>
@@ -274,17 +340,6 @@
       </div>
 
     </div>
-  </section>
-
-  <section class="section settings" id="section-settings" hidden>
-    <div class="settings-head">
-      <h2 data-i18n="settings.title"></h2>
-      <button type="button" id="edit-hud" data-i18n="ui.editHud"
-              aria-pressed="false"></button>
-      <button type="button" id="reset-layout" data-i18n="ui.reset"></button>
-      <button type="button" id="close-settings" data-i18n="common.close"></button>
-    </div>
-    <div class="settings-rows" id="settings-rows"></div>
   </section>
 
   <!-- Clearing overrides across a world is not undone by pressing the control

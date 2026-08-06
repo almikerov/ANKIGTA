@@ -94,6 +94,12 @@
     if (openPopup) openPopup.open(false);
   }
 
+  /* Declared up here because a list opening puts it away, and the control it
+   * belongs to is built further down. */
+  function stopListeningForAKey() {
+    if (listeningCapture) listeningCapture.listen(false);
+  }
+
   /** A button and the surface it opens, drawn inside the page. */
   function drawnPopup(name) {
     var root = element("div", "picker");
@@ -149,6 +155,10 @@
       },
       open: function (open) {
         if (open && openPopup && openPopup !== popup) closeOpenPopup();
+        /* A list and a control waiting for a key are both surfaces the player
+         * opened, and only one of them can be what the next click or press is
+         * for. Opening either puts the other away. */
+        if (open) stopListeningForAKey();
         panel.hidden = !open;
         button.setAttribute("aria-expanded", String(!!open));
         if (open) {
@@ -222,17 +232,21 @@
     return menu;
   }
 
-  /* A list whose last entry is the way back to the global.
+  /* What one Map Entity says instead of the global, and the one word for
+   * saying nothing instead.
    *
-   * The entity pane's version of the colour picker's "Follow Settings": a
-   * number box is emptied to say it, and a list has nowhere to be empty, so the
-   * list says it. The value shown is the one actually in force -- the entity's
-   * own, or the global it follows -- because a control showing nothing would
-   * claim the entity has no answer when it plainly does. */
+   * The value shown by a control on the entity pane is always the one actually
+   * in force -- the entity's own, or the global it follows -- because a control
+   * showing nothing would claim the entity has no answer when it plainly does.
+   *
+   * `Follow Settings` used to be the last entry in each of these lists, which
+   * made "stop having an opinion" look like one of the values a setting can
+   * hold. It is `Restore global` beside the field now: one control, on every
+   * field that can hold an override, doing one thing. */
   var INHERIT = "inherit";
 
-  function overridableMenu(spec) {
-    var menu = drawnMenu({
+  function overrideMenu(spec) {
+    return drawnMenu({
       name: spec.name,
       onChoose: function (value) {
         var change = {};
@@ -240,12 +254,6 @@
         send("setEntityMarks", change);
       }
     });
-    menu.setOverridableOptions = function (options) {
-      menu.setOptions(options.concat([
-        {value: INHERIT, label: t("f7.followSettings")}
-      ]));
-    };
-    return menu;
   }
 
   /* Swatches enough to pick from at a glance, and a hex box for everything
@@ -315,21 +323,6 @@
     hexLabel.appendChild(hex);
     popup.panel.appendChild(hexLabel);
 
-    /* A per-entity colour needs a way back to the one Settings holds, and an
-     * emptied hex box cannot be it: half a hex code is refused, so "" would be
-     * refused too. Only offered where following is a thing this picker's value
-     * can do -- a global has nothing above it to follow. */
-    if (spec.onClear) {
-      var follow = element("button", "picker-clear", t("f7.coronaFollowSettings"));
-      follow.type = "button";
-      follow.setAttribute("data-picker-clear", spec.name);
-      follow.addEventListener("click", function () {
-        popup.open(false);
-        spec.onClear();
-      });
-      popup.panel.appendChild(follow);
-    }
-
     picker.setValue = function (value) {
       picker.value = isColor(value) ? String(value).toLowerCase() : false;
       swatch.style.background = picker.value || "transparent";
@@ -339,6 +332,162 @@
     };
     picker.setValue(spec.value);
     return picker;
+  }
+
+  /* --- a key is answered by pressing it ---------------------------------- */
+
+  /* Which control is waiting for a key, if any. One at a time, the way one
+   * drawn list is open at a time: two controls both listening would both take
+   * the same press. */
+  var listeningCapture = null;
+
+  /* How a press becomes the word MTA stores.
+   *
+   * Read off `event.code` -- the physical key -- rather than off `event.key`,
+   * which is the character the layout produced. A binding is physical: MTA
+   * binds a virtual key, so the key marked A binds `a` on a Russian layout too,
+   * where `event.key` would hand over `ф`.
+   *
+   * The letters, digits, function keys and the numeric pad are a rule and are
+   * worked out below; what is left is a list, and it is here. Which names are
+   * *allowed* is decided nowhere on this page: the schema's own lists arrive
+   * with the state and every name this produces is checked against them, so a
+   * key this can spell and MTA cannot name is still refused rather than stored.
+   */
+  var CODE_NAMES = {
+    Space: "space", Enter: "enter", Tab: "tab", Backspace: "backspace",
+    CapsLock: "capslock",
+    ShiftLeft: "lshift", ShiftRight: "rshift",
+    ControlLeft: "lctrl", ControlRight: "rctrl",
+    AltLeft: "lalt", AltRight: "ralt",
+    Insert: "insert", Delete: "delete", Home: "home", End: "end",
+    PageUp: "pgup", PageDown: "pgdn",
+    ArrowLeft: "arrow_l", ArrowUp: "arrow_u",
+    ArrowRight: "arrow_r", ArrowDown: "arrow_d",
+    NumpadEnter: "num_enter", Escape: "escape"
+  };
+
+  /** What MTA calls the key that was pressed, or "" for one it cannot name. */
+  function keyNameOf(event) {
+    var code = (event && event.code) || "";
+    if (/^Key[A-Z]$/.test(code)) return code.charAt(3).toLowerCase();
+    if (/^Digit[0-9]$/.test(code)) return code.charAt(5);
+    if (/^Numpad[0-9]$/.test(code)) return "num_" + code.charAt(6);
+    if (/^F[0-9]{1,2}$/.test(code)) return code;
+    if (Object.prototype.hasOwnProperty.call(CODE_NAMES, code)) {
+      return CODE_NAMES[code];
+    }
+    return "";
+  }
+
+  /** A key, taken by pressing it rather than found in a list.
+   *
+   * The list it replaces held every key MTA can name, so a player who wanted
+   * `E` scrolled a hundred entries looking for it -- and the list was the wrong
+   * shape for the question anyway. The way a person says which key is to press
+   * it.
+   *
+   * Both refusals are read from lists the schema sent: a name MTA cannot bind,
+   * and a name ANKIGTA already answers to. Lua validates again on the way in and
+   * the server validates an override -- this is the fast half, so the reason
+   * arrives on the press rather than a round trip later. */
+  function keyCapture(spec) {
+    var root = element("div", "key-capture");
+    var button = element("button", "key-button");
+    button.type = "button";
+    button.setAttribute("data-key-capture", spec.name);
+    button.setAttribute("aria-pressed", "false");
+    /* Its own, rather than the row's: a state push happens whenever anything at
+     * all changes and rewrites the row's reason from what Lua last said, which
+     * would take this one off screen a moment after the press earned it. */
+    var refusal = element("p", "field-error", "");
+    refusal.setAttribute("role", "alert");
+    refusal.setAttribute("data-key-refused", spec.name);
+    refusal.hidden = true;
+    root.appendChild(button);
+    root.appendChild(refusal);
+
+    var capture = {
+      root: root,
+      button: button,
+      value: undefined,
+      listening: false,
+      /* Every key MTA can name, and the part of that still free. Absent until
+       * the first state carries them, which is why a press before then is
+       * refused rather than sent. */
+      bindable: [],
+      offered: []
+    };
+
+    function draw() {
+      button.textContent = capture.listening
+        ? t("f7.pressAKey")
+        : (capture.value === undefined || capture.value === false
+            ? t("common.empty")
+            : String(capture.value));
+      button.setAttribute("aria-pressed", String(capture.listening));
+      button.setAttribute(
+        "data-value",
+        capture.value === undefined || capture.value === false
+          ? ""
+          : String(capture.value)
+      );
+    }
+
+    function say(reason) {
+      refusal.textContent = reason ? t(reason) : "";
+      refusal.hidden = !reason;
+    }
+
+    /* Left listening after a refusal: the answer to "not that one" is another
+     * key, and a control that closed itself would have to be found and opened
+     * again to give it. */
+    capture.listen = function (on) {
+      if (on && listeningCapture && listeningCapture !== capture) {
+        listeningCapture.listen(false);
+      }
+      if (on) closeOpenPopup();
+      capture.listening = on === true;
+      if (capture.listening) {
+        say(false);
+        listeningCapture = capture;
+      } else if (listeningCapture === capture) {
+        listeningCapture = null;
+      }
+      draw();
+    };
+
+    capture.setValue = function (value) {
+      capture.value = value;
+      draw();
+    };
+
+    capture.setKeys = function (offered, bindable) {
+      capture.offered = offered || [];
+      capture.bindable = bindable || [];
+    };
+
+    capture.take = function (event) {
+      var name = keyNameOf(event);
+      if (!name || capture.bindable.indexOf(name) === -1) {
+        say("settings.error.not_a_key");
+        return;
+      }
+      if (capture.offered.indexOf(name) === -1) {
+        say("settings.error.key_in_use");
+        return;
+      }
+      capture.listen(false);
+      capture.setValue(name);
+      spec.onChoose(name);
+    };
+
+    button.addEventListener("click", function (event) {
+      if (event && event.stopPropagation) event.stopPropagation();
+      capture.listen(!capture.listening);
+    });
+    draw();
+    return capture;
   }
 
   /* --- the Map Entity list ---------------------------------------------- */
@@ -697,23 +846,18 @@
     value: false,
     onChoose: function (value) {
       send("setEntityMarks", {coronaColor: value});
-    },
-    /* Emptied means "follow Settings again" rather than "no colour", which is
-     * the same answer the radius box gives. */
-    onClear: function () {
-      send("setEntityMarks", {coronaColor: false});
     }
   });
   document
     .getElementById("entity-corona-color")
     .appendChild(coronaColorPicker.root);
 
-  /* The three lists in the entity pane, built once for the same reason the
-   * colour picker is: rebuilding one on each state push takes away the surface
-   * the player has open. Their options are fixed -- two modes, two states, and
-   * the keys Lua offers -- so they are filled from the first state that carries
-   * them and left alone after. */
-  var activationTypeMenu = overridableMenu({
+  /* The two lists in the entity pane, built once for the same reason the colour
+   * picker is: rebuilding one on each state push takes away the surface the
+   * player has open. Their options are fixed -- two modes and two states -- so
+   * they are filled from the first state that carries the words for them and
+   * left alone after. */
+  var activationTypeMenu = overrideMenu({
     name: "entityActivationType",
     field: "activationType"
   });
@@ -721,15 +865,20 @@
     .getElementById("entity-activation-type")
     .appendChild(activationTypeMenu.root);
 
-  var activationKeyMenu = overridableMenu({
+  /* The key this one entity opens on, pressed rather than chosen. The same
+   * control the Settings row uses: one way of answering "which key", wherever
+   * the question is asked. */
+  var activationKeyCapture = keyCapture({
     name: "entityActivationKey",
-    field: "activationKey"
+    onChoose: function (name) {
+      send("setEntityMarks", {activationKey: name});
+    }
   });
   document
     .getElementById("entity-activation-key")
-    .appendChild(activationKeyMenu.root);
+    .appendChild(activationKeyCapture.root);
 
-  var showCoronaMenu = overridableMenu({
+  var showCoronaMenu = overrideMenu({
     name: "entityShowCorona",
     field: "showCorona"
   });
@@ -738,22 +887,44 @@
     .appendChild(showCoronaMenu.root);
 
   /* The Text Label's colour on this one entity. The same picker the corona
-   * uses, for the same reason it exists at all; `Follow Settings` clears the
-   * override rather than choosing a colour, which is what an emptied box says
-   * for the two fields beside it. */
+   * uses, for the same reason it exists at all; the way back to the global is
+   * the `Restore global` button beside it, like every other field here. */
   var textLabelColorPicker = colorPicker({
     name: "entityTextLabelColor",
     value: false,
     onChoose: function (value) {
       send("setEntityMarks", {textLabelColor: value});
-    },
-    onClear: function () {
-      send("setEntityMarks", {textLabelColor: INHERIT});
     }
   });
   document
     .getElementById("entity-text-label-color")
     .appendChild(textLabelColorPicker.root);
+
+  /* One way back to the global, on every field that can hold an override.
+   *
+   * Which fields those are is the markup's answer: the pane is written out
+   * field by field, so the buttons are read back the same way rather than
+   * listed here a second time and kept in step by hand. It is the single-entity
+   * half of `Apply to all` -- that puts every Map Entity back on one setting,
+   * this puts one Map Entity back on one setting -- and both say it with the
+   * one word the store keeps for "nothing of its own". */
+  var restoreControls = [];
+  (function () {
+    var nodes = document.querySelectorAll("[data-restore-global]");
+    for (var i = 0; i < nodes.length; i += 1) {
+      restoreControls.push(bindRestoreGlobal(nodes[i]));
+    }
+  })();
+
+  function bindRestoreGlobal(node) {
+    var field = node.getAttribute("data-restore-global");
+    node.addEventListener("click", function () {
+      var change = {};
+      change[field] = INHERIT;
+      send("setEntityMarks", change);
+    });
+    return {node: node, field: field};
+  }
 
   /* `Draw radius` is on this pane and is not the entity's: it is this player's
    * own way of looking, and it draws the selected row's Activation Zone while
@@ -779,18 +950,23 @@
    * rebuild it -- which would shut it while it was open. */
   var entityOptionShape = null;
 
-  function fillEntityMenus(settings) {
+  function fillEntityChoices(settings) {
     var rows = (settings && settings.rows) || [];
-    var keys = [];
     for (var i = 0; i < rows.length; i += 1) {
-      if (rows[i].key === "activationKey") keys = rows[i].options || [];
+      if (rows[i].key === "activationKey") {
+        /* The two lists the capture refuses from, taken from the same row the
+         * Settings screen draws its own capture out of: which keys ANKIGTA can
+         * bind and which are still free is the schema's answer, and asking for
+         * it twice is two answers that can disagree. */
+        activationKeyCapture.setKeys(
+          rows[i].options, rows[i].bindableKeys
+        );
+      }
     }
-    /* Every word that ends up on one of the three lists, so a state that
-     * carries the string table for the first time -- or a changed one -- fills
-     * them, and one that changes nothing leaves an open list open. */
+    /* Every word that ends up on one of the two lists, so a state that carries
+     * the string table for the first time -- or a changed one -- fills them,
+     * and one that changes nothing leaves an open list open. */
     var shape = JSON.stringify([
-      keys,
-      t("f7.followSettings"),
       t("settings.value.automatic"),
       t("settings.value.key"),
       t("settings.value.true"),
@@ -798,19 +974,14 @@
     ]);
     if (shape === entityOptionShape) return;
     entityOptionShape = shape;
-    activationTypeMenu.setOverridableOptions([
+    activationTypeMenu.setOptions([
       {value: "automatic", label: t("settings.value.automatic")},
       {value: "key", label: t("settings.value.key")}
     ]);
-    showCoronaMenu.setOverridableOptions([
+    showCoronaMenu.setOptions([
       {value: true, label: t("settings.value.true")},
       {value: false, label: t("settings.value.false")}
     ]);
-    activationKeyMenu.setOverridableOptions(keys.map(function (name) {
-      /* The key's own name, not a lookup: a key is a stored technical value
-       * and the string table has no business holding one. */
-      return {value: name, label: name};
-    }));
   }
 
   /* On screen whether or not a row is selected. It used to appear with the
@@ -901,10 +1072,17 @@
     coronaColorPicker.button.disabled = !entity;
     showCoronaMenu.button.disabled = !entity;
     activationTypeMenu.button.disabled = !entity;
-    activationKeyMenu.button.disabled = !entity;
+    activationKeyCapture.button.disabled = !entity;
     labelField.disabled = !entity;
     labelSize.disabled = !entity;
     textLabelColorPicker.button.disabled = !entity;
+    /* Nothing to restore where the field is already following the global, so
+     * the button goes quiet rather than offering a change that changes
+     * nothing -- and it keeps its place, the way every field here does. */
+    for (var i = 0; i < restoreControls.length; i += 1) {
+      restoreControls[i].node.disabled = !entity
+        || entity[restoreControls[i].field + "Inherited"] === true;
+    }
 
     if (!entity) {
       reportedEntity = null;
@@ -919,7 +1097,11 @@
       colorMark.hidden = true;
       showCoronaMenu.setValue(undefined);
       activationTypeMenu.setValue(undefined);
-      activationKeyMenu.setValue(undefined);
+      /* Stops waiting with the selection it was waiting for: a control still
+       * listening for a key with no row under it would store the next press
+       * against whatever is selected by then. */
+      activationKeyCapture.listen(false);
+      activationKeyCapture.setValue(undefined);
       coronaMark.hidden = true;
       typeMark.hidden = true;
       keyMark.hidden = true;
@@ -978,7 +1160,7 @@
        * one open. */
       showCoronaMenu.setValue(entity.showCorona === true);
       activationTypeMenu.setValue(entity.activationType);
-      activationKeyMenu.setValue(entity.activationKey);
+      activationKeyCapture.setValue(entity.activationKey);
       /* The three the Text Label is drawn from, each showing the value in
        * force — the entity's own where it has one, the global where it has
        * not — and inside the same guard for the same reason: a push reporting
@@ -1044,15 +1226,32 @@
     document.getElementById("save-note").disabled = !noteIsEdited();
   }
 
+  /* Whether the Settings column is out. Lua's, not the page's: the panel's own
+   * width follows it, and a page that decided this would be deciding how big
+   * its own window is. */
+  var settingsOpen = false;
+
+  /* Which columns the workspace is showing.
+   *
+   * Each of the two that come and go — Settings on the left, the card editor on
+   * the right — exists only while it is open, so the two lists have the whole
+   * panel the rest of the time. Neither takes its room from the others: Lua
+   * widens the window for whichever are out, and this only says which those
+   * are. */
+  function renderWorkspaceShape() {
+    var shape = "workspace";
+    if (settingsOpen) shape += " with-settings";
+    if (inspectorOpen && selected.cardId) shape += " editing";
+    document.getElementById("workspace").className = shape;
+    document.getElementById("settings-column").hidden = !settingsOpen;
+  }
+
   function renderInspectorToggle() {
     var button = document.getElementById("toggle-inspector");
     button.disabled = !selected.cardId;
     button.setAttribute("aria-expanded", String(inspectorOpen));
     button.textContent = t(inspectorOpen ? "inspector.close" : "inspector.open");
-    /* The third column exists only while it is open, so the two lists have the
-     * whole panel the rest of the time. */
-    document.getElementById("workspace").className =
-      inspectorOpen && selected.cardId ? "workspace editing" : "workspace";
+    renderWorkspaceShape();
   }
 
   function renderInspector(state) {
@@ -1240,19 +1439,13 @@
 
     var control = settingControl(row, wrap, error);
     wrap.appendChild(control.node);
-    /* A sentence under the control, where the name of the setting does not say
-     * enough on its own. `Review mode` is the one that needs it: `Show text`
-     * writes no repetition, and a player who assumes their reading counted has
-     * been told something false by omission. Which rows have one is Lua's
-     * answer, out of the string table — the page keeps no list. */
-    if (row.noteKey) {
-      var note = element("p", "setting-note", t(row.noteKey));
-      note.setAttribute("data-setting-note", row.key);
-      wrap.appendChild(note);
-    }
-    /* Beside the global it is about, because that is the thing it is about:
-     * "every link that was told otherwise goes back to following this". It is
-     * here for every setting a link can override, and Lua says which those are
+    /* On the field's row, beside the global it is about, because that is the
+     * thing it is about: "every Map Entity that was told otherwise goes back to
+     * following this". Under the control it took a second row per setting, and
+     * a screen twice as tall as it needs to be is half of why Settings could
+     * not sit beside the list.
+     *
+     * Here for every setting a link can override, and Lua says which those are
      * -- the page keeps no list of its own, so a setting that gains an override
      * gains this control without either side being edited. */
     if (row.clearOverrides === true) {
@@ -1263,6 +1456,16 @@
         send("clearEntityOverrides", {key: control.row.key});
       });
       wrap.appendChild(sweep);
+    }
+    /* A sentence under the control, where the name of the setting does not say
+     * enough on its own. `Review mode` is the one that needs it: `Show text`
+     * writes no repetition, and a player who assumes their reading counted has
+     * been told something false by omission. Which rows have one is Lua's
+     * answer, out of the string table — the page keeps no list. */
+    if (row.noteKey) {
+      var note = element("p", "setting-note", t(row.noteKey));
+      note.setAttribute("data-setting-note", row.key);
+      wrap.appendChild(note);
     }
     wrap.appendChild(error);
     settingsControls[settingId(row)] = control;
@@ -1299,7 +1502,28 @@
       return control;
     }
 
-    if (row.kind === "choice" || row.kind === "key") {
+    /* A key is answered by pressing it, and it is named by itself: a key is a
+     * stored technical value -- the same word MTA's own `bindKey` takes -- so
+     * putting it through the string table would be inventing a translation for
+     * an identifier. */
+    if (row.kind === "key") {
+      var capture = keyCapture({
+        name: row.key,
+        onChoose: function (name) {
+          send("setSetting", {key: control.row.key, value: name});
+        }
+      });
+      capture.button.id = settingId(row);
+      control.node = capture.root;
+      control.apply = function (next) {
+        applyCommon(next);
+        capture.setKeys(next.options, next.bindableKeys);
+        capture.setValue(next.value);
+      };
+      return control;
+    }
+
+    if (row.kind === "choice") {
       var menu = drawnMenu({
         name: row.key,
         onChoose: function (value) {
@@ -1307,15 +1531,8 @@
         }
       });
       menu.button.id = settingId(row);
-      /* A key is named by itself. It is a stored technical value -- the same
-       * word MTA's own `bindKey` takes -- so putting it through the string
-       * table would be inventing a translation for an identifier. */
-      var namesItself = row.kind === "key";
       menu.setOptions((row.options || []).map(function (value) {
-        return {
-          value: value,
-          label: namesItself ? value : t("settings.value." + value)
-        };
+        return {value: value, label: t("settings.value." + value)};
       }));
       control.node = menu.root;
       control.apply = function (next) {
@@ -1378,10 +1595,13 @@
     return control;
   }
 
+  /* Settings is not one of these any more: it is a column of the workspace,
+   * beside the list rather than over it. What is left is the gate and the work,
+   * and the gate is a consequence rather than a request -- there is no
+   * connection to talk to, so there is nothing else to show. */
   function show(section) {
     document.getElementById("section-connection").hidden = section !== "connection";
     document.getElementById("section-entities").hidden = section !== "entities";
-    document.getElementById("section-settings").hidden = section !== "settings";
   }
 
   /** The one entry point Lua calls. A whole state in, a whole render out. */
@@ -1390,14 +1610,15 @@
     applyLocale();
     renderConnection(state.connection || {state: "disconnected"});
     selected = state.selected || {mapId: false, entityId: false, cardId: false};
+    settingsOpen = state.settingsOpen === true;
     focusOnSelect = state.focusOnSelect !== false;
     renderDrawRadius(state.drawRadius);
     renderStudy(state.study || {active: false, resumable: false});
     renderSettings(state.settings);
-    /* The entity pane's lists are filled from the same rows Settings is drawn
-     * from: the keys ANKIGTA offers are the schema's answer, and asking for
-     * them twice is two answers that can disagree. */
-    fillEntityMenus(state.settings);
+    /* The entity pane's controls are filled from the same rows Settings is
+     * drawn from: which keys ANKIGTA can bind is the schema's answer, and
+     * asking for it twice is two answers that can disagree. */
+    fillEntityChoices(state.settings);
     lastEntities = state.entities || [];
     renderRows(state.entities);
     renderCards(state.cardPicker);
@@ -1677,10 +1898,14 @@
     send("dragEnd");
   });
 
-  /* Clicking away from an open list closes it, the way a native one behaved.
-   * The list and the button that opens it stop their own clicks here. */
+  /* Clicking away from an open list closes it, the way a native one behaved,
+   * and clicking away from a control waiting for a key stops it waiting: both
+   * are surfaces the player opened and can leave by looking elsewhere. The
+   * list, the button that opens it and the key control stop their own clicks
+   * here. */
   document.addEventListener("click", function () {
     closeOpenPopup();
+    stopListeningForAKey();
   });
 
   function typingInto(target) {
@@ -1689,6 +1914,24 @@
   }
 
   document.addEventListener("keydown", function (event) {
+    /* A control waiting for a key takes the press whole, before anything else
+     * on this page can read it: every key on the keyboard is a possible answer
+     * here, including the arrows that walk the list and the Escape that shuts
+     * the panel.
+     *
+     * Escape is the way out rather than an answer. It is a key ANKIGTA already
+     * answers to, so it can never be what is stored, and a control with no way
+     * out of it is worse than one that cannot be given `escape`. The button
+     * says so while it waits. */
+    if (listeningCapture) {
+      if (event.preventDefault) event.preventDefault();
+      if (event.key === "Escape") {
+        listeningCapture.listen(false);
+        return;
+      }
+      listeningCapture.take(event);
+      return;
+    }
     /* Escape closes, because a panel that traps the cursor and cannot be left
      * is the defect this replaces. An open list is what it closes first:
      * closing the whole panel out from under someone who only wanted to back

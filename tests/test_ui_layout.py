@@ -101,6 +101,16 @@ def pushed_section(sandbox: MtaSandbox) -> str:
     return str(sandbox.pushed_panel_state()["section"])
 
 
+def settings_is_out(sandbox: MtaSandbox) -> bool:
+    """Whether the Settings column is slid out beside the Map Entity list.
+
+    Not a section any more: it sits beside the list rather than over it, so
+    "the player is on Settings" is a column being out rather than a screen
+    being shown.
+    """
+    return sandbox.pushed_panel_state()["settingsOpen"] is True
+
+
 @pytest.fixture
 def client() -> Iterator[MtaSandbox]:
     sandbox = start_client()
@@ -146,21 +156,21 @@ def stored_settings(sandbox: MtaSandbox) -> dict[str, Any]:
 
 
 def open_f7(sandbox: MtaSandbox, *, link_state: str = "Active Spatial Link") -> None:
-    """Open the window these placement tests drag.
+    """Open the window these placement tests drag, by the key that opens it.
 
-    Ticket 32 moved F7 to a CEF page, which the layout manager sizes but does
-    not place, so the settings panel is what stands in for "a window" here.
+    Through the binding rather than through the Settings door it used to use:
+    Settings is a column of this same window now, and opening it widens the
+    panel by its own share — so a drag measured with it out would be measuring
+    a different window from the one the player drags.
+
     The properties under test — dragged once, stored as a fraction, clamped
-    back onto a smaller screen — belong to the manager, not to F7.
+    back onto a smaller screen — belong to the layout manager, not to F7.
     """
     sandbox.eval(
-        """
-        function()
-            triggerEvent("ankigta:setAuthorized", resourceRoot, true)
-            triggerEvent("ankigta:openSettings", resourceRoot)
-        end
-        """
+        'function() triggerEvent("ankigta:setAuthorized", resourceRoot, true) end'
     )()
+    for handler in sandbox.bound_keys.get(("F7", "down"), []):
+        handler()
 
 
 def _unused_open_f7(sandbox: MtaSandbox, *, link_state: str = "x") -> None:
@@ -582,10 +592,15 @@ def test_a_window_is_movable_by_its_title_and_never_resizable(
     """Moved by its bar, and never resized by dragging an edge.
 
     The panel is a page, so "resizable" is not a property a player can reach:
-    its size comes from UI Scale alone. What is still checkable here is that
-    the bar moves it and the size does not change while it does.
+    its size comes from UI Scale and from which of its columns are out. What is
+    still checkable here is that the bar moves it and the size does not change
+    while it does.
+
+    Opened by its key rather than by the `ankigta-ui` command, which is the
+    Settings door: that door slides the Settings column out, and the panel is
+    wider by that column's share while it is.
     """
-    client.commands["ankigta-ui"][0]()
+    open_f7(client)
     page_ready(client)
     _x, _y, width_before, height_before = panel_rect(client)
 
@@ -1000,7 +1015,7 @@ def test_the_reset_row_is_inside_the_panel_at_every_scale(
 def test_the_panel_is_reachable_from_f7_as_well_as_from_the_command(
     client: MtaSandbox,
 ) -> None:
-    """One panel, so one entry: the UI scale rows live in the settings panel
+    """One panel, so one entry: the UI scale rows live in the settings column
     rather than in a second window offering the same value."""
     open_f7(client)
     page_ready(client)
@@ -1008,14 +1023,17 @@ def test_the_panel_is_reachable_from_f7_as_well_as_from_the_command(
         'function() triggerEvent("ankigta:panelAction", resourceRoot,'
         ' "openSettings", "{}") end'
     )()
-    from_panel = pushed_section(client)
+    from_panel = settings_is_out(client)
 
     client.commands["ankigta-ui"][0]()
     page_ready(client)
-    from_command = pushed_section(client)
+    from_command = settings_is_out(client)
 
-    assert from_panel == "settings"
-    assert from_command == "settings"
+    assert from_panel is True
+    assert from_command is True
+    # And it opens beside the list rather than instead of it: the section under
+    # the column is still the workspace.
+    assert pushed_section(client) == "entities"
 
 
 # --- authority ----------------------------------------------------------------

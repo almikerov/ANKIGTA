@@ -162,6 +162,12 @@ local searchIssued = false
 --- Whether the card editor is slid out. Held here as well as on the page,
 --- because the panel's own width follows it.
 local editorOpen = false
+--- Whether the Settings column is out.
+--
+-- Held here for the same reason the editor is, and it is a column now rather
+-- than a screen: Settings used to be a section that covered the Map Entity
+-- list, and a setting is usually changed while looking at what it affects.
+local settingsOpen = false
 -- Filled in further down, declared here: the commands and the Review Mode
 -- entry wire themselves to it before those definitions are reached.
 local actions = {}
@@ -321,11 +327,13 @@ local function closePanel()
     pageReady = false
     searchIssued = false
     editorOpen = false
-    -- The panel opens where it always opens: on the list. What outlives the
-    -- window is the *answer* -- the settings the player changed, which are
-    -- stored and untouched by this -- and not the screen they changed it on. A
-    -- window that reopens on Settings is a window whose state the player has to
-    -- notice and undo before doing the thing they opened it for.
+    -- The panel opens where it always opens: on the list, with neither of the
+    -- two columns that come and go. What outlives the window is the *answer* --
+    -- the settings the player changed, which are stored and untouched by this
+    -- -- and not the screen they changed it on. A window that reopens on
+    -- Settings is a window whose state the player has to notice and undo before
+    -- doing the thing they opened it for.
+    settingsOpen = false
     requestedSection = nil
     -- The selection is deliberately not cleared. `Draw radius` stops drawing
     -- with the window, but the row the player was working on is still the row
@@ -344,6 +352,10 @@ end
 --- Which section the panel should be showing.
 -- Not a stored preference: it follows the state of the world, because the
 -- reason to open the panel with no connection is always the connection.
+--
+-- Two rather than three. Settings is a column of the workspace now, out beside
+-- the Map Entity list rather than over it, so opening it is not leaving the
+-- screen the panel is for.
 local function section()
     if not lastStatus or lastStatus.state ~= "connected" then
         return "connection"
@@ -467,10 +479,19 @@ local function settingsRows()
             elseif rule.kind == "choice" then
                 row.options = rule.values
             elseif rule.kind == "key" then
-                -- The free ones only. A key ANKIGTA already answers to is
-                -- refused by the rule, and a list that offered it would be a
-                -- list arguing with the thing that validates it.
+                -- Not a list to choose from -- the key is pressed now -- but
+                -- the two lists the press is judged against, which are the two
+                -- refusals it can earn. A name absent from `bindableKeys` is a
+                -- key MTA cannot name; a name present there and absent from the
+                -- free ones is a key ANKIGTA already answers to.
+                --
+                -- Sent rather than kept on the page, and read there by the
+                -- entity pane's control as well as by this row's: which keys
+                -- ANKIGTA can bind is the schema's answer, and a page holding
+                -- its own copy is a second answer that can disagree with the
+                -- rule that validates the value.
                 row.options = schema().offeredKeys()
+                row.bindableKeys = schema().bindableKeys
             end
             table.insert(rows, row)
         end
@@ -1258,6 +1279,11 @@ local function push()
     end
     local state = {
         section = section(),
+        -- Which of the two columns that come and go is out. Settings is one of
+        -- them now rather than a screen of its own, and the page is told which
+        -- shape it is in rather than deciding it: the window's width follows
+        -- this, and only this side can change that.
+        settingsOpen = settingsOpen,
         locale = localeTable(),
         connection = {
             state = lastStatus and lastStatus.state or "disconnected",
@@ -1365,6 +1391,31 @@ end
 -- somebody opened an editor.
 local EDITOR_WIDTH_SHARE = 0.34
 
+--- The same, for the Settings column.
+--
+-- Settings covered the Map Entity list until this ticket, which is the wrong
+-- shape twice over: the list is what the panel is for, and a setting is usually
+-- changed while looking at what it affects. So it is a column beside the list
+-- -- and the panel grows for it exactly the way it grows for the editor,
+-- because the alternative is the mistake the editor already made once.
+local SETTINGS_WIDTH_SHARE = 0.34
+
+--- How much wider the panel is than its own width, for the columns now out.
+--
+-- Added rather than taken as a maximum: two extra columns need two columns'
+-- worth of room, and a window that grew once for whichever came first would
+-- leave the second one squeezing the lists after all.
+local function extraWidthShare()
+    local share = 0
+    if editorOpen then
+        share = share + EDITOR_WIDTH_SHARE
+    end
+    if settingsOpen then
+        share = share + SETTINGS_WIDTH_SHARE
+    end
+    return share
+end
+
 local function panelRect()
     local x, y, width, height
     if ANKIGTA.Layout then
@@ -1376,13 +1427,14 @@ local function panelRect()
         x = (screenWidth - width) / 2
         y = (screenHeight - height) / 2
     end
-    if not editorOpen then
+    local share = extraWidthShare()
+    if share == 0 then
         return x, y, width, height
     end
     -- Grown from the width already in force, so UI Scale and any clamp the
     -- layout applied are carried rather than recomputed.
     local screenWidth = guiGetScreenSize()
-    width = math.min(width * (1 + EDITOR_WIDTH_SHARE), screenWidth)
+    width = math.min(width * (1 + share), screenWidth)
     -- Widening at a fixed left edge would push the right edge off screen for a
     -- panel already sitting near it.
     if x + width > screenWidth then
@@ -1589,11 +1641,14 @@ function actions.close()
     closePanel()
 end
 
---- The way into the settings panel, which is still CEGUI.
--- Kept as a door rather than a copy: two settings surfaces would be two places
--- to fix one wrong default.
+--- Slide the Settings column out beside the Map Entity list.
+--
+-- A column rather than a screen: the list is what the panel is for, and a
+-- setting is usually changed while looking at what it affects. The panel widens
+-- for it the way it widens for the card editor, so nothing else gets narrower.
 function actions.openSettings()
-    requestedSection = "settings"
+    settingsOpen = true
+    resizePanel()
     -- Server-owned values are the server's to report; ask, then render what
     -- comes back rather than guessing from a default.
     triggerServerEvent(SETTINGS_REQUEST_EVENT, resourceRoot)
@@ -1624,7 +1679,8 @@ function actions.editHud(payload)
 end
 
 function actions.closeSettings()
-    requestedSection = nil
+    settingsOpen = false
+    resizePanel()
     push()
 end
 
