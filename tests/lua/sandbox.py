@@ -473,6 +473,10 @@ class MtaSandbox:
         self.player_dimension = 0
         self.player_velocity: tuple[float, float, float] = (0.0, 0.0, 0.0)
         self.blips: list[Any] = []
+        #: Every `setElementDimension` call, as `(element type, dimension)`.
+        #: A count rather than a state, because on a blip the call is expensive
+        #: whatever it is passed -- see `set_element_dimension` below.
+        self.dimension_writes: list[tuple[str, int]] = []
         #: Every control the resource created, in creation order.
         self.widgets: list[Widget] = []
         #: What `getLocalization()` reports, as MTA's `{code, name}`. ANKIGTA
@@ -1971,16 +1975,44 @@ class MtaSandbox:
                 return False
             return element["__streamed"] is not False
 
+        # Written onto the element as well as recorded. `moved` collates by
+        # element *kind*, which is what a test asking "where did teleport put
+        # them" wants and is useless for "where is this one of forty blips"; and
+        # in MTA the setter is what the getter answers with, so a stub where
+        # `getElementPosition` never sees `setElementPosition` would let a
+        # module that never moved anything pass.
         def set_element_position(element: Any, x: float, y: float, z: float, *_r: Any) -> bool:
             self._record_move(element, position=(float(x), float(y), float(z)))
+            if lua_type(element) == "table":
+                element["x"], element["y"], element["z"] = (
+                    float(x), float(y), float(z)
+                )
             return True
 
         def set_element_interior(element: Any, interior: float, *_rest: Any) -> bool:
             self._record_move(element, interior=int(interior))
+            if lua_type(element) == "table":
+                element["interior"] = int(interior)
             return True
 
         def set_element_dimension(element: Any, dimension: float) -> bool:
             self._record_move(element, dimension=int(dimension))
+            # Counted, not only collated. On a blip this is not a value write:
+            # `CClientRadarMarker::SetDimension` goes through `RelateDimension`,
+            # which asks the manager to re-order -- destroying and re-creating
+            # every radar trace on the client, the game's own and every other
+            # resource's included -- whether or not the dimension is different.
+            # So "how many times was this called" is a thing worth asserting.
+            self.dimension_writes.append(
+                (
+                    str(element["type"])
+                    if lua_type(element) == "table" and element["type"]
+                    else "unknown",
+                    int(dimension),
+                )
+            )
+            if lua_type(element) == "table":
+                element["dimension"] = int(dimension)
             return True
 
         g.getElementPosition = get_element_position
@@ -2069,14 +2101,92 @@ class MtaSandbox:
         g.getElementParent = lambda element, *_rest: (
             element["__parent"] if lua_type(element) == "table" else False
         ) or False
-        def create_blip(x: float, y: float, z: float, *_rest: Any) -> Any:
+        # --- blips -----------------------------------------------------------
+        #
+        # `createBlip(x, y, z, icon, size, r, g, b, a, ordering,
+        # visibleDistance)`, with MTA's own defaults: icon 0, size 2 and opaque
+        # red -- `CLuaBlipDefs::CreateBlip`, whose `value_or` calls are where
+        # those defaults are (`Client/mods/deathmatch/logic/luadefs/
+        # CLuaBlipDefs.cpp`, read 2026-08-06, SHA-256
+        # 91bf859ab3dcd4df1466747afc5220b3c275db16e2616c8919d46dedc4af0a07).
+        # Icon and colour are worth recording
+        # rather than dropping: what a blip *says* is the whole of what a map
+        # coloured by state is for, and a stub that kept only the position would
+        # let three states that look identical pass.
+        #
+        # A blip is not a world element -- it never answers
+        # `getElementsByType("object")` and never streams -- so it is kept out
+        # of `world_elements`, which is also why the panel's row watcher does
+        # not hear one being made.
+        def create_blip(
+            x: float,
+            y: float,
+            z: float,
+            icon: Any = 0,
+            size: Any = 2,
+            red: Any = 255,
+            green: Any = 0,
+            blue: Any = 0,
+            alpha: Any = 255,
+            *_rest: Any,
+        ) -> Any:
             blip = self.lua.table_from(
-                {"__element": True, "type": "blip", "x": x, "y": y, "z": z}
+                {
+                    "__element": True,
+                    "type": "blip",
+                    "x": float(x),
+                    "y": float(y),
+                    "z": float(z),
+                    "icon": int(icon),
+                    "size": int(size),
+                    "red": int(red),
+                    "green": int(green),
+                    "blue": int(blue),
+                    "alpha": int(alpha),
+                    "interior": 0,
+                    "dimension": 0,
+                }
             )
             self.blips.append(blip)
             return blip
 
+        def set_blip_color(
+            blip: Any = None,
+            red: Any = 0,
+            green: Any = 0,
+            blue: Any = 0,
+            alpha: Any = 255,
+            *_rest: Any,
+        ) -> bool:
+            if lua_type(blip) != "table" or blip["type"] != "blip":
+                return False
+            blip["red"] = int(red)
+            blip["green"] = int(green)
+            blip["blue"] = int(blue)
+            blip["alpha"] = int(alpha)
+            return True
+
+        def set_blip_icon(blip: Any = None, icon: Any = 0, *_rest: Any) -> bool:
+            # `CClientRadarMarkerManager::IsValidIcon` -- anything past
+            # `RADAR_MARKER_LIMIT` is refused rather than clamped.
+            if lua_type(blip) != "table" or blip["type"] != "blip":
+                return False
+            if int(icon) < 0 or int(icon) > 63:
+                return False
+            blip["icon"] = int(icon)
+            return True
+
         g.createBlip = create_blip
+        g.setBlipColor = set_blip_color
+        g.setBlipIcon = set_blip_icon
+        g.getBlipColor = lambda blip=None, *_r: (
+            (blip["red"], blip["green"], blip["blue"], blip["alpha"])
+            if lua_type(blip) == "table"
+            else False
+        )
+        g.getBlipIcon = lambda blip=None, *_r: (
+            blip["icon"] if lua_type(blip) == "table" else False
+        )
 
         def dx_draw_material_line_3d(
             start_x: Any = 0, start_y: Any = 0, start_z: Any = 0,

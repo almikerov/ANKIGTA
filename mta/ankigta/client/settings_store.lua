@@ -138,7 +138,10 @@ function ClientSettings.apply()
         ANKIGTA.Layout.applySettings(values.uiScale, values.uiPlacement)
     end
     if ANKIGTA.Indicator then
+        -- Two answers about the map, taken apart: how the next card is marked,
+        -- and whether everything else is marked at all.
         ANKIGTA.Indicator.setMode(values.indicatorMode)
+        ANKIGTA.Indicator.setShowEntitiesOnMap(values.showEntitiesOnMap)
     end
     if ANKIGTA.WorldMarks then
         -- A way of looking, so it is this side's to apply. What a corona looks

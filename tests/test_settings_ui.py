@@ -16,6 +16,7 @@ added later cannot quietly become unreachable.
 from __future__ import annotations
 
 import json
+import struct
 from pathlib import Path
 from typing import Any, Iterator
 from xml.etree import ElementTree
@@ -197,6 +198,55 @@ def apply_number(sandbox: MtaSandbox, key: str, typed: str) -> None:
     panel_action(sandbox, "setSetting", {"key": key, "value": value})
 
 
+def push_one_entity(sandbox: MtaSandbox, **metadata: Any) -> None:
+    """One Map Entity in the F7 snapshot, as `server/main.lua` sends one.
+
+    `false` is what the store means by a NULL override: the entity says nothing
+    of its own and follows the global.
+    """
+    entry: dict[str, Any] = {
+        "mapId": "map-1",
+        "entityId": "object (gate) (1)",
+        "type": "object",
+        "model": 1337,
+        "authored": {
+            "position": {"x": 0, "y": 0, "z": 0},
+            "rotation": {"x": 0, "y": 0, "z": 0},
+            "world": {"interior": 0, "dimension": 0},
+        },
+    }
+    defaults = {"name": "", "radius": False, "coronaOpacity": False}
+    defaults.update(metadata)
+    call(
+        sandbox,
+        """
+        function(entity, meta)
+            triggerEvent("ankigta:f7Snapshot", resourceRoot, {
+                entities = {{
+                    mapEntity = entity,
+                    metadata = meta,
+                    link = {state = "Unlinked"},
+                }},
+                currentMap = {mapIds = {"map-1"}},
+                cardLinks = {},
+            })
+        end
+        """,
+        _to_lua(sandbox, entry),
+        _to_lua(sandbox, defaults),
+    )
+
+
+def _to_lua(sandbox: MtaSandbox, value: Any) -> Any:
+    if isinstance(value, dict):
+        return sandbox.table(
+            {key: _to_lua(sandbox, item) for key, item in value.items()}
+        )
+    if isinstance(value, list):
+        return sandbox.lua.table_from([_to_lua(sandbox, item) for item in value])
+    return value
+
+
 def client_value(sandbox: MtaSandbox, key: str) -> Any:
     return call(sandbox, "function(k) return ANKIGTA.ClientSettings.get(k) end", key)
 
@@ -226,6 +276,31 @@ def set_client(sandbox: MtaSandbox, key: str, value: Any) -> Any:
 # --- reachability ------------------------------------------------------------
 
 
+def shown_with(sandbox: MtaSandbox, key: str) -> str:
+    return str(
+        call(sandbox, "function(k) return ANKIGTA.Settings.shownWith(k) end", key)
+    )
+
+
+def reaches_the_panel(sandbox: MtaSandbox, key: str) -> bool:
+    """Does the panel act on a change to this setting sent from the page?
+
+    Asked by flipping it and reading it back. A setting the panel refuses -- an
+    unknown one, or one it will not let a page touch -- leaves the stored value
+    alone whatever is sent, so this tells "edited elsewhere in the panel" apart
+    from "not editable from the panel at all".
+
+    Toggles only, which is what the only setting on another surface is today.
+    A non-boolean one moving later fails here rather than passing quietly.
+    """
+    before = client_value(sandbox, key)
+    assert isinstance(before, bool), f"{key} is not a toggle; extend this helper"
+    panel_action(sandbox, "setSetting", {"key": key, "value": not before})
+    after = client_value(sandbox, key)
+    panel_action(sandbox, "setSetting", {"key": key, "value": before})
+    return after is not before
+
+
 def test_every_setting_in_the_schema_is_reachable_in_the_panel(
     client: MtaSandbox,
 ) -> None:
@@ -239,6 +314,15 @@ def test_every_setting_in_the_schema_is_reachable_in_the_panel(
             # placement is dragged rather than typed — both reachable, neither
             # a field.
             assert entry is None
+            continue
+        if shown_with(client, key) != "settings":
+            # On another surface by the schema's own word, so it is not a row
+            # here -- and the panel still takes a change to it, which is the
+            # half of "reachable" this side can answer. Whether the control is
+            # really on that surface is `tests/test_panel_page.py`'s question,
+            # because only there is the page executed.
+            assert entry is None, f"{key} is on two surfaces at once"
+            assert reaches_the_panel(client, key), f"{key} cannot be changed"
             continue
         assert entry is not None, f"{key} is not reachable in the settings panel"
         assert entry["kind"] in (
@@ -509,6 +593,214 @@ def test_the_server_store_rejects_a_value_a_stale_client_sends(
     assert ok is False
     assert reason == "settings.error.out_of_range"
     assert server_value(server, "activationRadius") == 3
+
+
+# --- a number is shown at the precision its own rule declares -----------------
+#
+# `Corona opacity` read `0.60000002`. Not a wrong value: a wrong *rendering* of
+# the right one. Measured on the owner's running server rather than guessed --
+# every server-to-client hop packs a non-integer Lua number into a 32-bit float,
+# `triggerClientEvent` and `setElementData` alike, and `0.25` survives only
+# because a power-of-two fraction is exact in single precision. That is the
+# whole of why retreating to a default of `0.5` would have appeared to work
+# while `0.55` and `0.1` kept the tail.
+#
+# So the wire is reproduced here, in Python, exactly as it was measured, and the
+# claim under test is what the player reads.
+
+
+def across_the_wire(value: float) -> float:
+    """A number as it reaches the client, packed into a 32-bit float."""
+    return struct.unpack("<f", struct.pack("<f", value))[0]
+
+
+def announce_server_values(sandbox: MtaSandbox, **values: Any) -> None:
+    """Server-owned settings arriving as a snapshot, mangled the way the wire
+    mangles them."""
+    sandbox.trigger(
+        "ankigta:settingsSnapshot",
+        sandbox.eval("resourceRoot"),
+        sandbox.eval(
+            "function(v) return {values = v, maps = {}} end"
+        )(
+            sandbox.table(
+                {
+                    key: across_the_wire(value)
+                    if isinstance(value, float)
+                    else value
+                    for key, value in values.items()
+                }
+            )
+        ),
+    )
+
+
+def test_the_wire_really_does_change_the_number() -> None:
+    """The tests below are worth nothing if the fixture is a no-op.
+
+    These three are the values measured on the owner's own server: `0.6` and
+    `0.55` come back with a tail, `0.25` does not, and the difference is that a
+    power-of-two fraction is exact in single precision.
+    """
+    assert across_the_wire(0.6) != 0.6
+    assert across_the_wire(0.55) != 0.55
+    assert across_the_wire(0.25) == 0.25
+
+
+def test_corona_opacity_reads_six_tenths(client: MtaSandbox) -> None:
+    open_panel(client)
+
+    announce_server_values(client, coronaOpacity=0.6)
+
+    assert control(client, "coronaOpacity")["value"] == 0.6
+
+
+def test_the_shipped_opacity_is_still_six_tenths(client: MtaSandbox) -> None:
+    """The owner offered `0.5` as a fallback if the tail could not be removed.
+    It can, so the default stays where it was.
+    """
+    assert call(
+        client, "function() return ANKIGTA.Settings.default('coronaOpacity') end"
+    ) == 0.6
+
+
+@pytest.mark.parametrize(
+    ("key", "chosen"),
+    [
+        ("coronaOpacity", 0.6),
+        ("coronaOpacity", 0.55),
+        ("coronaOpacity", 0.1),
+        ("activationDelaySeconds", 1.35),
+        ("maxActivationSpeedKmh", 12.34),
+        # Whole and half units, which are exact on the wire -- named here so the
+        # rule is shown to hold for the settings it was never about too.
+        ("activationRadius", 7.5),
+        ("activationRadius", 3),
+    ],
+)
+def test_a_numeric_setting_is_shown_at_the_precision_its_rule_declares(
+    client: MtaSandbox, key: str, chosen: float
+) -> None:
+    open_panel(client)
+
+    announce_server_values(client, **{key: chosen})
+
+    assert control(client, key)["value"] == chosen
+
+
+def a_value_its_rule_accepts(rule: Any) -> float:
+    """A number the rule allows, chosen to be as awkward as the rule permits.
+
+    Where the rule declares decimals, a fraction that is not a power of two --
+    which is the shape that comes back from the wire with a tail. Where it
+    declares only a step, one step above the minimum: those are the whole and
+    half units, and they are exact in single precision, which is why they need
+    no declared precision in the first place.
+    """
+    minimum = float(rule["minimum"])
+    maximum = float(rule["maximum"])
+    decimals = rule["decimals"]
+    step = rule["step"]
+    if decimals:
+        return min(round(minimum + 0.63, int(decimals)), maximum)
+    if step:
+        return min(minimum + float(step), maximum)
+    return minimum
+
+
+def test_every_numeric_setting_the_server_owns_survives_the_wire(
+    client: MtaSandbox,
+) -> None:
+    """Derived from the schema rather than listed, so a numeric setting added
+    later is covered by existing.
+
+    The value is one the setting's own rule accepts -- checked against the rule
+    before it is sent, so the sweep cannot pass by choosing a number nobody
+    could have typed.
+    """
+    open_panel(client)
+    numeric = call(
+        client,
+        """
+        function()
+            local keys = {}
+            for key, definition in pairs(ANKIGTA.Settings.schema) do
+                if definition.rule.kind == "number"
+                    and definition.authority == ANKIGTA.Settings.SERVER
+                then
+                    table.insert(keys, key)
+                end
+            end
+            return keys
+        end
+        """,
+    )
+    keys = sorted(str(numeric[index]) for index in numeric.keys())
+    assert keys, "the schema has no server-owned numeric settings to check"
+
+    for key in keys:
+        rule = call(
+            client,
+            "function(k) return ANKIGTA.Settings.definition(k).rule end",
+            key,
+        )
+        chosen = a_value_its_rule_accepts(rule)
+        assert call(
+            client,
+            "function(k, v) return ANKIGTA.Settings.validate(k, v) end",
+            key,
+            chosen,
+        ) is True, f"{key}: {chosen} is not a value the rule accepts"
+
+        announce_server_values(client, **{key: chosen})
+
+        assert control(client, key)["value"] == chosen, key
+
+
+def test_a_value_that_crossed_the_wire_does_not_read_as_somebody_editing_it(
+    client: MtaSandbox,
+) -> None:
+    """The player types a number; the server stores it and answers with what it
+    stored; that answer comes back mangled.
+
+    The field is written only when the value Lua reports actually changes, so a
+    reply that no longer compares equal is a redraw that takes the number out
+    from under whoever just typed it -- and reads as somebody else editing it.
+    """
+    open_panel(client)
+    apply_number(client, "coronaOpacity", "0.6")
+    chosen = control(client, "coronaOpacity")["value"]
+
+    announce_server_values(client, coronaOpacity=0.6)
+
+    assert control(client, "coronaOpacity")["value"] == chosen
+
+
+def test_an_entity_following_a_global_reads_it_at_that_precision(
+    client: MtaSandbox,
+) -> None:
+    """The entity pane shows the value in force, which for a row that has said
+    nothing of its own is the global -- across the same wire.
+    """
+    open_panel(client)
+    announce_server_values(client, coronaOpacity=0.6, activationRadius=3)
+    push_one_entity(client)
+
+    row = pushed_state(client)["entities"][0]
+    assert row["coronaOpacity"] == 0.6
+    assert row["coronaOpacityInherited"] is True
+
+
+def test_an_entity_with_an_opacity_of_its_own_reads_it_at_that_precision(
+    client: MtaSandbox,
+) -> None:
+    """An override crossed the same wire the global did, inside the snapshot."""
+    open_panel(client)
+    push_one_entity(client, coronaOpacity=across_the_wire(0.55))
+
+    row = pushed_state(client)["entities"][0]
+    assert row["coronaOpacity"] == 0.55
+    assert row["coronaOpacityInherited"] is False
 
 
 # --- persistence -------------------------------------------------------------

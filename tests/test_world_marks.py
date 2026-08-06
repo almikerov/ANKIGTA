@@ -210,6 +210,19 @@ def select(sandbox: MtaSandbox, entity_id: str, map_id: str = MAP_ID) -> None:
     )(json.dumps({"mapId": map_id, "entityId": entity_id}))
 
 
+def panel_action(
+    sandbox: MtaSandbox, action: str, payload: dict[str, Any]
+) -> None:
+    """A named action from the page, the way `app.js` sends one."""
+    sandbox.eval(
+        """
+        function(action, payload)
+            triggerEvent("ankigta:panelAction", resourceRoot, action, payload)
+        end
+        """
+    )(action, json.dumps(payload))
+
+
 def refresh(sandbox: MtaSandbox) -> Any:
     return sandbox.eval("function() return ANKIGTA.WorldMarks.refresh() end")()
 
@@ -535,6 +548,39 @@ def test_draw_radius_draws_the_selected_rows_zone(client: MtaSandbox) -> None:
     assert ring_radii(client, x=100.0) == {7.5}
 
 
+def test_the_pane_s_toggle_draws_the_selected_rows_zone_and_stores_nothing(
+    client: MtaSandbox,
+) -> None:
+    """`Draw radius` moved from Settings to the entity pane beside `Show
+    corona`, and moving it did not change what it is.
+
+    The whole path, from the action the page sends to the lines on screen: it
+    is still the client's own -- stored where this player's settings are stored,
+    with nothing sent to the server about the entity -- and it still draws the
+    zone of the row that is selected, not of the row it was turned on beside.
+    """
+    authorize(client)
+    open_panel(client)
+    standing(client)
+    standing(client, entity_id="gate-18", x=100.0)
+    push_snapshot(client, [entry(), entry(entity_id="gate-18", radius=7.5)])
+    select(client, "gate-18")
+
+    panel_action(client, "setSetting", {"key": "drawRadius", "value": True})
+    refresh(client)
+    client.trigger("onClientRender")
+
+    assert ring_radii(client, x=100.0) == {7.5}
+    assert client.eval(
+        "function() return ANKIGTA.ClientSettings.get('drawRadius') end"
+    )() is True
+    assert [
+        event.name
+        for event in client.recorder.server_events
+        if event.name in ("ankigta:updateEntityMetadata", "ankigta:updateSetting")
+    ] == []
+
+
 def test_nothing_is_drawn_for_an_unselected_row(client: MtaSandbox) -> None:
     """A way of looking is about the row being looked at, not about every row
     in the list."""
@@ -835,9 +881,12 @@ def test_draw_always_is_gone_from_the_string_table() -> None:
     assert "f7.drawAlways" not in table
     assert "f7.showRadius" not in table
     assert [key for key, words in table.items() if "Draw always" in words] == []
-    # And the two that replaced it are there to be shown.
+    # And the two that replaced it are there to be shown, side by side on the
+    # entity pane -- which is why the second is an `f7.` key rather than the
+    # `settings.` one it was while it lived in Settings.
     assert "Show corona" in table["f7.showCorona"]
-    assert "settings.drawRadius" in table
+    assert "f7.drawRadius" in table
+    assert "settings.drawRadius" not in table
 
 
 # --- what the entity remembers about its own corona --------------------------

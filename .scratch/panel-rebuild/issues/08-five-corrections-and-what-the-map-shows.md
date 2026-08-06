@@ -95,21 +95,87 @@ the player has to notice and undo before doing the thing they opened it for.
 
 **Blocked by:** None — 03, 04 and 05 are all on the trunk.
 
-**Status:** ready-for-agent
+**Status:** done. Automated proof: `tests/test_map_blips.py` for the map,
+`tests/test_settings_ui.py` for the precision, `tests/test_panel.py` for the
+section and the order, `tests/test_panel_page.py` for the pane, and
+`tests/test_settings_and_locale.py` for the schema rules behind all four. What
+needs a person to look at a frame, a radar or a map is
+`docs/checklists/panel-rebuild-08-five-corrections-and-the-map.md`, which is
+`not run`.
 
-- [ ] `Draw radius` is in the entity pane beside `Show corona`
-- [ ] It is still the client's own, and still about the selected row
-- [ ] It is gone from Settings, and from `Settings.order`
-- [ ] A toggle shows every known Map Entity on the map
-- [ ] Connected, disconnected and next card are three different colours
-- [ ] An entity that is both the next card and connected reads as next card
-- [ ] The toggle is independent of `indicatorMode`, and neither breaks the other
-- [ ] What happens past a large number of entities is stated and tested
-- [ ] `UI Scale` is the first row in Settings
-- [ ] Corona opacity reads `0.6`, not `0.60000002`
-- [ ] Every numeric setting is shown at the precision its own rule declares
-- [ ] A setting whose value crossed the wire still compares equal to the one
+- [x] `Draw radius` is in the entity pane beside `Show corona`
+- [x] It is still the client's own, and still about the selected row
+- [x] It is gone from Settings, and from `Settings.order`
+- [x] A toggle shows every known Map Entity on the map
+- [x] Connected, disconnected and next card are three different colours
+- [x] An entity that is both the next card and connected reads as next card
+- [x] The toggle is independent of `indicatorMode`, and neither breaks the other
+- [x] What happens past a large number of entities is stated and tested
+- [x] `UI Scale` is the first row in Settings
+- [x] Corona opacity reads `0.6`, not `0.60000002`
+- [x] Every numeric setting is shown at the precision its own rule declares
+- [x] A setting whose value crossed the wire still compares equal to the one
       the player chose, so a redraw does not read as an edit
-- [ ] The default is still `0.6`
-- [ ] Closing F7 with Settings open and reopening lands on the list
-- [ ] The settings themselves are unchanged by that — only the screen resets
+- [x] The default is still `0.6`
+- [x] Closing F7 with Settings open and reopening lands on the list
+- [x] The settings themselves are unchanged by that — only the screen resets
+
+## What the three states look like, and why the next card is a sprite
+
+Three states, three colours, one blip per entity — and the next card's is the
+sprite-41 blip the Next Card Indicator has always made, now carrying the
+next-card colour with it.
+
+GTA draws the sprite in place of the colour where a blip has one
+(`CMarkerSA::SetColor`: "Sets the color of the marker when MARKER_SPRITE_NONE is
+used"), so on screen the next card is told apart by its sprite and the other two
+by their colour. The colour is set anyway so that what a state looks like is one
+table with three entries rather than a rule split across two modules, and the
+sprite is the stronger mark — which is right for the one entity the player is
+being sent to.
+
+`indicatorMode` decides whether that mark exists at all; the toggle decides
+whether anything else is on the map. Where both are on, the map puts nothing on
+top of the indicator's mark.
+
+## Past a sensible number: 64, nearest first
+
+GTA San Andreas has 175 radar trace slots in total — `MAX_MARKERS` in
+`game_sa/CRadarSA.h`, an array `CRadarSA` fills once and hands out of — shared
+with the game's own icons and every other resource. `CRadarSA::GetFreeMarker`
+answers NULL once they are gone and nothing reports it:
+`CClientRadarMarker::CreateMarker` leaves the blip with no trace behind it, so
+the element exists, `isElement` says yes, and there is nothing on the radar.
+Worse, `CClientRadarMarkerManager::OrderMarkers` destroys and re-creates every
+trace in ordering order whenever the list changes, so which blips lose is decided
+by ordering rather than by anything the player did.
+
+So ANKIGTA draws at most 64, the nearest to the player, and says so.
+`Indicator.mapBlipLimit()` is the number, and `tests/test_map_blips.py` holds it
+to a range as well as taking it from the module.
+
+## The shape the indicator draws
+
+`sphere_and_minimap` named a shape nothing ever drew: the mark is
+`dxDrawMaterialLine3D`, a standing bar as wide as the Activation Zone's radius.
+The value, the plan's fields and the words are `beam` now; **the shape is
+unchanged** — what it should look like is the owner's to judge and nobody has
+asked for another. A value stored under the old name is carried across by
+`Settings.normalize`, so an indicator somebody had turned on does not go quietly
+back to `none`.
+
+## Found beside it, not fixed here
+
+- `Indicator.refresh` writes `setElementInterior` and `setElementDimension` onto
+  the next card's blip on **every frame**. On a blip that is not a value write:
+  `CClientRadarMarker::SetDimension` goes through `RelateDimension`, which asks
+  the manager to re-order — destroying and re-creating every radar trace on the
+  client, the game's own and every other resource's included — whether or not the
+  dimension is different. So with the Next Card Indicator on, the whole radar is
+  re-cut sixty times a second. Predates this ticket; the map blips added here
+  guard against exactly this and the indicator's own blip does not. One `if`
+  and one remembered value, in `client/indicator.lua`.
+- `docs/design/confirmed-baseline.md` still calls the indicator's mark a sphere.
+  It is a record of what was confirmed in the interview rather than living
+  documentation, so it is left as it stands; `CONTEXT.md` is the glossary and is
+  updated here.

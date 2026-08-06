@@ -106,36 +106,37 @@ def test_the_default_mode_shows_nothing(indicator: MtaSandbox) -> None:
     result = plan(indicator, [candidate(x=5.0)])
 
     assert result["blip"] is False
-    assert result["sphere"] is False
+    assert result["beam"] is False
 
 
-def test_there_are_exactly_three_modes_and_no_sphere_only(
+def test_there_are_exactly_three_modes_and_no_beam_only(
     indicator: MtaSandbox,
 ) -> None:
     modes = indicator.eval("ANKIGTA.Indicator.availableModes()")
     values = {modes[key] for key in modes.keys()}
 
-    assert values == {"sphere_and_minimap", "minimap_only", "none"}
-    # A sphere with no minimap marker only helps someone already looking at it.
-    assert set_mode(indicator, "sphere_only")[0] is False
+    assert values == {"beam_and_minimap", "minimap_only", "none"}
+    # A mark in the world with no minimap blip only helps someone already
+    # looking at it.
+    assert set_mode(indicator, "beam_only")[0] is False
 
 
-def test_minimap_only_shows_a_blip_without_a_sphere(indicator: MtaSandbox) -> None:
+def test_minimap_only_shows_a_blip_without_a_beam(indicator: MtaSandbox) -> None:
     set_mode(indicator, "minimap_only")
 
     result = plan(indicator, [candidate(x=5.0)])
 
     assert result["blip"] is True
-    assert result["sphere"] is False
+    assert result["beam"] is False
 
 
-def test_sphere_and_minimap_shows_both(indicator: MtaSandbox) -> None:
-    set_mode(indicator, "sphere_and_minimap")
+def test_beam_and_minimap_shows_both(indicator: MtaSandbox) -> None:
+    set_mode(indicator, "beam_and_minimap")
 
     result = plan(indicator, [candidate(x=5.0)])
 
     assert result["blip"] is True
-    assert result["sphere"] is True
+    assert result["beam"] is True
 
 
 def test_an_invalid_mode_is_rejected(indicator: MtaSandbox) -> None:
@@ -196,12 +197,12 @@ def test_an_unreachable_entity_is_not_marked(
     indicator: MtaSandbox,
     kwargs: dict[str, Any],
 ) -> None:
-    set_mode(indicator, "sphere_and_minimap")
+    set_mode(indicator, "beam_and_minimap")
 
     result = plan(indicator, [candidate(x=1.0, **kwargs)])
 
     assert result["blip"] is False
-    assert result["sphere"] is False
+    assert result["beam"] is False
 
 
 def test_the_indicator_obeys_the_current_world_context(
@@ -222,15 +223,20 @@ def test_the_indicator_obeys_the_current_world_context(
 def test_nothing_is_marked_when_the_next_card_is_not_in_this_world(
     indicator: MtaSandbox,
 ) -> None:
-    set_mode(indicator, "sphere_and_minimap")
+    set_mode(indicator, "beam_and_minimap")
 
     result = plan(indicator, [])
 
     assert result["blip"] is False
-    assert result["sphere"] is False
+    assert result["beam"] is False
 
 
-# --- the sphere is not an Activation Zone ------------------------------------
+# --- the beam is not an Activation Zone --------------------------------------
+#
+# It was called a sphere in every name here and never was one: what the
+# indicator draws is `dxDrawMaterialLine3D`, a standing bar as wide as the
+# zone's radius. The sphere is the *zone*, drawn by `client/world_marks.lua`
+# for the row being worked on. Only the naming changed; the shape did not.
 
 
 def test_the_indicator_leaves_the_activation_zone_untouched() -> None:
@@ -264,7 +270,7 @@ def test_the_indicator_leaves_the_activation_zone_untouched() -> None:
         pending_before = sandbox.eval("ANKIGTA.Activation.pending()")
         assert pending_before is not False
 
-        set_mode(sandbox, "sphere_and_minimap")
+        set_mode(sandbox, "beam_and_minimap")
         plan(sandbox, [candidate(x=1.0, has_corona=True, radius=7.5)])
         sandbox.eval("function() return ANKIGTA.Indicator.refresh() end")()
 
@@ -278,36 +284,36 @@ def test_the_indicator_leaves_the_activation_zone_untouched() -> None:
 def test_an_overlapping_zone_is_emphasized_rather_than_doubled(
     indicator: MtaSandbox,
 ) -> None:
-    set_mode(indicator, "sphere_and_minimap")
+    set_mode(indicator, "beam_and_minimap")
 
     result = plan(indicator, [candidate(x=1.0, has_corona=True, radius=7.5)])
 
-    assert result["sphere"] is True
+    assert result["beam"] is True
     assert result["emphasized"] is True
-    # One sphere, at the zone's own size, not a second one on top.
-    assert result["sphereRadius"] == 7.5
+    # One beam, as wide as the zone really is, not a second mark on top.
+    assert result["beamWidth"] == 7.5
 
 
-def test_without_an_overlapping_zone_the_sphere_is_plain(
+def test_without_an_overlapping_zone_the_beam_is_plain(
     indicator: MtaSandbox,
 ) -> None:
-    set_mode(indicator, "sphere_and_minimap")
+    set_mode(indicator, "beam_and_minimap")
 
     result = plan(indicator, [candidate(x=1.0, has_corona=False)])
 
-    assert result["sphere"] is True
+    assert result["beam"] is True
     assert result["emphasized"] is False
 
 
-def test_minimap_only_never_emphasizes_a_sphere_it_is_not_drawing(
+def test_minimap_only_never_emphasizes_a_beam_it_is_not_drawing(
     indicator: MtaSandbox,
 ) -> None:
     set_mode(indicator, "minimap_only")
 
     result = plan(indicator, [candidate(x=1.0, has_corona=True)])
 
-    assert result["sphere"] is False
-    assert result["sphereRadius"] is None
+    assert result["beam"] is False
+    assert result["beamWidth"] is None
 
 
 # --- rendering and wiring ----------------------------------------------------

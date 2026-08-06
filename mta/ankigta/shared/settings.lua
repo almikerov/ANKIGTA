@@ -229,12 +229,30 @@ Settings.schema = {
     -- window shut. `Show corona` is the other half of the pair and is a
     -- property of the thing, everyone sees it, and it is there whether or not
     -- anybody has a window open -- so it is server-owned and overridable above.
-    drawRadius = {authority = CLIENT, default = false, rule = toggle()},
+    --
+    -- `shownWith` because the two were pulled apart correctly and then left on
+    -- different screens: both answer "what do I see around this row", both are
+    -- reached while a row is selected, and walking to Settings for one and back
+    -- to the list for the other is two journeys for one decision. It stays the
+    -- client's and stays two-valued -- an entity has nothing to say about a way
+    -- of looking, so there is no global here for one to follow.
+    drawRadius = {
+        authority = CLIENT,
+        default = false,
+        rule = toggle(),
+        shownWith = "entity",
+    },
     indicatorMode = {
         authority = CLIENT,
         default = "none",
-        rule = choice({"sphere_and_minimap", "minimap_only", "none"}),
+        rule = choice({"beam_and_minimap", "minimap_only", "none"}),
     },
+    -- Which of ANKIGTA's own objects are on the map, and which of them are
+    -- ready to be studied. Deliberately not a fourth value of `indicatorMode`:
+    -- that setting answers "how is the *next card* marked" and has three values
+    -- about one entity, and this answers "is the rest of the world marked at
+    -- all". The player's own machine, like every other way of looking.
+    showEntitiesOnMap = {authority = CLIENT, default = false, rule = toggle()},
     -- Selecting a row and looking at it are the same intention almost every
     -- time, so a click does both. "Almost every time" is not "every time" --
     -- arrowing down fifty rows with the camera flying to each is not a way to
@@ -270,10 +288,15 @@ Settings.schema = {
 }
 
 -- The schema is a hash, so it has no order of its own. The settings panel needs
--- one to lay its rows out in. The companion port is what a player needs first,
--- because nothing else works until Anki is reachable; the world, study and
--- presentation settings follow it.
+-- one to lay its rows out in.
+--
+-- UI Scale first. It is the setting a player reaches for before any other --
+-- nothing else on this panel can be read comfortably until the interface is a
+-- readable size -- and on a list this long it was second from last, at the
+-- bottom of a scroll. The companion port follows it, because nothing works at
+-- all until Anki is reachable; then the world, study and presentation settings.
 Settings.order = {
+    "uiScale",
     "connectionPort",
     "activationRadius",
     -- Which way in, and the key that takes it, next to the zone they are about.
@@ -282,31 +305,48 @@ Settings.order = {
     "activationDelaySeconds",
     "maxActivationSpeedKmh",
     "reviewMode",
-    -- The four that decide what ANKIGTA draws into the world, together: the
-    -- way of looking first, then whether the entity wears a mark at all and
-    -- what that mark looks like.
-    "drawRadius",
+    -- Whether the entity wears a mark at all and what that mark looks like.
+    -- `drawRadius` was at the head of this group and is not a member of it: it
+    -- is a way of looking rather than a property of anything, and it is on the
+    -- entity pane beside `Show corona` now.
     "showCorona",
     "coronaColor",
     "coronaOpacity",
+    -- What ANKIGTA puts on the map: how the next card is marked, and whether
+    -- everything else is marked at all.
     "indicatorMode",
+    "showEntitiesOnMap",
     "focusOnSelect",
     "reviewProtection",
     "disablePlayerControls",
     "closeAfterRating",
     "cardAudioEnabled",
     "muteGameWorld",
-    "uiScale",
     "uiPlacement",
     "connectionToken",
 }
 
---- Every setting, in the order the panel should show them.
+--- Which surface offers this setting.
+--
+-- `"settings"` unless the schema says otherwise, so a setting belongs to the
+-- Settings list by existing. A setting that names another surface is offered
+-- there instead of being listed twice -- `drawRadius` is on the entity pane,
+-- beside the `Show corona` it is half a decision with.
+function Settings.shownWith(key)
+    local definition = Settings.schema[key]
+    return definition and definition.shownWith or "settings"
+end
+
+--- Every setting the Settings list shows, in the order it should show them.
 --
 -- A key missing from `Settings.order` is still returned, sorted, after the ones
 -- that are listed. Forgetting to add a new setting here is a layout mistake;
 -- letting that mistake hide the setting from the only screen that can change it
 -- would make it an unreachable setting instead.
+--
+-- A setting `shownWith` somewhere else is not that mistake: it is reachable,
+-- named, and on a screen this list is not. So it is left out here rather than
+-- appended to the end of a list it does not belong to.
 function Settings.orderedKeys()
     local keys = {}
     local listed = {}
@@ -319,7 +359,7 @@ function Settings.orderedKeys()
 
     local missing = {}
     for key in pairs(Settings.schema) do
-        if not listed[key] then
+        if not listed[key] and Settings.shownWith(key) == "settings" then
             table.insert(missing, key)
         end
     end
@@ -485,6 +525,63 @@ local function roundTo(value, decimals)
     return math.floor(value * factor + 0.5) / factor
 end
 
+--- A number as its own rule says it should read.
+--
+-- Every server-to-client hop packs a non-integer Lua number into a 32-bit
+-- float, so a stored `0.6` arrives as `0.60000001999999997` and a field showing
+-- it says `0.60000002`. Measured on the owner's running server rather than
+-- guessed: `triggerClientEvent` and `setElementData` both do it, and `0.25`
+-- comes through untouched only because a power-of-two fraction is exact in
+-- single precision -- which is the whole of why retreating to a default of
+-- `0.5` would have appeared to work while `0.55` and `0.1` kept the tail.
+--
+-- So a value is put back to the precision the setting's own rule declares,
+-- once, at the boundary where a number becomes something a person reads --
+-- rather than at each of the places that show one, or for the one setting the
+-- tail was noticed on.
+--
+-- A rule with no `decimals` declares no precision, and none of them needs one:
+-- those settings step in whole or half units, and both are exact on the wire.
+function Settings.rounded(key, value)
+    local definition = Settings.schema[key]
+    local rule = definition and definition.rule
+    if not rule or rule.kind ~= "number" or not rule.decimals then
+        return value
+    end
+    local number = tonumber(value)
+    if number == nil then
+        return value
+    end
+    return roundTo(number, rule.decimals)
+end
+
+--- Values a setting used to be told in, and what they are called now.
+--
+-- A stored setting is the player's answer, and renaming the word for it in this
+-- file must not read as them never having answered: an unrecognized value is
+-- discarded on load, so `indicatorMode` would have gone quietly back to `none`
+-- for anybody who had chosen the mark.
+--
+-- `sphere_and_minimap` named a shape nothing ever drew. What stands over the
+-- next card is a beam -- `dxDrawMaterialLine3D`, a standing bar as wide as the
+-- Activation Zone's radius -- and the sphere is the *zone*, drawn by
+-- `client/world_marks.lua` for the row being worked on.
+--
+-- Read by `validate`, which asks whether this is an answer the setting can
+-- have, and applied by `normalize`, which says how that answer is stored. The
+-- same two steps a colour goes through: `#FFAA00` is valid and stores lowercase.
+local RENAMED_VALUES = {
+    indicatorMode = {sphere_and_minimap = "beam_and_minimap"},
+}
+
+local function renamedValue(key, value)
+    local renames = RENAMED_VALUES[key]
+    if not renames or type(value) ~= "string" then
+        return nil
+    end
+    return renames[value]
+end
+
 --- Validate a proposed value.
 --
 -- Returns `true`, or `false` plus a localization key. Out-of-range input is
@@ -509,6 +606,11 @@ function Settings.validate(key, value)
             if value == allowed then
                 return true
             end
+        end
+        -- The same answer under the name it used to be stored as. Valid,
+        -- because it is one of the choices; `normalize` is what respells it.
+        if renamedValue(key, value) then
+            return true
         end
         return false, "settings.error.not_a_choice"
     end
@@ -602,6 +704,11 @@ function Settings.normalize(key, value)
     local definition = Settings.schema[key]
     if definition and definition.rule.kind == "number" then
         return tonumber(value)
+    end
+    if definition and definition.rule.kind == "choice" then
+        -- One spelling for one answer, so a value stored under an older name is
+        -- put back into the one the rule offers today.
+        return renamedValue(key, value) or value
     end
     if definition and definition.rule.kind == "color" then
         -- One spelling for one colour: `#FFAA00` and `#ffaa00` compared as

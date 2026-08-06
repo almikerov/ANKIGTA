@@ -493,7 +493,10 @@ label {
 .setting .field-error[hidden] { display: none; }
 
 .setting input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.setting .toggle[aria-pressed="true"] {
+/* Wherever a two-state toggle stands. `Draw radius` is one and is on the entity
+   pane rather than in Settings, and a control that looked different there would
+   be a second control to learn for one answer. */
+.toggle[aria-pressed="true"] {
   border-color: var(--accent);
   color: var(--accent);
 }

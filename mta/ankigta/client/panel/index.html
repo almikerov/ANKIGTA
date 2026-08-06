@@ -111,10 +111,25 @@
               <span class="inherited-mark" id="entity-activation-key-inherited"
                     data-i18n="f7.inherited" hidden></span>
             </label>
+            <!-- A way of looking, and the only control on this pane that is
+                 not the entity's own: it draws the *selected* row's Activation
+                 Zone, on this player's screen, for as long as F7 is open. It
+                 sits here because it and `Show corona` answer one question
+                 between them — "what do I see around this row" — and having
+                 them on two screens made one decision two journeys.
+                 Two states, never three: an entity has nothing to say about a
+                 way of looking, so there is no global here to follow. It stays
+                 usable with nothing selected for the same reason — it is the
+                 player's, not the row's. -->
+            <label class="inline">
+              <span data-i18n="f7.drawRadius"></span>
+              <button type="button" id="entity-draw-radius" class="toggle"
+                      aria-pressed="false"
+                      data-i18n-title="f7.drawRadiusHint"></button>
+            </label>
             <!-- A property of the entity, not a way of looking: the corona
-                 stands where the thing stands and everyone sees it. Drawing
-                 the selected row's radius is the other half of what
-                 `Draw always` used to confuse, and it is in Settings.
+                 stands where the thing stands and everyone sees it. The line
+                 above is the other half of what `Draw always` used to confuse.
                  Three-way rather than a checkbox: off on this one entity and
                  following a global that is off look the same today and stop
                  looking the same the moment the global is turned on. -->
