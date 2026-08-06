@@ -804,6 +804,9 @@ CLIENT_VALUES = {
     "cardAudioEnabled": False,
     "muteGameWorld": True,
     "uiScale": 1.25,
+    # How visible the panel rests while the mouse is elsewhere -- a property of
+    # how this machine draws, like the scale beside it.
+    "panelIdleOpacity": 0.35,
     # Normalized coordinates, which is what the schema accepts: a fraction of
     # the screen describes the same corner at every resolution.
     "uiPlacement": {"f7": {"x": 0.25, "y": 0.4}},

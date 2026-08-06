@@ -66,6 +66,17 @@ end
 
 Layout.scaleValue = schemaDefault(SCALE_KEY, 1)
 
+--- Does this surface's placement last only as long as the surface does?
+--
+-- Asked by name in the four places that care, rather than each of them
+-- reaching into `Layout.surfaces` for the flag: the four are one decision (see
+-- `Layout.define`), and four spellings of the same lookup is how three of them
+-- come to answer it and the fourth to forget.
+local function transient(key)
+    local surface = Layout.surfaces[key]
+    return surface ~= nil and surface.transient == true
+end
+
 local function clamp(value, low, high)
     if high < low then
         return low
@@ -91,6 +102,15 @@ end
 -- that are a share of it rather than a fixed panel. `follows` names a parent
 -- surface a modal is centred on. `editModeOnly` marks a surface that only
 -- moves while Edit HUD layout is on.
+--
+-- `transient` marks a surface whose placement lasts only as long as the
+-- surface itself: it is never written to the settings file, a stored one from
+-- an older build is ignored on read, and the surface may be dragged past every
+-- screen edge. The two halves are one decision, not two. The clamp exists
+-- because a window dragged off the edge is a window the player cannot get
+-- back; a surface that forgets where it was and opens at its default position
+-- has nowhere it cannot come back from, so it has no need of the clamp -- and
+-- a surface that *keeps* its placement must keep the clamp with it.
 function Layout.define(key, spec)
     if type(key) ~= "string" or type(spec) ~= "table" then
         return false, "invalid_surface"
@@ -157,7 +177,8 @@ function Layout.handleHeight(key)
     return math.floor((surface.titleHeight or TITLE_HEIGHT) * scale)
 end
 
---- Where this surface goes, in screen pixels, already clamped on screen.
+--- Where this surface goes, in screen pixels -- clamped on screen, unless the
+--- surface is transient and may hang off it.
 function Layout.rect(key)
     local surface = Layout.surfaces[key]
     if not surface then
@@ -186,9 +207,14 @@ function Layout.rect(key)
     end
     -- The whole surface is kept on screen. Since the size is already capped to
     -- the screen, that is always possible, and it is what keeps the title
-    -- reachable after a resolution, aspect or scale change.
-    x = clamp(x, 0, screenWidth - width)
-    y = clamp(y, 0, screenHeight - height)
+    -- reachable after a resolution, aspect or scale change. A transient
+    -- surface goes exactly where the player put it, off screen included:
+    -- closing and reopening is what brings it back, so there is nowhere it can
+    -- be lost.
+    if not transient(key) then
+        x = clamp(x, 0, screenWidth - width)
+        y = clamp(y, 0, screenHeight - height)
+    end
     return math.floor(x + 0.5), math.floor(y + 0.5), width, height, scale
 end
 
@@ -209,8 +235,11 @@ function Layout.moveTo(key, x, y)
         return false, "no_screen"
     end
     local width, height = Layout.size(key)
-    x = clamp(tonumber(x) or 0, 0, screenWidth - width)
-    y = clamp(tonumber(y) or 0, 0, screenHeight - height)
+    x, y = tonumber(x) or 0, tonumber(y) or 0
+    if not transient(key) then
+        x = clamp(x, 0, screenWidth - width)
+        y = clamp(y, 0, screenHeight - height)
+    end
     Layout.placements[key] = {x = x / screenWidth, y = y / screenHeight}
     -- Everything, including the surface that just moved: the clamp may have
     -- corrected where a drag was heading, and the modal warnings that follow
@@ -220,10 +249,17 @@ function Layout.moveTo(key, x, y)
 end
 
 --- Every placement, as the settings file stores it.
+--
+-- A transient surface is left out, and not only because nothing would read it
+-- back: its fractions may sit outside 0..1, which the schema rightly refuses
+-- as no place on any screen -- one in the snapshot would poison the whole
+-- write and take the other surfaces' placements down with it.
 function Layout.snapshot()
     local snapshot = {}
     for key, spot in pairs(Layout.placements) do
-        snapshot[key] = {x = spot.x, y = spot.y}
+        if not transient(key) then
+            snapshot[key] = {x = spot.x, y = spot.y}
+        end
     end
     return snapshot
 end
@@ -271,12 +307,26 @@ local function schedulePersist()
 end
 
 --- Put a surface somewhere and write it down.
+--
+-- For a transient surface "write it down" is for this session only, so the
+-- caller does not have to know which kind it is dragging.
 function Layout.remember(key, x, y)
     local moved, reason = Layout.moveTo(key, x, y)
     if not moved then
         return false, reason
     end
-    schedulePersist()
+    if not transient(key) then
+        schedulePersist()
+    end
+    return true
+end
+
+--- Drop a surface's placement, so it next opens where it always opens.
+--
+-- The file is not touched: the one caller is the panel, whose placement is
+-- transient and was never in it.
+function Layout.forget(key)
+    Layout.placements[key] = nil
     return true
 end
 
@@ -396,8 +446,12 @@ function Layout.applySettings(scale, placement)
         local accepted = {}
         for key, spot in pairs(placement) do
             -- A placement for a surface this version no longer has is dropped
-            -- rather than carried around forever.
-            if Layout.surfaces[key] and type(spot) == "table" then
+            -- rather than carried around forever -- and so is one stored for a
+            -- surface that is transient now, by a build from before it was.
+            if Layout.surfaces[key]
+                and not transient(key)
+                and type(spot) == "table"
+            then
                 local x, y = tonumber(spot.x), tonumber(spot.y)
                 if x and y then
                     accepted[key] = {x = clamp(x, 0, 1), y = clamp(y, 0, 1)}
@@ -413,22 +467,12 @@ function Layout.applySettings(scale, placement)
     return true
 end
 
---- Put every surface back where it shipped.
---
--- Both halves of the layout, because both can be the reason a player wants it
--- back: a window dragged somewhere awkward, and a scale that made everything
--- too small to read. Twenty clicks on `-` is not a way out.
-function Layout.reset()
-    Layout.placements = {}
-    Layout.hudEdit = false
-    Layout.dragState = false
-    local scale = schemaDefault(SCALE_KEY, 1)
-    if ANKIGTA.ClientSettings and ANKIGTA.ClientSettings.set then
-        ANKIGTA.ClientSettings.set(PLACEMENT_KEY, {})
-        return ANKIGTA.ClientSettings.set(SCALE_KEY, scale)
-    end
-    return Layout.applySettings(scale, {})
-end
+-- There is no `Layout.reset` any more. It existed because a window could be
+-- put somewhere unreachable, and none can be now: the panel forgets its
+-- placement with the window and opens at its default position every time, the
+-- HUD and Review Mode keep their clamps and cannot leave the screen, and UI
+-- Scale is bounded to 0.5..2 by its own rule and editable from a panel that is
+-- always where it should be.
 
 -- Edit HUD layout ------------------------------------------------------------
 
@@ -652,9 +696,18 @@ Layout.define("settings", {width = 760, height = 560})
 -- Review Mode is a share of the screen rather than a panel: the card is the
 -- content, and a fixed pixel size would waste a 4K screen and overflow a 720p
 -- one.
+--
+-- Not transient, though it is opened and closed the way the panel is. It
+-- reopens on every card of a study session, and forgetting its placement each
+-- time would undo the player's adjustment fifty times an hour; its clamp is
+-- what guarantees it can never be lost, so it needs no other rescue.
 Layout.define("review", {relativeWidth = 0.7, relativeHeight = 0.7})
 -- The HUD sits top-right by default, out of the way of the radar and the
 -- weapon icon, and the whole of it drags -- but only in Edit HUD layout.
+--
+-- Not transient either, and for a stronger reason than Review Mode's: it has
+-- no "open" moment to reset on, and it is placed deliberately, in Edit HUD
+-- layout. So it keeps its clamp and its saved placement.
 Layout.define("hud", {
     width = 520,
     height = 34,

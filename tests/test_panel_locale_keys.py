@@ -194,7 +194,6 @@ NOT_YET_RENDERED = frozenset({
     "study.title",
     "ui.editHudExplanation",
     "ui.larger",
-    "ui.resetExplanation",
     "ui.smaller",
 })
 

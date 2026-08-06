@@ -214,6 +214,22 @@ for (const step of script) {
   if (step.docclick) {
     for (const handler of documentListeners["click"] || []) handler({});
   }
+  /* Focus travelling into and out of fields, as the document sees it:
+     `relatedTarget` on focusout is where the focus went, or null when it left
+     for something that takes no keys. */
+  if (step.focusin) {
+    for (const handler of documentListeners["focusin"] || []) {
+      handler({ target: { tagName: step.focusin.tag } });
+    }
+  }
+  if (step.focusout) {
+    for (const handler of documentListeners["focusout"] || []) {
+      handler({
+        target: { tagName: step.focusout.tag },
+        relatedTarget: step.focusout.to ? { tagName: step.focusout.to } : null,
+      });
+    }
+  }
   /* `code` as well as `key`: a binding is a physical key, and the page reads
      `event.code` for exactly that reason. A step may send either or both --
      `code` alone is what a captured key really arrives as. */
@@ -2808,6 +2824,54 @@ def test_a_list_with_no_room_below_it_opens_upwards() -> None:
     assert panel["style"]["top"] == ""
     assert panel["style"]["bottom"] == "62px"
     assert panel["style"]["maxHeight"] == "632px"
+
+
+# --- ticket 11: a window that gets out of the way ------------------------------
+
+
+def test_the_reset_layout_button_is_gone() -> None:
+    """`Reset UI layout` existed because a window could be put somewhere
+    unreachable, and none can be now: F7 opens the panel at its default
+    position every time, and the HUD keeps its clamp. Its neighbours stay."""
+    answer = run_page([])
+
+    ids = {candidate["id"] for candidate in walk(answer["tree"])}
+    assert "reset-layout" not in ids
+    assert "edit-hud" in ids
+    assert "close-settings" in ids
+
+
+def test_a_field_taking_focus_reports_typing_and_letting_go_ends_it() -> None:
+    """The panel must not fade mid-sentence, and only the page knows where the
+    keyboard focus is -- so it says, both ways."""
+    answer = run_page(
+        [
+            {"focusin": {"tag": "INPUT"}},
+            {"focusout": {"tag": "INPUT"}},
+        ]
+    )
+
+    assert actions(answer, "typing") == [{"active": True}, {"active": False}]
+
+
+def test_focus_hopping_from_one_field_to_another_is_still_typing() -> None:
+    """Tab between fields fires focusout before focusin; a false between the
+    two would let the panel start fading in the middle of a form."""
+    answer = run_page(
+        [
+            {"focusin": {"tag": "INPUT"}},
+            {"focusout": {"tag": "INPUT", "to": "TEXTAREA"}},
+            {"focusin": {"tag": "TEXTAREA"}},
+        ]
+    )
+
+    assert actions(answer, "typing") == [{"active": True}, {"active": True}]
+
+
+def test_focus_landing_on_a_button_is_not_typing() -> None:
+    answer = run_page([{"focusin": {"tag": "BUTTON"}}])
+
+    assert actions(answer, "typing") == []
 
 
 if __name__ == "__main__":

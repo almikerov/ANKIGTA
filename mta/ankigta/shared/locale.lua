@@ -67,6 +67,11 @@ Locale.strings = {
     ["settings.cardAudioEnabled"] = "Card audio",
     ["settings.muteGameWorld"] = "Mute world while reviewing",
     ["settings.uiScale"] = "UI scale",
+    ["settings.panelIdleOpacity"] = "Panel idle opacity (0.2–1)",
+    ["settings.panelIdleOpacity.note"] =
+        "How visible the panel is while the mouse is elsewhere. Under the"
+        .. " cursor, or while a field is being typed into, it is fully"
+        .. " visible.",
     ["settings.uiPlacement"] = "Window placement",
     ["settings.connectionPort"] = "Companion port",
     ["settings.connectionToken"] = "Companion token",
@@ -130,10 +135,6 @@ Locale.strings = {
     ["settings.applyToAll.confirm"] = "Clear overrides",
     ["ui.smaller"] = "Smaller (−0.05)",
     ["ui.larger"] = "Larger (+0.05)",
-    ["ui.reset"] = "Reset UI layout",
-    ["ui.resetExplanation"] =
-        "Puts UI scale and every window back where they shipped.",
-    ["ui.resetDone"] = "UI layout reset.",
     ["ui.editHud"] = "Edit HUD layout",
     ["ui.editHudExplanation"] =
         "While this is on, drag the HUD counters with the mouse.",
