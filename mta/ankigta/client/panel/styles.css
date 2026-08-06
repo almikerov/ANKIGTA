@@ -233,13 +233,25 @@ label {
    until it was a column, which is the wrong shape twice over: the list is what
    the panel is for, and a setting is usually changed while looking at what it
    affects. Neither column is fitted inside the old width — `panel.lua` widens
-   the window for whichever are out. */
+   the window for whichever are out.
+
+   Its share is the arithmetic that makes that true rather than only intended.
+   The window grows by `SETTINGS_WIDTH_SHARE`, 0.34 of its own width, so
+   Settings has to take exactly that much of the grown window and leave the
+   columns beside it the width they had:
+
+     two lists    1.34W over (s + 2)fr, one list still 0.5W  ->  s = 0.68
+     three, edit  1.68W over (s + 3)fr, one fr still 0.4467W ->  s = 0.76
+
+   A round 0.9fr looks the same on screen and is not: it would take 0.42W and
+   pay for the difference out of the two lists, which is the mistake the whole
+   arrangement exists to avoid. */
 .workspace.with-settings {
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 0.68fr) minmax(0, 1fr) minmax(0, 1fr);
 }
 .workspace.with-settings.editing {
   grid-template-columns:
-    minmax(0, 0.9fr) minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 1.2fr);
+    minmax(0, 0.76fr) minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 1.2fr);
 }
 .column {
   min-width: 0;

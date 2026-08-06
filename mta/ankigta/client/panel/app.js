@@ -364,7 +364,13 @@
     PageUp: "pgup", PageDown: "pgdn",
     ArrowLeft: "arrow_l", ArrowUp: "arrow_u",
     ArrowRight: "arrow_r", ArrowDown: "arrow_d",
-    NumpadEnter: "num_enter", Escape: "escape"
+    NumpadEnter: "num_enter",
+    /* `escape` never arrives here today -- a control waiting for a key treats
+     * it as the way out and returns before asking for a name. It is written
+     * down anyway, because this table is the answer to "what does the browser
+     * call this key" and a half-answer would come back as `not_a_key`, which is
+     * the wrong reason for a key ANKIGTA plainly knows. */
+    Escape: "escape"
   };
 
   /** What MTA calls the key that was pressed, or "" for one it cannot name. */
@@ -908,14 +914,6 @@
    * half of `Apply to all` -- that puts every Map Entity back on one setting,
    * this puts one Map Entity back on one setting -- and both say it with the
    * one word the store keeps for "nothing of its own". */
-  var restoreControls = [];
-  (function () {
-    var nodes = document.querySelectorAll("[data-restore-global]");
-    for (var i = 0; i < nodes.length; i += 1) {
-      restoreControls.push(bindRestoreGlobal(nodes[i]));
-    }
-  })();
-
   function bindRestoreGlobal(node) {
     var field = node.getAttribute("data-restore-global");
     node.addEventListener("click", function () {
@@ -925,6 +923,14 @@
     });
     return {node: node, field: field};
   }
+
+  var restoreControls = [];
+  (function () {
+    var nodes = document.querySelectorAll("[data-restore-global]");
+    for (var i = 0; i < nodes.length; i += 1) {
+      restoreControls.push(bindRestoreGlobal(nodes[i]));
+    }
+  })();
 
   /* `Draw radius` is on this pane and is not the entity's: it is this player's
    * own way of looking, and it draws the selected row's Activation Zone while
@@ -1611,6 +1617,11 @@
     renderConnection(state.connection || {state: "disconnected"});
     selected = state.selected || {mapId: false, entityId: false, cardId: false};
     settingsOpen = state.settingsOpen === true;
+    /* Said here as well as from the editor's own toggle, so that whether the
+     * Settings column is drawn does not depend on a render belonging to the
+     * card editor's button. Idempotent, and both are needed: the toggle draws
+     * the shape before Lua has answered. */
+    renderWorkspaceShape();
     focusOnSelect = state.focusOnSelect !== false;
     renderDrawRadius(state.drawRadius);
     renderStudy(state.study || {active: false, resumable: false});

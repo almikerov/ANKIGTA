@@ -470,8 +470,10 @@ BOOLEAN_ROW = {"kind": "boolean", "key": "muteGameWorld", "value": False}
 #: The `Activation key` row. It carries no list to choose from -- the key is
 #: pressed -- but the two lists a press is judged against: every key MTA can
 #: name, and the part of that ANKIGTA is not already answering to. Both are the
-#: schema's, and `test_the_key_lists_the_page_judges_by_are_the_schemas` holds
-#: these shapes against the real ones.
+#: schema's, and the two tests that read them out of the loaded schema --
+#: `test_every_key_the_schema_offers_can_actually_be_pressed` and
+#: `test_the_keys_ankigta_reserves_are_refused_by_the_same_press` -- are what
+#: holds these short stand-ins honest.
 KEY_ROW = {
     "kind": "key",
     "key": "activationKey",
@@ -849,17 +851,25 @@ def test_apply_to_all_is_on_the_row_of_the_field_it_applies() -> None:
     was twice as tall as it needed to be -- which is half of why Settings could
     not sit beside the list it is about.
 
-    Asked of the tree rather than of the stylesheet: the control is a child of
-    the row and stands between the control it is about and the reason under it,
-    which is what "on the row" means in a grid whose cells flow in order."""
-    answer = run_page([{"receive": state(settings=settings(SWEEPABLE_ROW))}])
+    Asked of the tree rather than of the stylesheet, so what it can see is
+    order: the cells of a row flow in the order they are appended, and this one
+    now comes straight after the field rather than after the sentence that
+    belongs under it. Whether the grid then has a third column for it to land in
+    is a fact only a rendered page has, and stays on the ticket's manual list.
+    """
+    # A row with both, because the two used to be the other way round -- the
+    # sentence, then the sweep -- and a row without a sentence cannot tell.
+    row = dict(SWEEPABLE_ROW, noteKey="settings.activationRadius.note")
+    answer = run_page([{"receive": state(settings=settings(row))}])
 
-    row = one(node(answer, "settings-rows"), cls="setting")
-    order = [child["cls"] for child in row["children"]]
+    drawn = one(node(answer, "settings-rows"), cls="setting")
+    order = [child["cls"] for child in drawn["children"]]
     assert "setting-apply-all" in order
-    # Label, then the field, then this, then the reason: one row, in reading
-    # order, with nothing of this setting's below it.
+    assert "setting-note" in order
+    # Label, the field, this. Then what is genuinely below the row: the sentence
+    # under the control and the reason a value was refused.
     assert order.index("setting-apply-all") == order.index("setting-label") + 2
+    assert order.index("setting-apply-all") < order.index("setting-note")
     assert order.index("setting-apply-all") < order.index("field-error")
 
 
@@ -1185,6 +1195,9 @@ def test_clearing_the_field_asks_to_follow_the_global_again() -> None:
 #: the value each is given so that it does. The pane is written out field by
 #: field in `index.html`, so this is written out too: a list derived from the
 #: page would agree with the page by construction and prove nothing.
+#:
+#: What holds it to the schema is
+#: `test_a_field_the_schema_lets_an_entity_override_has_the_button`.
 OVERRIDABLE_FIELDS = [
     ("radius", 7.5),
     ("activationType", "key"),
@@ -1196,6 +1209,42 @@ OVERRIDABLE_FIELDS = [
     ("textLabelColor", "#ff8000"),
     ("textLabelSize", 2),
 ]
+
+
+def test_a_field_the_schema_lets_an_entity_override_has_the_button() -> None:
+    """"Everywhere one can be set" is the schema's answer, not the page's.
+
+    The pane is hand-written markup, so the nine buttons are hand-written too --
+    which is fine right up until a tenth setting gains an override. Its sibling
+    `Apply to all` appears by itself, because Lua sends `clearOverrides` off the
+    schema; this one would silently never appear, and a Map Entity told
+    something months ago could only be told otherwise by emptying a box that
+    two of these fields do not have.
+    """
+    sandbox = MtaSandbox()
+    try:
+        sandbox.load("shared/settings.lua")
+        keys = sandbox.eval("ANKIGTA.Settings.entityOverridableKeys()")
+        field_of = sandbox.eval(
+            "function(k) return ANKIGTA.Settings.entityOverrideField(k) end"
+        )
+        overridable = {
+            str(field_of(str(keys[index]))) for index in keys.keys()
+        }
+    finally:
+        sandbox.close()
+
+    answer = run_page([{"receive": selecting(entity())}])
+    drawn = {
+        candidate["attrs"]["data-restore-global"]
+        for candidate in walk(answer["tree"])
+        if "data-restore-global" in candidate["attrs"]
+    }
+
+    assert overridable, "the schema declares no overrides, so this proves nothing"
+    assert drawn == overridable
+    # And the fixture below covers each of them, so a tenth is not merely drawn.
+    assert {field for field, _value in OVERRIDABLE_FIELDS} == overridable
 
 
 @pytest.mark.parametrize("field,value", OVERRIDABLE_FIELDS)

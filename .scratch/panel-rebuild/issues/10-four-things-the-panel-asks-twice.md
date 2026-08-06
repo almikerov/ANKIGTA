@@ -74,7 +74,10 @@ is checked. It does not lay anything out, so these stay for the deploy:
 - Four columns abreast — Settings, the list, the cards, the editor — at the
   widened width, on the owner's resolution.
 - `Restore global` beside nine fields without the pane wrapping badly.
-- `Apply to all` on the row rather than under it, in a column ~0.9fr wide.
+- `Apply to all` landing in the row's third grid column rather than under the
+  field. The harness has no layout engine, so what a test can see is that the
+  control is appended straight after the field rather than after the sentence
+  that belongs below it; the column it lands in is the stylesheet's.
 
 ## Found while doing it, not fixed
 

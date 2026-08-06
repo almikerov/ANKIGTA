@@ -283,7 +283,7 @@ Locale.strings = {
     -- back on one setting, this one puts one Map Entity back on one setting.
     ["f7.restoreGlobal"] = "Restore global",
     ["f7.restoreGlobalHint"] =
-        "Drops this Map Entity's own answer, so it follows Settings again --"
+        "Drops this Map Entity's own answer, so it follows Settings again —"
         .. " now and whenever Settings changes.",
     ["f7.showCorona"] = "Show corona",
     ["f7.coronaColor"] = "Corona colour",
