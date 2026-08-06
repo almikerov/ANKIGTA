@@ -1,7 +1,7 @@
 # Panel rebuild
 
 Fourteen things the owner asked for after running the panel, plus what four
-parallel branches left unfinished, folded into eight tickets.
+parallel branches left unfinished, folded into ten tickets.
 
 They are grouped by the file set they open, not by how they were reported. Two
 tickets that read the same 2000 lines of `app.js` are one ticket; a ticket small
@@ -60,6 +60,11 @@ first wave got its shape.
 | 42 | UI Scale is the first setting | 08 |
 | 43 | Corona opacity reads `0.60000002` | 08 |
 | 44 | Settings should not outlive the window it was opened in | 08 |
+| 45 | `Follow settings` becomes one `Restore global` button | 10 |
+| 46 | `Activation key` is bound by pressing, not chosen from a list | 10 |
+| 47 | `editor_play_test_map` refuses a link during a play-test | 09 |
+| 48 | Settings covers the entity list; move it beside it | 10 |
+| 49 | `Apply to all` belongs on the field's row | 10 |
 
 **07 turned out to be the cheapest of the seven.** The editor's name for an
 entity is already its `entity_id` in ANKIGTA's own store — `ped (1)`,
