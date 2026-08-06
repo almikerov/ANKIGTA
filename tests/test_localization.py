@@ -77,6 +77,11 @@ def panel_state(sandbox: MtaSandbox) -> dict[str, Any]:
 
 def open_panel(sandbox: MtaSandbox) -> None:
     sandbox.load("client/panel.lua")
+    # The panel binds its key when the resource starts, not while its chunk
+    # loads: on an incremental reload a `cache="false"` script can run before
+    # the shared schema it would have to read. MTA always fires this, so a
+    # test that wants a bound key has to as well.
+    sandbox.trigger("onClientResourceStart")
     sandbox.eval(
         'function() triggerEvent("ankigta:setAuthorized", resourceRoot, true) end'
     )()
