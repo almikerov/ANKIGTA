@@ -101,16 +101,6 @@ def pushed_section(sandbox: MtaSandbox) -> str:
     return str(sandbox.pushed_panel_state()["section"])
 
 
-def settings_is_out(sandbox: MtaSandbox) -> bool:
-    """Whether the Settings column is slid out beside the Map Entity list.
-
-    Not a section any more: it sits beside the list rather than over it, so
-    "the player is on Settings" is a column being out rather than a screen
-    being shown.
-    """
-    return sandbox.pushed_panel_state()["settingsOpen"] is True
-
-
 @pytest.fixture
 def client() -> Iterator[MtaSandbox]:
     sandbox = start_client()
@@ -159,9 +149,8 @@ def open_f7(sandbox: MtaSandbox, *, link_state: str = "Active Spatial Link") -> 
     """Open the window these placement tests drag, by the key that opens it.
 
     Through the binding rather than through the Settings door it used to use:
-    Settings is a column of this same window now, and opening it widens the
-    panel by its own share — so a drag measured with it out would be measuring
-    a different window from the one the player drags.
+    that door leaves the workspace for the settings screen, and a drag measured
+    there is a drag of a window showing something else.
 
     The properties under test — dragged once, stored as a fraction, clamped
     back onto a smaller screen — belong to the layout manager, not to F7.
@@ -451,18 +440,23 @@ def test_a_scale_change_reaches_an_open_window_without_reopening_it(
     """"Applies immediately" means the surface on screen, not the next one.
 
     The controls inside are HTML and scale with the page, so what this side
-    still owns — and what this checks — is that the open surface itself grows
-    without being closed and reopened.
+    still owns — and what this checks — is that the open surface itself follows
+    the scale without being closed and reopened.
+
+    Downwards, because upwards is not free room to measure in: the panel is 1580
+    wide for its three columns, and `Layout.size` fits every surface inside the
+    screen — so on 1920 a scale much past 1.2 has nowhere left to grow into and
+    would be measuring that ceiling rather than the scale.
     """
     open_f7(client)
     page_ready(client)
     before = panel_rect(client)
 
-    set_scale(client, 1.5)
+    set_scale(client, 0.75)
 
     after = panel_rect(client)
-    assert after[2] == pytest.approx(before[2] * 1.5, abs=1)
-    assert after[3] == pytest.approx(before[3] * 1.5, abs=1)
+    assert after[2] == pytest.approx(before[2] * 0.75, abs=1)
+    assert after[3] == pytest.approx(before[3] * 0.75, abs=1)
 
 def test_the_scale_is_stored_and_reapplied_after_a_restart(
     client: MtaSandbox,
@@ -575,15 +569,26 @@ def test_a_surface_too_big_for_the_screen_is_capped_and_the_setting_is_not() -> 
 
 # --- moving windows -----------------------------------------------------------
 
+#: Where these tests drag the panel to, and what fraction of a 1920x1080 screen
+#: that is.
+#:
+#: Inside the room the panel leaves. It is 1580 wide -- three columns, since the
+#: selected entity's pane became one of them -- so its left edge can be anywhere
+#: from 0 to 340, and a target past that would be measuring the clamp rather
+#: than the drag. `test_a_placement_off_the_new_screen_is_clamped_back_onto_it`
+#: is where the clamp is measured on purpose.
+DRAG_X, DRAG_Y = 192, 216
+DRAGGED_TO = {"x": 0.1, "y": 0.2}
+
 
 def test_dragging_f7_by_its_title_is_remembered_as_a_fraction_of_the_screen(
     client: MtaSandbox,
 ) -> None:
     open_f7(client)
 
-    drag_panel(client, 480, 216)
+    drag_panel(client, DRAG_X, DRAG_Y)
 
-    assert placement(client)["panel"] == {"x": 0.25, "y": 0.2}
+    assert placement(client)["panel"] == DRAGGED_TO
 
 
 def test_a_window_is_movable_by_its_title_and_never_resizable(
@@ -597,30 +602,30 @@ def test_a_window_is_movable_by_its_title_and_never_resizable(
     while it does.
 
     Opened by its key rather than by the `ankigta-ui` command, which is the
-    Settings door: that door slides the Settings column out, and the panel is
-    wider by that column's share while it is.
+    Settings door: that door leaves the workspace for a screen of its own, and
+    a drag has to be measured on the window the player actually drags.
     """
     open_f7(client)
     page_ready(client)
     _x, _y, width_before, height_before = panel_rect(client)
 
-    drag_panel(client, 480, 216)
+    drag_panel(client, DRAG_X, DRAG_Y)
 
     x, y, width, height = panel_rect(client)
-    assert (x, y) == (480, 216)
+    assert (x, y) == (DRAG_X, DRAG_Y)
     assert (width, height) == (width_before, height_before)
 
 def test_a_placement_survives_a_restart(client: MtaSandbox) -> None:
     open_f7(client)
-    drag_panel(client, 480, 216)
+    drag_panel(client, DRAG_X, DRAG_Y)
     # The write is debounced, so a drag is one write rather than one per frame.
     client.fire_timers()
-    assert stored_settings(client)["uiPlacement"]["panel"] == {"x": 0.25, "y": 0.2}
+    assert stored_settings(client)["uiPlacement"]["panel"] == DRAGGED_TO
 
     restarted = start_client(dict(client.files))
     try:
         open_f7(restarted)
-        assert panel_rect(restarted)[:2] == (480, 216)
+        assert panel_rect(restarted)[:2] == (DRAG_X, DRAG_Y)
     finally:
         restarted.close()
 
@@ -643,7 +648,7 @@ def test_a_placement_made_at_one_resolution_lands_in_the_same_place_at_another(
 ) -> None:
     """Normalized, so the corner means the same thing on every screen."""
     open_f7(client)
-    drag_panel(client, 480, 216)
+    drag_panel(client, DRAG_X, DRAG_Y)
     client.fire_timers()
 
     for width, height in RESOLUTIONS:
@@ -656,8 +661,8 @@ def test_a_placement_made_at_one_resolution_lands_in_the_same_place_at_another(
             # Both are ticket 28's rule; the clamp is the half that matters at
             # 1280x720.
             assert (x, y) == (
-                min(round(0.25 * width), width - panel_width),
-                min(round(0.2 * height), height - panel_height),
+                min(round(DRAGGED_TO["x"] * width), width - panel_width),
+                min(round(DRAGGED_TO["y"] * height), height - panel_height),
             )
             assert x >= 0 and y >= 0
             assert x + panel_width <= width and y + panel_height <= height
@@ -730,10 +735,10 @@ def test_a_placement_the_file_will_not_take_is_reported_rather_than_lost(
     open_f7(client)
     client.file_writes_fail = True
 
-    drag_panel(client, 480, 216)
+    drag_panel(client, DRAG_X, DRAG_Y)
     client.fire_timers()
 
-    assert placement(client)["panel"] == {"x": 0.25, "y": 0.2}
+    assert placement(client)["panel"] == DRAGGED_TO
     assert any(
         "ui_placement_not_stored" in line
         for line in client.recorder.debug_messages()
@@ -1015,7 +1020,7 @@ def test_the_reset_row_is_inside_the_panel_at_every_scale(
 def test_the_panel_is_reachable_from_f7_as_well_as_from_the_command(
     client: MtaSandbox,
 ) -> None:
-    """One panel, so one entry: the UI scale rows live in the settings column
+    """One panel, so one entry: the UI scale rows live in the settings screen
     rather than in a second window offering the same value."""
     open_f7(client)
     page_ready(client)
@@ -1023,17 +1028,14 @@ def test_the_panel_is_reachable_from_f7_as_well_as_from_the_command(
         'function() triggerEvent("ankigta:panelAction", resourceRoot,'
         ' "openSettings", "{}") end'
     )()
-    from_panel = settings_is_out(client)
+    from_panel = pushed_section(client)
 
     client.commands["ankigta-ui"][0]()
     page_ready(client)
-    from_command = settings_is_out(client)
+    from_command = pushed_section(client)
 
-    assert from_panel is True
-    assert from_command is True
-    # And it opens beside the list rather than instead of it: the section under
-    # the column is still the workspace.
-    assert pushed_section(client) == "entities"
+    assert from_panel == "settings"
+    assert from_command == "settings"
 
 
 # --- authority ----------------------------------------------------------------

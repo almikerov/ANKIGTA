@@ -29,22 +29,33 @@ now at the moment it is pressed. `Settings.bindableKeys` stays as what a
 captured key is validated against, so a key MTA cannot name is refused rather
 than stored.
 
-## Settings sits beside the list, not on top of it
+## The settings panel sits beside the list, not on top of it
 
-The Settings screen grew with every ticket in this wave and now covers the Map
+> **Which panel.** Built as the *Settings screen* first, which was wrong: the
+> owner meant the pane that edits the selected Map Entity. The Settings screen
+> is back exactly as it was, and what follows describes the pane.
+
+The entity pane grew with every ticket in this wave and now covers the Map
 Entity list. That is the wrong shape twice over: the list is what the panel is
-for, and a setting is usually changed *while looking at* what it affects.
+for, and these fields are changed *while looking at* the row they belong to.
 
 It goes to the left of the entity list, as its own column — the way the card
-editor already does it. The panel widens for it the same way
-(`EDITOR_WIDTH_SHARE` in `client/panel.lua`), rather than a third column being
-fitted inside the old width and every column left cramped.
+editor already does it, so the window is wider rather than a third column being
+fitted inside the old width and every column left cramped. Unlike the editor's
+it never folds away: a row is selected in order to be edited, so the pane that
+edits it has nothing to wait for.
 
 ## `Apply to all` sits on the field's row
 
 It is under the field it belongs to, so each setting takes two rows and the
-screen above is twice as tall as it needs to be — which is half of why Settings
-now covers the list. On the row, beside the field.
+screen above is twice as tall as it needs to be. On the row, beside the field.
+
+## `Show radius` is a checkbox
+
+Two states, offered as a button reading `On` or `Off` — a control whose state
+has to be read as a word before it can be understood. A tick is the one control
+every player already knows. Nothing else on the pane can be one: every other
+field there has a third answer, "whatever Settings says".
 
 **Blocked by:** None. Runs beside ticket 09, which is server-side; they share
 `shared/locale.lua` and nothing else.
@@ -59,9 +70,12 @@ now covers the list. On the row, beside the field.
 - [x] A key ANKIGTA already answers to is refused, with the reason, on the press
 - [x] A key MTA cannot name is refused rather than stored
 - [x] The globally set key and a per-link key are both set this way
-- [x] Settings is a column beside the entity list, not over it
-- [x] The entity list stays readable while Settings is open
-- [x] The panel widens for it rather than narrowing the other columns
+- [x] The entity pane is a column beside the entity list, not over it
+- [x] The entity list stays readable while the pane is open
+- [x] The panel is wider for it rather than the other columns narrowing
+- [x] The pane never folds away
+- [x] The Settings screen is exactly the screen it was
+- [x] `Show radius` is a checkbox
 - [x] `Apply to all` is on the same row as the field it applies
 - [x] `app.js` is exercised by tests for each of the above
 
@@ -71,13 +85,20 @@ The harness runs `app.js` in Node against the real `index.html` parsed into a
 tree, so "this control exists, in this part of the page, and sends this action"
 is checked. It does not lay anything out, so these stay for the deploy:
 
-- Four columns abreast — Settings, the list, the cards, the editor — at the
-  widened width, on the owner's resolution.
-- `Restore global` beside nine fields without the pane wrapping badly.
+- Three columns abreast — the pane, the list, the cards — and four with the
+  editor out, at 1580 and 2117, on the owner's resolution.
+- `Restore global` beside nine fields down a 400-wide column without the rows
+  wrapping badly.
 - `Apply to all` landing in the row's third grid column rather than under the
   field. The harness has no layout engine, so what a test can see is that the
   control is appended straight after the field rather than after the sentence
   that belongs below it; the column it lands in is the stylesheet's.
+
+The first of these was asked for on the running server and could not be
+answered: `mcp__mta-agent-devtools__status` reports `clientReachable: false`
+with no player connected, and the server is not running this build. Both are
+needed — the branch deployed and the owner in game — and neither is this
+chat's to arrange. **Still unchecked live.**
 
 ## Found while doing it, not fixed
 
@@ -96,8 +117,23 @@ is checked. It does not lay anything out, so these stay for the deploy:
   (`f7.radiusClearHint` and its two neighbours) already promise it. It is one
   idea with two spellings, which is the shape this ticket was about.
 - `test_ui_layout.py`'s placement tests opened the panel through the Settings
-  door, so they now measure a window 34% wider than the one a player drags.
+  door, so they were measuring whichever window that door happened to show.
   Changed here to open it by its key, because the change is this ticket's.
 - The per-map leftovers this ticket was told to clean out of `app.js` —
   `heading`, `note`, `settingClass`'s `per-map`, `mapId` on the wire — were
   already gone. Ticket 03 removed them and left the tests that hold them gone.
+- **UI Scale has almost no headroom left for the panel.** It is 1580 wide, and
+  `Layout.size` fits every surface inside the screen — so on 1920 a scale past
+  about 1.2 does nothing to it. It still scales the HUD and Review Mode. The
+  alternative was squeezing the three columns instead of widening the window,
+  which is the thing this ticket forbids, so the trade is deliberate; whether
+  1.2 is enough headroom is the owner's call and would be its own ticket.
+- **A drag was remembered at one position and drawn at another** whenever the
+  panel was wider than its declared width. `Layout.moveTo` clamps and stores
+  against the width the layout was told; the browser is drawn at whatever
+  `panelRect` works out. With the editor open — the only case before this — the
+  two differed by half the extra width, so grabbing the bar made the panel jump.
+  Fixed here rather than filed, because making the pane's column permanent would
+  have made it the normal case: the pane's room is in the panel's *declared*
+  width, and only the editor's share is added on top. Ticket 11 rewrites both
+  halves of this and should know the trap is there.

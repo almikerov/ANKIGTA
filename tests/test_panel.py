@@ -869,13 +869,14 @@ def row_for(sandbox: MtaSandbox, key: str) -> dict[str, Any]:
     raise AssertionError(f"{key} is not offered: {[r['key'] for r in settings_rows(sandbox)]}")
 
 
-def test_settings_are_a_column_of_the_panel_not_a_window(
+def test_settings_are_a_section_of_the_panel_not_a_window(
     client: MtaSandbox,
 ) -> None:
     """The last window folds in; eight became one, and now one becomes none.
 
-    A column rather than a section: it covered the Map Entity list while it was
-    one, and a setting is usually changed while looking at what it affects.
+    A section, as it always was: there is nothing behind the window to look at
+    while the panel's own settings are changed. The pane that had to stop
+    covering the Map Entity list is the one that edits the selected row.
     """
     authorize(client)
     announce(client, state="connected")
@@ -884,36 +885,37 @@ def test_settings_are_a_column_of_the_panel_not_a_window(
 
     open_settings(client)
 
-    assert last_state(client)["settingsOpen"] is True
-    assert last_state(client)["section"] == "entities"
+    assert last_state(client)["section"] == "settings"
     titles = client.widget_texts("window")
     assert not [title for title in titles if "Settings" in title], titles
 
 
-def test_the_panel_widens_for_settings_rather_than_narrowing_the_columns(
+def test_the_panel_is_wide_enough_for_the_pane_without_the_lists_paying(
     client: MtaSandbox,
 ) -> None:
-    """The card editor's arrangement, for the same reason: fitting another
-    column inside a window sized for two leaves all of them cramped, and the
-    lists did not ask to be narrower because somebody opened Settings.
+    """The entity pane is a column that never folds away, so the room for it is
+    part of how big this window is rather than something the window grows for.
 
-    Both together take both shares. A window that grew once for whichever came
-    first would leave the second one squeezing the lists after all.
+    Which matters beyond tidiness: the layout manager clamps a drag and stores
+    the placement against the width it was told, and the browser is drawn at the
+    width `panelRect` works out. A permanent difference between the two is a
+    panel that jumps the moment it is grabbed.
     """
     open_workspace(client)
-    shut = client.browsers[0]["width"]
 
-    open_settings(client)
-    with_settings = client.browsers[0]["width"]
-    assert with_settings > shut
+    declared = client.eval(
+        'function() return ({ANKIGTA.Layout.size("panel")})[1] end'
+    )()
+    assert client.browsers[0]["width"] == declared
+    # Wide enough for three columns rather than the two it was built for: the
+    # Map Entity list and the Card Picker keep the width they had.
+    assert declared >= 1500
 
+    # And the editor is still the only thing that changes it.
     act(client, "editorVisible", {"open": True})
-    assert client.browsers[0]["width"] > with_settings
-
+    assert client.browsers[0]["width"] > declared
     act(client, "editorVisible", {"open": False})
-    act(client, "closeSettings")
-
-    assert client.browsers[0]["width"] == shut
+    assert client.browsers[0]["width"] == declared
 
 
 def test_every_setting_the_schema_owns_is_offered(client: MtaSandbox) -> None:
@@ -1113,7 +1115,6 @@ def test_leaving_settings_returns_to_where_the_player_was(
 
     act(client, "closeSettings")
 
-    assert last_state(client)["settingsOpen"] is False
     assert last_state(client)["section"] == "entities"
 
 
@@ -1134,13 +1135,12 @@ def test_closing_f7_on_settings_and_reopening_lands_on_the_list(
     press_f7(client)
     page_ready(client)
     open_settings(client)
-    assert last_state(client)["settingsOpen"] is True
+    assert last_state(client)["section"] == "settings"
 
     press_f7(client)
     press_f7(client)
     page_ready(client)
 
-    assert last_state(client)["settingsOpen"] is False
     assert last_state(client)["section"] == "entities"
 
 

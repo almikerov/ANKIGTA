@@ -54,47 +54,26 @@
   <section class="section entities" id="section-entities" hidden>
     <div class="workspace" id="workspace">
 
-      <!-- Beside the list rather than over it. A setting is usually changed
-           while looking at what it affects, and the list is what the panel is
-           for; a screen that covers it makes every change a round trip. It is
-           a column of the workspace like the card editor, and the panel widens
-           for it the same way rather than the other columns being squeezed. -->
-      <div class="column settings-column" id="settings-column" hidden>
+      <!-- The selected Map Entity's own fields, in a column of their own, to
+           the left of the list they are about.
+           It was a block under the list, and it grew with every ticket in this
+           wave until it pushed the list up off its own column. Beside the list
+           instead: the list is what the panel is for, and these are changed
+           while looking at the row they belong to.
+           Always here, never slid out. The card editor's column comes and goes
+           because a card is edited now and then; a row is *selected* to be
+           edited, so the pane that edits it has nothing to wait for. The panel
+           is wide enough for it (`ENTITY_WIDTH_SHARE` in `client/panel.lua`)
+           rather than the list and the cards being squeezed to make room. -->
+      <div class="column entity-column" id="entity-column">
         <div class="column-head">
-          <h2 data-i18n="settings.title"></h2>
-          <button type="button" id="close-settings" class="quiet"
-                  data-i18n="common.close"></button>
-        </div>
-        <div class="settings-rows" id="settings-rows"></div>
-        <div class="column-actions">
-          <button type="button" id="edit-hud" data-i18n="ui.editHud"
-                  aria-pressed="false"></button>
-          <button type="button" id="reset-layout" data-i18n="ui.reset"></button>
-        </div>
-      </div>
-
-      <div class="column">
-        <div class="column-head">
-          <h2><span data-i18n="f7.title"></span></h2>
-          <span class="count" id="entity-count"></span>
-        </div>
-        <form class="search" id="filter-form">
-          <input type="text" id="filter" data-i18n-placeholder="f7.filter" />
-          <button type="submit" data-i18n="f7.filterApply"></button>
-        </form>
-        <div class="rows" id="rows" role="list"></div>
-        <div class="column-actions">
-          <button type="button" id="pick-entity" data-i18n="f7.pickEntity"></button>
-          <button type="button" id="teleport" data-i18n="f7.teleport"></button>
-          <button type="button" id="recheck" data-i18n="f7.recheck"></button>
-          <button type="button" id="unlink" data-i18n="f7.unlink"></button>
-          <button type="button" id="relink" data-i18n="f7.relink"></button>
+          <h2 data-i18n="f7.entityPane"></h2>
         </div>
         <!-- On screen whether or not a row is selected. It used to appear with
-             the selection and vanish with it, so the right-hand side of the
-             panel jumped every time the player moved down the list. What it
-             says with nothing selected is `#entity-empty`; the fields below
-             are disabled rather than removed, so their place is kept. -->
+             the selection and vanish with it, so this part of the panel jumped
+             every time the player moved down the list. What it says with
+             nothing selected is `#entity-empty`; the fields below are disabled
+             rather than removed, so their place is kept. -->
         <div class="entity-settings" id="entity-settings">
           <p class="empty" id="entity-empty" data-i18n="f7.noSelection"></p>
           <div class="entity-fields" id="entity-fields">
@@ -162,12 +141,16 @@
                  Two states, never three: an entity has nothing to say about a
                  way of looking, so there is no global here to follow. It stays
                  usable with nothing selected for the same reason — it is the
-                 player's, not the row's. -->
-            <label class="inline">
+                 player's, not the row's.
+                 A checkbox, because two states is what a checkbox is. It was a
+                 button reading `On` or `Off`, which is a control whose state
+                 has to be read as a word before it can be understood — and a
+                 tick is the one control every player already knows. Every other
+                 control on this pane has three answers and cannot be one. -->
+            <label class="inline check">
+              <input type="checkbox" id="entity-draw-radius"
+                     data-i18n-title="f7.drawRadiusHint" />
               <span data-i18n="f7.drawRadius"></span>
-              <button type="button" id="entity-draw-radius" class="toggle"
-                      aria-pressed="false"
-                      data-i18n-title="f7.drawRadiusHint"></button>
             </label>
             <!-- A property of the entity, not a way of looking: the corona
                  stands where the thing stands and everyone sees it. The line
@@ -262,9 +245,31 @@
             <p class="entity-label-state" id="entity-text-label-state"></p>
           </div>
         </div>
+      </div>
+
+      <div class="column">
+        <div class="column-head">
+          <h2><span data-i18n="f7.title"></span></h2>
+          <span class="count" id="entity-count"></span>
+        </div>
+        <form class="search" id="filter-form">
+          <input type="text" id="filter" data-i18n-placeholder="f7.filter" />
+          <button type="submit" data-i18n="f7.filterApply"></button>
+        </form>
+        <div class="rows" id="rows" role="list"></div>
+        <div class="column-actions">
+          <button type="button" id="pick-entity" data-i18n="f7.pickEntity"></button>
+          <button type="button" id="teleport" data-i18n="f7.teleport"></button>
+          <button type="button" id="recheck" data-i18n="f7.recheck"></button>
+          <button type="button" id="unlink" data-i18n="f7.unlink"></button>
+          <button type="button" id="relink" data-i18n="f7.relink"></button>
+        </div>
 
         <!-- Deleted from the map, so it is not a Map Entity any more. The
-             link was made deliberately, so removing it is asked, not assumed. -->
+             link was made deliberately, so removing it is asked, not assumed.
+             Here rather than on the pane beside it: it is a question about a
+             row that is no longer in this list, and the pane edits the row that
+             is selected in it. -->
         <div class="column-actions" id="deleted-decision" hidden>
           <span class="hint" id="deleted-question"></span>
           <button type="button" id="deleted-forget" class="primary"
@@ -340,6 +345,21 @@
       </div>
 
     </div>
+  </section>
+
+  <!-- A screen of its own, as it was. The screen ticket 10 was asked to move
+       beside the list is the *entity* pane above -- the fields that edit the
+       selected Map Entity -- and not this one, which is the panel's own
+       settings and has nothing to be looked at while it is changed. -->
+  <section class="section settings" id="section-settings" hidden>
+    <div class="settings-head">
+      <h2 data-i18n="settings.title"></h2>
+      <button type="button" id="edit-hud" data-i18n="ui.editHud"
+              aria-pressed="false"></button>
+      <button type="button" id="reset-layout" data-i18n="ui.reset"></button>
+      <button type="button" id="close-settings" data-i18n="common.close"></button>
+    </div>
+    <div class="settings-rows" id="settings-rows"></div>
   </section>
 
   <!-- Clearing overrides across a world is not undone by pressing the control

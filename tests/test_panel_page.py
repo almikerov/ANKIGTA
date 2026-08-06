@@ -347,10 +347,6 @@ def state(**over: Any) -> dict[str, Any]:
     picker = dict(over.pop("picker", {}))
     base: dict[str, Any] = {
         "section": "entities",
-        # Settings is a column of the workspace rather than a section, so it is
-        # out or not out -- and which is Lua's answer, because the panel's own
-        # width follows it.
-        "settingsOpen": False,
         "locale": {},
         "connection": {"state": "connected"},
         "selected": {"mapId": False, "entityId": False, "cardId": False},
@@ -873,93 +869,110 @@ def test_apply_to_all_is_on_the_row_of_the_field_it_applies() -> None:
     assert order.index("setting-apply-all") < order.index("field-error")
 
 
-# --- Settings sits beside the list, not on top of it -------------------------
+# --- the entity pane sits beside the list, not on top of it ------------------
+#
+# The screen that covered the Map Entity list was the *entity pane* -- the
+# fields that edit the selected row -- not the panel's own Settings screen. It
+# was a block under the list and grew with every ticket in this wave until it
+# took the list's own height. Settings is a screen again, as it was.
 
 
-def test_settings_is_a_column_of_the_workspace_rather_than_a_section() -> None:
-    """It grew with every ticket in this wave and covered the Map Entity list.
-    That is the wrong shape twice over: the list is what the panel is for, and a
-    setting is usually changed while looking at what it affects."""
-    answer = run_page([{"receive": state(settingsOpen=True)}])
-
-    column = node(answer, "settings-column")
-    assert column["hidden"] is False
-    # A column of the workspace, beside the other columns -- and the first of
-    # them, so it is to the left of the list rather than off past the cards.
-    columns = [
+def workspace_columns(answer: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
         child
         for child in node(answer, "workspace")["children"]
         if has_class(child, "column")
     ]
-    assert [child["id"] for child in columns][0] == "settings-column"
-    # And not a section any more: nothing is left for `show()` to hide.
-    with pytest.raises(AssertionError):
-        node(answer, "section-settings")
 
 
-def test_the_entity_list_stays_readable_while_settings_is_open() -> None:
-    """The whole point: the list does not go off screen to change a setting
-    about it."""
-    answer = run_page(
-        [{"receive": state(entities=[entity()], settingsOpen=True)}]
-    )
+def test_the_entity_pane_is_a_column_of_the_workspace() -> None:
+    """Beside the list rather than under it, and first, so it is to the left of
+    the list rather than off past the cards."""
+    answer = run_page([{"receive": state(entities=[entity()])}])
+
+    column = node(answer, "entity-column")
+    assert column["hidden"] is False
+    assert [child["id"] for child in workspace_columns(answer)][0] == "entity-column"
+    # And the fields really moved: the pane is inside that column and nowhere
+    # else, so nothing is left under the list where it used to be.
+    assert node(answer, "entity-settings") in list(walk(column))
+
+
+def test_the_pane_and_the_list_are_different_columns() -> None:
+    """The defect, stated: the pane was inside the list's own column, so the
+    taller it got the less of the list there was."""
+    answer = run_page([{"receive": state(entities=[entity()])}])
+
+    pane_column = node(answer, "entity-column")
+    assert node(answer, "rows") not in list(walk(pane_column))
+    # The list is in the column after it, which is what "to the left of the
+    # list" means.
+    columns = workspace_columns(answer)
+    assert node(answer, "rows") in list(walk(columns[1]))
+
+
+def test_the_entity_list_stays_readable_while_the_pane_is_open() -> None:
+    """The whole point: the list does not lose its own column to the fields
+    that edit a row of it."""
+    answer = run_page([{"receive": state(entities=[entity(), entity(entityId="b")])}])
 
     assert node(answer, "section-entities")["hidden"] is False
     assert node(answer, "rows")["hidden"] is False
-    assert descendants(node(answer, "rows"), cls="row")
+    assert len(descendants(node(answer, "rows"), cls="row")) == 2
 
 
-def test_settings_is_not_drawn_until_it_is_asked_for() -> None:
-    """A column permanently taking a third of the panel is a column taking it
-    from the lists."""
-    answer = run_page([{"receive": state()}])
-
-    assert node(answer, "settings-column")["hidden"] is True
-    assert "with-settings" not in str(node(answer, "workspace")["cls"]).split()
-
-
-def test_the_page_says_which_shape_it_is_in_so_lua_can_widen_the_panel() -> None:
-    """The page cannot resize its own window. It names the columns that are out
-    and `client/panel.lua` gives it the room -- the same arrangement the card
-    editor has, and the reason neither column is squeezed in beside the other.
-    """
-    both = run_page(
-        [
-            {
-                "receive": with_note(
-                    settingsOpen=True,
-                    selected={"mapId": False, "entityId": False, "cardId": "7"},
-                )
-            },
-            {"click": {"id": "toggle-inspector"}},
-        ]
-    )
-
-    shape = str(node(both, "workspace")["cls"]).split()
-    assert "with-settings" in shape
-    assert "editing" in shape
+def test_the_pane_never_folds_away() -> None:
+    """Unlike the card editor's column, which comes and goes: a card is edited
+    now and then, and a row is selected in order to be edited -- so the pane
+    that edits it has nothing to wait for. There is no control that shuts it and
+    no state in which it is not drawn."""
+    for step in (
+        {"receive": state()},
+        {"receive": state(entities=[entity()])},
+        {"receive": selecting(entity())},
+        {"receive": with_note()},
+    ):
+        answer = run_page([step])
+        assert node(answer, "entity-column")["hidden"] is False, step
 
 
-def test_opening_and_closing_settings_is_lua_s_answer_not_the_page_s() -> None:
-    """The panel's own width follows it, and only Lua can change that -- so the
-    page asks and draws what comes back rather than deciding."""
-    asked = run_page(
-        [
-            {"receive": state()},
-            {"click": {"id": "settings"}},
-        ]
-    )
+def test_settings_is_a_screen_of_its_own_again() -> None:
+    """It was moved beside the list by mistake. There is nothing behind the
+    window to look at while the panel's own settings are changed, so a screen is
+    the right shape for them."""
+    answer = run_page([{"receive": state(section="settings")}])
+
+    assert node(answer, "section-settings")["hidden"] is False
+    assert node(answer, "section-entities")["hidden"] is True
+    # Not a column of the workspace: nothing named one is left behind.
+    with pytest.raises(AssertionError):
+        node(answer, "settings-column")
+    assert [child["id"] for child in workspace_columns(answer)] == [
+        "entity-column", "", "", "inspector"
+    ]
+
+
+def test_the_settings_screen_is_asked_for_and_left_by_lua() -> None:
+    asked = run_page([{"receive": state()}, {"click": {"id": "settings"}}])
     assert actions(asked, "openSettings") == [{}]
-    # Not opened by the click itself: Lua has not answered yet.
-    assert node(asked, "settings-column")["hidden"] is True
+    # Not shown by the click itself: Lua has not answered yet.
+    assert node(asked, "section-settings")["hidden"] is True
 
     shut = run_page(
-        [
-            {"receive": state(settingsOpen=True)},
-            {"click": {"id": "close-settings"}},
-        ]
+        [{"receive": state(section="settings")}, {"click": {"id": "close-settings"}}]
     )
     assert actions(shut, "closeSettings") == [{}]
+
+
+def test_the_editor_still_slides_out_beside_the_three() -> None:
+    """The page cannot resize its own window, so it says which shape it is in
+    and `client/panel.lua` gives it the room."""
+    shut = run_page([{"receive": with_note()}])
+    assert str(node(shut, "workspace")["cls"]).split() == ["workspace"]
+
+    out = run_page([{"receive": with_note()}, {"click": {"id": "toggle-inspector"}}])
+    assert "editing" in str(node(out, "workspace")["cls"]).split()
+    assert [step["open"] for step in actions(out, "editorVisible")] == [True]
 
 
 # --- a push does not destroy what the player is doing ------------------------
@@ -1921,13 +1934,41 @@ def test_draw_radius_sits_next_to_show_corona_on_the_entity_pane() -> None:
     assert abs(drawing - corona) == 1
 
 
+def test_draw_radius_is_a_checkbox_rather_than_a_yes_no_button() -> None:
+    """Two states is what a checkbox is. It was a button reading `On` or `Off`,
+    which is a control whose state has to be read as a word before it can be
+    understood -- and a tick is the one control every player already knows.
+
+    Nothing else on this pane can be one: every other field here has a third
+    answer, "whatever Settings says"."""
+    answer = run_page([{"receive": selecting(entity(), drawRadius=True)}])
+
+    box = node(answer, "entity-draw-radius")
+    assert box["tag"] == "INPUT"
+    assert box["attrs"]["type"] == "checkbox"
+    # Not a drawn list either: those carry a third entry this control has no
+    # meaning for.
+    assert descendants(label_of(answer, "entity-draw-radius"), cls="picker-option") == []
+
+
+def test_the_tick_says_which_of_the_two_it_currently_is() -> None:
+    """A control whose label is the action rather than the state leaves the
+    player guessing which way it is set. A checkbox says it by being ticked."""
+    on = run_page([{"receive": selecting(entity(), drawRadius=True)}])
+    assert node(on, "entity-draw-radius")["checked"] is True
+
+    off = run_page([{"receive": selecting(entity(), drawRadius=False)}])
+    assert node(off, "entity-draw-radius")["checked"] is False
+
+
 def test_draw_radius_is_sent_as_a_setting_and_never_as_an_override() -> None:
     """It stays the client's own. An entity has nothing to say about a way of
     looking, so nothing about it is written to the entity."""
     answer = run_page(
         [
             {"receive": selecting(entity(), drawRadius=False)},
-            {"click": {"id": "entity-draw-radius"}},
+            {"check": {"id": "entity-draw-radius", "value": True}},
+            {"change": {"id": "entity-draw-radius"}},
         ]
     )
 
@@ -1935,43 +1976,34 @@ def test_draw_radius_is_sent_as_a_setting_and_never_as_an_override() -> None:
     assert actions(answer, "setEntityMarks") == []
 
 
-def test_draw_radius_has_two_states_and_not_three() -> None:
-    """Every other control on this pane carries a way back to the global it
-    follows. This one has no global above it, so offering `Follow Settings`
-    would be offering a third state that means nothing."""
-    answer = run_page([{"receive": selecting(entity(), drawRadius=True)}])
-
-    toggle = node(answer, "entity-draw-radius")
-    assert toggle["tag"] == "BUTTON"
-    assert descendants(label_of(answer, "entity-draw-radius"), cls="picker-option") == []
+def test_ticking_it_off_again_says_so() -> None:
     off = run_page(
         [
             {"receive": selecting(entity(), drawRadius=True)},
-            {"click": {"id": "entity-draw-radius"}},
+            {"check": {"id": "entity-draw-radius", "value": False}},
+            {"change": {"id": "entity-draw-radius"}},
         ]
     )
+
     assert actions(off, "setSetting") == [{"key": "drawRadius", "value": False}]
 
 
-def test_draw_radius_says_which_of_the_two_it_currently_is() -> None:
-    """A control whose label is the action rather than the state leaves the
-    player guessing which way it is set."""
-    on = run_page(
+def test_the_tick_follows_what_lua_says_rather_than_the_click() -> None:
+    """What is sent is the opposite of what Lua last reported, not the state the
+    browser just put the box in -- so a push that disagrees puts the tick back
+    rather than leaving the page and the resource saying different things."""
+    answer = run_page(
         [
-            {
-                "receive": selecting(
-                    entity(),
-                    drawRadius=True,
-                    locale={"settings.value.true": "On"},
-                )
-            }
+            {"receive": selecting(entity(), drawRadius=False)},
+            # The browser ticks the box itself, before anything is sent.
+            {"check": {"id": "entity-draw-radius", "value": True}},
+            {"change": {"id": "entity-draw-radius"}},
+            # The setting was refused, or somebody else changed it back.
+            {"receive": selecting(entity(), drawRadius=False)},
         ]
     )
-    assert node(on, "entity-draw-radius")["text"] == "On"
-    assert node(on, "entity-draw-radius")["attrs"]["aria-pressed"] == "true"
 
-    off = run_page([{"receive": selecting(entity(), drawRadius=False)}])
-    assert off and node(off, "entity-draw-radius")["attrs"]["aria-pressed"] == "false"
+    assert node(answer, "entity-draw-radius")["checked"] is False
 
 
 def test_draw_radius_stays_usable_with_no_row_selected() -> None:

@@ -214,44 +214,43 @@ label {
 
 /* --- workspace -------------------------------------------------------- */
 
-/* Two columns: what is in the world, and what is in the collection. The pair
-   is the whole job — a Map Entity on the left, a card on the right. */
+/* Three columns: the selected Map Entity, what is in the world, and what is in
+   the collection. The middle pair is the whole job — a Map Entity on the left,
+   a card on the right — and the first is what the middle one is being edited
+   into.
+
+   The entity pane was a block under the list and grew with every ticket in this
+   wave until it pushed the list up off its own column. It is a column now, and
+   the panel is declared 400 wider for it (`client/panel.lua`) rather than the
+   two lists paying for it.
+
+   Its share is the arithmetic that makes that true rather than only intended.
+   The window was 1180 for two columns of 590; it is 1580, so:
+
+     400 : 590 : 590  ->  0.68 : 1 : 1
+
+   A round 0.9fr looks the same on screen and is not: it would take 460 and pay
+   the difference out of the two lists, which is what this arrangement exists to
+   avoid. */
 .workspace {
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 0.68fr) minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--space-3);
   padding: var(--space-3);
 }
-/* The editor takes a column of its own only while it is slid out, so the two
-   lists have the whole panel the rest of the time. */
+/* The editor takes a column of its own only while it is slid out, so the pane
+   and the two lists have the whole panel the rest of the time.
+
+   The window is 1580 × 1.34 = 2117 then, and the same sum keeps the pane at
+   400: the editing trio splits the remaining 1717 as 0.8/1/1.2, so one of its
+   fr is 572, and 400 is 0.70 of that. What the trio does to itself — the list
+   narrower, the editor wider — is the editor's own re-proportioning and has
+   been since it was built. */
 .workspace.editing {
-  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 1.2fr);
-}
-/* Settings does the same on the other side. It covered the Map Entity list
-   until it was a column, which is the wrong shape twice over: the list is what
-   the panel is for, and a setting is usually changed while looking at what it
-   affects. Neither column is fitted inside the old width — `panel.lua` widens
-   the window for whichever are out.
-
-   Its share is the arithmetic that makes that true rather than only intended.
-   The window grows by `SETTINGS_WIDTH_SHARE`, 0.34 of its own width, so
-   Settings has to take exactly that much of the grown window and leave the
-   columns beside it the width they had:
-
-     two lists    1.34W over (s + 2)fr, one list still 0.5W  ->  s = 0.68
-     three, edit  1.68W over (s + 3)fr, one fr still 0.4467W ->  s = 0.76
-
-   A round 0.9fr looks the same on screen and is not: it would take 0.42W and
-   pay for the difference out of the two lists, which is the mistake the whole
-   arrangement exists to avoid. */
-.workspace.with-settings {
-  grid-template-columns: minmax(0, 0.68fr) minmax(0, 1fr) minmax(0, 1fr);
-}
-.workspace.with-settings.editing {
   grid-template-columns:
-    minmax(0, 0.76fr) minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 1.2fr);
+    minmax(0, 0.7fr) minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 1.2fr);
 }
 .column {
   min-width: 0;
@@ -481,16 +480,22 @@ label {
 
 /* --- settings ---------------------------------------------------------- */
 
-/* A column of the workspace, drawn only while it is out. It was a section that
-   replaced the whole workspace, which meant the Map Entity list went off screen
-   to change a setting about it. */
-.settings-column[hidden] { display: none; }
+.settings { display: flex; flex-direction: column; height: 100%; }
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+.settings-head h2 { margin: 0; font-size: 15px; }
 
 .settings-rows {
   flex: 1;
   min-height: 0;
   overflow: auto;
   scrollbar-gutter: stable;
+  margin: 0 var(--space-4) var(--space-4);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: rgba(2, 6, 23, 0.5);
@@ -569,23 +574,48 @@ label {
 /* On screen whether or not a row is selected: it used to appear with the
    selection and vanish with it, so this corner of the panel jumped every time
    the player moved down the list. The fields keep their place and go quiet
-   instead, and the line above them says why they are quiet. */
+   instead, and the line above them says why they are quiet.
+
+   It fills its column and scrolls inside it. As a block under the list it was a
+   wrapping row of fields that grew with every ticket in this wave until it took
+   the list's own height; down a column of its own, one field per line, it takes
+   the height it takes and the list is not asked to pay for it. */
 .entity-settings {
-  border-top: 1px solid var(--line-soft);
-  padding-top: var(--space-2);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .entity-fields {
   display: flex;
-  align-items: flex-end;
-  gap: var(--space-3);
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
 }
 .entity-settings .empty { padding: var(--space-2); text-align: left; }
 .entity-settings .empty[hidden] { display: none; }
-.entity-settings h3 { margin: 0; font-size: 12px; color: var(--muted); flex: 1 1 100%; }
-.entity-settings .inline { flex-direction: row; align-items: center; gap: var(--space-2); }
+.entity-settings h3 { margin: var(--space-2) 0 0; font-size: 12px; color: var(--muted); }
+.entity-settings .inline {
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+/* One width for every field's name, so the controls down the column line up
+   rather than each starting wherever its own label ended. */
+.entity-settings .inline > span:first-child { flex: 0 0 84px; }
 .entity-settings input[type="number"] { width: 90px; }
-.entity-settings .key-capture { width: 140px; }
+.entity-settings .key-capture { width: 120px; }
+/* A tick and its word, in that order and close together: the label belongs to
+   the box rather than standing in the column of field names beside it. */
+.entity-settings .check > span { flex: 0 1 auto; }
+.entity-settings input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  accent-color: var(--accent);
+}
 /* The one way back to the global, beside every field that can hold an override.
    Quieter than the field, because it is about undoing an answer rather than
    giving one — and the same size wherever it stands, so nine of them down the
@@ -597,9 +627,7 @@ label {
   color: var(--muted);
   white-space: nowrap;
 }
-.entity-settings .entity-name-control { flex: 1 1 100%; }
-.entity-settings .entity-name-control input { flex: 1; }
-.entity-settings .check input { width: auto; }
+.entity-settings .entity-name-control input { flex: 1 1 auto; min-width: 0; }
 .entity-settings input:disabled { opacity: 0.45; }
 
 /* A number that came from Settings looks exactly like a number somebody chose,
