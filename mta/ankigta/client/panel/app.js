@@ -940,16 +940,26 @@
    *
    * Not disabled with the rest of the pane when nothing is selected, for the
    * same reason: the answer is the player's and outlives any one row. */
+  /* A checkbox, because it has exactly two states and that is what a checkbox
+   * is. It was a button reading `On` or `Off` -- a control whose state has to
+   * be read as a word before it can be understood, and one the player has to
+   * learn is a control at all. Nothing else on this pane can be one: every
+   * other field here has a third answer, "whatever Settings says".
+   *
+   * `change` rather than `click`: a checkbox is reachable by the space bar as
+   * well as by the mouse, and a `click` handler reading the box's own new state
+   * would be reading a state the page set rather than an answer Lua gave. What
+   * is sent is the opposite of what Lua last reported, so a redraw that
+   * disagrees puts the tick back. */
   var drawRadius = false;
-  var drawRadiusToggle = document.getElementById("entity-draw-radius");
-  drawRadiusToggle.addEventListener("click", function () {
+  var drawRadiusBox = document.getElementById("entity-draw-radius");
+  drawRadiusBox.addEventListener("change", function () {
     send("setSetting", {key: "drawRadius", value: !drawRadius});
   });
 
   function renderDrawRadius(value) {
     drawRadius = value === true;
-    drawRadiusToggle.textContent = t("settings.value." + String(drawRadius));
-    drawRadiusToggle.setAttribute("aria-pressed", String(drawRadius));
+    drawRadiusBox.checked = drawRadius;
   }
 
   /* What each list was last filled with, so an unrelated redraw does not
@@ -1232,32 +1242,17 @@
     document.getElementById("save-note").disabled = !noteIsEdited();
   }
 
-  /* Whether the Settings column is out. Lua's, not the page's: the panel's own
-   * width follows it, and a page that decided this would be deciding how big
-   * its own window is. */
-  var settingsOpen = false;
-
-  /* Which columns the workspace is showing.
-   *
-   * Each of the two that come and go — Settings on the left, the card editor on
-   * the right — exists only while it is open, so the two lists have the whole
-   * panel the rest of the time. Neither takes its room from the others: Lua
-   * widens the window for whichever are out, and this only says which those
-   * are. */
-  function renderWorkspaceShape() {
-    var shape = "workspace";
-    if (settingsOpen) shape += " with-settings";
-    if (inspectorOpen && selected.cardId) shape += " editing";
-    document.getElementById("workspace").className = shape;
-    document.getElementById("settings-column").hidden = !settingsOpen;
-  }
-
   function renderInspectorToggle() {
     var button = document.getElementById("toggle-inspector");
     button.disabled = !selected.cardId;
     button.setAttribute("aria-expanded", String(inspectorOpen));
     button.textContent = t(inspectorOpen ? "inspector.close" : "inspector.open");
-    renderWorkspaceShape();
+    /* The fourth column exists only while it is open, so the pane and the two
+     * lists have the whole panel the rest of the time. The other three are
+     * always there -- the entity pane included, because a row is selected in
+     * order to be edited and the pane that edits it has nothing to wait for. */
+    document.getElementById("workspace").className =
+      inspectorOpen && selected.cardId ? "workspace editing" : "workspace";
   }
 
   function renderInspector(state) {
@@ -1601,13 +1596,10 @@
     return control;
   }
 
-  /* Settings is not one of these any more: it is a column of the workspace,
-   * beside the list rather than over it. What is left is the gate and the work,
-   * and the gate is a consequence rather than a request -- there is no
-   * connection to talk to, so there is nothing else to show. */
   function show(section) {
     document.getElementById("section-connection").hidden = section !== "connection";
     document.getElementById("section-entities").hidden = section !== "entities";
+    document.getElementById("section-settings").hidden = section !== "settings";
   }
 
   /** The one entry point Lua calls. A whole state in, a whole render out. */
@@ -1616,12 +1608,6 @@
     applyLocale();
     renderConnection(state.connection || {state: "disconnected"});
     selected = state.selected || {mapId: false, entityId: false, cardId: false};
-    settingsOpen = state.settingsOpen === true;
-    /* Said here as well as from the editor's own toggle, so that whether the
-     * Settings column is drawn does not depend on a render belonging to the
-     * card editor's button. Idempotent, and both are needed: the toggle draws
-     * the shape before Lua has answered. */
-    renderWorkspaceShape();
     focusOnSelect = state.focusOnSelect !== false;
     renderDrawRadius(state.drawRadius);
     renderStudy(state.study || {active: false, resumable: false});

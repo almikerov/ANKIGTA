@@ -1111,11 +1111,7 @@ def test_the_panel_offers_a_way_into_the_settings_panel() -> None:
         ' "openSettings", "{}") end'
     )()
 
-    # Beside the Map Entity list rather than over it: Settings is a column of
-    # the workspace now, so opening it is a column sliding out and not a screen
-    # being left.
-    assert pushed_state(sandbox)["settingsOpen"] is True
-    assert pushed_state(sandbox)["section"] == "entities"
+    assert pushed_state(sandbox)["section"] == "settings"
     sandbox.close()
 
 
@@ -1168,5 +1164,5 @@ def test_review_mode_offers_a_way_into_the_settings_panel() -> None:
         bounds[2] + bounds[4] / 2,
     )
 
-    assert pushed_state(sandbox)["settingsOpen"] is True
+    assert pushed_state(sandbox)["section"] == "settings"
     sandbox.close()

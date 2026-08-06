@@ -229,6 +229,10 @@ Locale.strings = {
     ["inspector.loading"] = "Reading...",
     ["inspector.unreadable"] = "This card could not be read: %s",
     ["f7.teleport"] = "Teleport",
+    -- The column that edits the selected row, headed for what it edits rather
+    -- than for what it is. It was a block under the Map Entity list and is
+    -- beside it now, so it needs a name of its own for the first time.
+    ["f7.entityPane"] = "Selected Map Entity",
     ["f7.activation"] = "Activation Zone",
     ["f7.name"] = "Name",
     -- The guard, not a case the player meets: a row is headed by the name the
