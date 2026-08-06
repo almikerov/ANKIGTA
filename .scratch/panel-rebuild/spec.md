@@ -1,7 +1,7 @@
 # Panel rebuild
 
 Fourteen things the owner asked for after running the panel, plus what four
-parallel branches left unfinished, folded into eleven tickets.
+parallel branches left unfinished, folded into twelve tickets.
 
 They are grouped by the file set they open, not by how they were reported. Two
 tickets that read the same 2000 lines of `app.js` are one ticket; a ticket small
@@ -67,6 +67,7 @@ first wave got its shape.
 | 49 | `Apply to all` belongs on the field's row | 10 |
 | 50 | The panel fades when the mouse leaves it | 11 |
 | 51 | Drag the panel anywhere; F7 always restores it | 11 |
+| 52 | Editing an object in a saved map is refused | 12 |
 
 **07 turned out to be the cheapest of the seven.** The editor's name for an
 entity is already its `entity_id` in ANKIGTA's own store — `ped (1)`,
