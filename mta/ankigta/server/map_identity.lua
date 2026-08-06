@@ -823,12 +823,11 @@ function MapIdentity.prepareCardLinkForEntity(player, row, cardIdentity)
     -- will save. Written onto the play-test's, it is never saved -- so the
     -- read-back never confirms, the Spatial Link stays Pending Map Save for
     -- ever, and the element it was written on is destroyed with the test.
-    local enduring, enduringError =
-        ANKIGTA.World.enduringElement(entityElement)
+    local enduring, enduringError = ANKIGTA.World.enduring(entityElement)
     if not enduring then
         return false, enduringError
     end
-    entityElement = enduring
+    entityElement = enduring.element
     local identities = currentMapIdentityElements()
     if #identities > 1 then
         return false, "map_identity_not_unique"

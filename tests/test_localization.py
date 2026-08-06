@@ -543,6 +543,9 @@ def test_an_unknown_status_category_is_shown_with_its_raw_code() -> None:
 def test_a_server_notice_arrives_as_a_key_and_is_worded_by_the_client() -> None:
     sandbox = client()
     try:
+        # Where a code goes instead of to the player, so it is loaded here the
+        # way the string table is.
+        sandbox.load("client/diagnostics.lua")
         sandbox.load("client/panel.lua")
 
         sandbox.eval(
@@ -561,9 +564,17 @@ def test_a_server_notice_arrives_as_a_key_and_is_worded_by_the_client() -> None:
         assert sandbox.chat == [
             text(sandbox, "notice.pendingNotConfirmed", "partial_read_back")
         ]
-        # The outcome code travels through untouched: it is a stable technical
-        # value the player may have to quote in a bug report.
-        assert "partial_read_back" in sandbox.chat[0]
+        # The code itself does not reach the player -- ticket 09: a refusal a
+        # person reads is a sentence. It is a stable technical value they may
+        # have to quote, so it goes where every value is one.
+        assert "partial_read_back" not in sandbox.chat[0]
+        assert (
+            sandbox.eval(
+                'function()'
+                ' return ANKIGTA.Diagnostics.snapshot().notice.outcome end'
+            )()
+            == "partial_read_back"
+        )
     finally:
         sandbox.close()
 

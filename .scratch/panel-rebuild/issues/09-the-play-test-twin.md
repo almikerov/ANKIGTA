@@ -52,6 +52,36 @@ which of the two situations it is.
 of a player. Whatever this ticket decides the behaviour is, the refusal a person
 reads should be a sentence.
 
+## What was read to build the fixture, and where
+
+`mta-gta-reference-policy.md` asks for provenance where a source observation
+decides something. Three did, and all three are in the harness rather than in
+the resource.
+
+Stock Map Editor, `[editor]/editor_main.zip` (zip entries dated 2026-06-13
+12:55), read 2026-08-06T12:13Z:
+
+- `server/saveloadtest_server.lua` —
+  `sha256 45d0ac0e67f1063b614d1130c152ae27f27fb335b2acbaa34bf42add60fab375`.
+  Test is `saveResourceCoroutine(TEST_RESOURCE, true, …)`: the ordinary save
+  with `test = true`. And `createElementAttributesForSaving` writes the `id`,
+  the EDF data fields, and **every** element data key `getMapElementData`
+  hands it — which is why a stamp ANKIGTA wrote with plain `setElementData`
+  reaches the play-test copy.
+- `server/dumpxml.lua` —
+  `sha256 d344369b874f636d3822bed03a3692365d9c9ac9c57d626f8055103501c0e6de`.
+  `getMapElementData` drops the keys prefixed `me:` and `edf:`, so `me:ID`
+  does not travel. `dumpMap` skips representations and anything parked in
+  `DESTROYED_ELEMENT_DIMENSION`.
+
+MTA source reference, read 2026-08-06T12:25Z:
+
+- `Shared/mods/deathmatch/logic/luadefs/CLuaElementDefsShared.cpp` —
+  `sha256 67c52e06d27778fd8d323cc22732076f770fb8e8ce35781c84f43f1c48fde544`.
+  `GetElementData` falls through to `lua_pushboolean(luaVM, false)`, so a key
+  that is not set answers **`false`**, never nil. It also reads the parent
+  chain by default (`inherit = true`), which the harness still does not model.
+
 ## Found on the way, not fixed here
 
 - **Adoption still writes a resource name where a map identity belongs.** 02's

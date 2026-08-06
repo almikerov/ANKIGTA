@@ -100,6 +100,11 @@ end
 -- ANKIGTA stamp, the editor's `me:ID` where it had to invent one, and the `id`
 -- the `.map` file gave the element. A server restart takes the stamp with it
 -- while the `.map` keeps the id, and a play-test copy carries the id alone.
+--
+-- `elementCarriesIdentity` asks the same three questions and deliberately does
+-- not come through here: it is asked once per element per stored row inside
+-- F7's two-second budget, and it answers by comparing rather than by building
+-- a table it then throws away.
 local function durableNames(element)
     local candidates = {
         getElementData(element, "ankigtaEntityId"),
@@ -210,9 +215,14 @@ end
 
 --- The map the editor has open, seen from wherever the player is standing.
 --
--- `candidateOwner` is which copy of it they are looking at, and it is the only
--- part that changes: inside a play-test the elements in front of them belong
--- to `editor_test`, and the map they belong *to* is the same one either way.
+-- The map is the same one either way; which copy of it they are looking at is
+-- not. `candidateOwner` is that copy, and `workingDimension` is the editor's
+-- deleted dimension minus one -- which is meaningful only while the player is
+-- in the editor's own world. Inside a play-test it is `false`, because every
+-- element the walk will meet there belongs to `editor_test` and stands in
+-- dimension 0: the editor's Delete parks its own elements and never touches
+-- the test's, and the test is written out without the parked ones
+-- (`dumpMap` skips `DESTROYED_ELEMENT_DIMENSION`).
 local function editorContext(editor, candidateOwner, workingDimension)
     return {
         resourceName = editor.mapName,
@@ -523,7 +533,8 @@ function World.runtimeInstance(mapId, entityId, player)
     )
 end
 
---- The same entity, seen from outside the editor's play-test.
+--- The copy of what the player pointed at that outlives a play-test, and the
+--- map that owns it.
 --
 -- A play-test copy is not a different entity. The editor wrote whatever map
 -- it had open out to `editor_test` on the Test press, so both copies came out
@@ -532,11 +543,16 @@ end
 -- against, and the one whose identity has to be written where the editor will
 -- save it.
 --
--- Returns `{element = ..., context = ...}`, or `false` and which of the ways
--- there is nothing to resolve it to. Refusing is still right where there is
--- nothing else: a link made against a copy alone points at something that
--- stops existing when the test does.
-function World.playTestOrigin(element, editor)
+-- Returns `{element = ..., context = ...}` -- the element itself and no map of
+-- its own where it is not a play-test copy at all, so a caller that does not
+-- care whether a test is running can simply ask. Or `false` and which of the
+-- ways there is nothing to resolve it to: refusing is still right where there
+-- is nothing else, because a link made against the copy alone points at
+-- something that stops existing when the test does.
+function World.enduring(element, editor)
+    if not World.isPlayTestElement(element) then
+        return {element = element, context = false}
+    end
     if editor == nil then
         editor = World.editor()
     end
@@ -593,23 +609,10 @@ function World.playTestOrigin(element, editor)
     end
     return {
         element = found,
-        context = editorContext(editor, EDITOR_RESOURCE, editor.workingDimension),
+        context = editorContext(
+            editor, EDITOR_RESOURCE, editor.workingDimension
+        ),
     }
-end
-
---- The copy of this element that outlives the editor's play-test.
---
--- The element itself where it is not a play-test copy, so a caller that does
--- not care whether a test is running can simply ask.
-function World.enduringElement(element, editor)
-    if not World.isPlayTestElement(element) then
-        return element
-    end
-    local origin, originError = World.playTestOrigin(element, editor)
-    if not origin then
-        return false, originError
-    end
-    return origin.element
 end
 
 ANKIGTA.World = World

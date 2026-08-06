@@ -550,15 +550,44 @@ def test_no_refusal_the_panel_shows_is_a_bare_token(
 def test_every_refusal_these_paths_produce_has_a_sentence(
     panel_client: MtaSandbox,
 ) -> None:
-    """The vocabulary of the paths this ticket owns — adopting something the
-    player pointed at, and linking a card to it — worded rather than shown."""
+    """The vocabulary of the paths this ticket owns — pointing at something,
+    taking it in, hanging a card on it — worded rather than shown.
+
+    Every entry in the table, not a chosen few: a sentence added without its
+    full stop or with the code copied into it is exactly the thing this is
+    guarding, and a spot check would let it through.
+    """
+    worded = panel_client.to_python(
+        panel_client.eval(
+            """
+            function()
+                local out = {}
+                for code in pairs(ANKIGTA.Locale.reasons) do
+                    out[code] = ANKIGTA.Locale.reason(code)
+                end
+                return out
+            end
+            """
+        )()
+    )
+
+    assert len(worded) >= 24, worded
+    for code, said in worded.items():
+        assert said != code, f"{code} is still a bare token"
+        assert said.endswith("."), f"{code}: {said}"
+        assert code not in said, f"{code}: the code is inside its own sentence"
+
+
+def test_the_refusals_these_paths_produce_are_all_in_the_table(
+    panel_client: MtaSandbox,
+) -> None:
+    """The codes this ticket's own paths hand a player, named once so that
+    deleting one from the table fails here rather than in the game."""
     sentence_for = panel_client.eval(
         "function(code) return ANKIGTA.Locale.reason(code) end"
     )
     for code in (
-        "play_test_without_open_map",
-        "play_test_of_another_map",
-        "play_test_copy_has_no_original",
+        *PLAY_TEST_REFUSALS,
         "play_test_original_not_unique",
         "entity_already_adopted",
         "entity_has_no_durable_id",
@@ -581,9 +610,31 @@ def test_every_refusal_these_paths_produce_has_a_sentence(
         "forbidden",
         "storage_unavailable",
     ):
-        said = sentence_for(code)
-        assert said != code, f"{code} is still a bare token"
-        assert str(said).endswith("."), f"{code}: {said}"
+        assert sentence_for(code) != code, f"{code} is still a bare token"
+
+
+def test_something_that_was_never_a_refusal_passes_through(
+    panel_client: MtaSandbox,
+) -> None:
+    """A CEF error code and the URL beside it go into the same `%s`.
+
+    Wording those is not this table's business, and complaining that nobody
+    worded them would bury the one line that means something.
+    """
+    before = len(panel_client.recorder.debug)
+
+    said = panel_client.eval(
+        """
+        function()
+            return ANKIGTA.Locale.format(
+                "review.loadFailed", "http://127.0.0.1:51600/render/1"
+            )
+        end
+        """
+    )()
+
+    assert "http://127.0.0.1:51600/render/1" in said
+    assert panel_client.recorder.debug_messages()[before:] == []
 
 
 def test_an_unworded_code_is_reported_rather_than_silently_shown(

@@ -543,6 +543,21 @@ Locale.reasons = {
     ["link_not_active"] = "There is no Spatial Link here to change.",
     ["invalid_pending_request"] =
         "ANKIGTA could not read what was being linked.",
+    -- What the read-back after a save can answer.
+    ["partial_read_back"] =
+        "The saved map does not carry both identities yet. Repeat the stock"
+        .. " Save and press Check again.",
+    ["ambiguous_read_back"] =
+        "The saved map carries the identity more than once. Repeat the stock"
+        .. " Save and press Check again.",
+    ["unsaved_close_or_reload"] =
+        "The map was closed or reloaded before it was saved.",
+    ["identity_collision_not_found"] =
+        "There is no copy decision waiting on this Map Entity.",
+    ["invalid_copy_decision"] =
+        "That is not one of the two answers: Original / renamed, or New copy.",
+    ["copied_editor_elements_unavailable"] =
+        "The objects the copy decision is about are no longer in the editor.",
     -- The map's own files.
     ["no_loaded_map"] = "The stock Map Editor has no map open.",
     ["ambiguous_map_file"] =
@@ -579,6 +594,12 @@ Locale.reasons = {
         "ANKIGTA could not read what was being changed.",
 }
 
+--- The one notice that names an outcome without saying so in its key.
+--
+-- Listed rather than renamed, because the key is on the wire between the two
+-- sides and a rename is a change to both for the sake of a suffix.
+local NAMES_AN_OUTCOME = {["notice.pendingNotConfirmed"] = true}
+
 --- Which notice keys carry a machine code rather than something a person
 --- wrote, derived from the key rather than listed.
 --
@@ -587,7 +608,9 @@ Locale.reasons = {
 -- somebody else's words -- Anki's rejected search, a restored file -- and must
 -- pass through untouched.
 local function carriesReason(key)
-    return key:sub(-6) == "Failed" or key:sub(-11) == "Unavailable"
+    return NAMES_AN_OUTCOME[key] == true
+        or key:sub(-6) == "Failed"
+        or key:sub(-11) == "Unavailable"
 end
 
 --- What ANKIGTA has to say about itself is never a reason to word.
@@ -609,26 +632,29 @@ local function splitReason(value)
     return value:match("^([a-z][a-z0-9_]*):%s*(.+)$")
 end
 
---- The sentence for a refusal code.
+--- The sentence for a refusal code, or the code where there is none.
 --
--- The code back where there is no sentence for it, so a refusal is never
--- swallowed -- and reported once, so the gap is found the way a missing
--- string is rather than by a player reading `map_entity_not_loaded`.
-function Locale.reason(code)
-    local head, subject = splitReason(code)
+-- `report` is whether an unworded code is worth complaining about, and only
+-- one caller says yes: a notice's detail, where every code that arrives *is*
+-- a refusal and a gap is worth finding the way a missing string is. The bulk
+-- path stays quiet, because half of what it substitutes was never a refusal
+-- -- a CEF error code, a URL -- and complaining about those would bury the
+-- one line that matters.
+local function wordReason(value, report)
+    local head, subject = splitReason(value)
     if not head then
-        return code == nil and "" or tostring(code)
+        return value == nil and "" or tostring(value)
     end
     local said = Locale.reasons[head]
     if said == nil then
-        if not Locale.missingReasons[head] then
+        if report and not Locale.missingReasons[head] then
             Locale.missingReasons[head] = true
             outputDebugString(
                 "[ANKIGTA] missing_reason code=" .. tostring(head),
                 1
             )
         end
-        return tostring(code)
+        return tostring(value)
     end
     if subject then
         -- The subject is a Map Entity's own name, which is the player's word
@@ -636,6 +662,11 @@ function Locale.reason(code)
         return said .. " (" .. subject .. ")"
     end
     return said
+end
+
+--- The sentence for a refusal code.
+function Locale.reason(code)
+    return wordReason(code, true)
 end
 
 --- The words for a key.
@@ -676,7 +707,7 @@ function Locale.format(key, ...)
     local arguments = {...}
     if carriesReason(key) then
         for index = 1, count do
-            arguments[index] = Locale.reason(arguments[index])
+            arguments[index] = wordReason(arguments[index], false)
         end
     end
     local ok, formatted = pcall(string.format, template, unpack(arguments, 1, count))
