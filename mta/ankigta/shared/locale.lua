@@ -18,6 +18,8 @@ local Locale = {
     -- Keys asked for that this table lacks, so one gap is reported once rather
     -- than on every frame that draws it.
     missing = {},
+    -- The same, for refusal codes nobody has worded yet.
+    missingReasons = {},
 }
 
 Locale.strings = {
@@ -451,6 +453,191 @@ Locale.strings = {
         "Nothing was restored and nothing was replaced: %s",
 }
 
+--- Why something was refused, in a sentence rather than in its code.
+--
+-- A refusal travels between the sides as a machine code -- `Locale` is not on
+-- the wire, the code is what a log and a bug report want, and the side that
+-- draws is the side that words it. What a player was shown, though, was the
+-- code: `The entity was not changed: editor_play_test_map`, which tells them
+-- nothing about what happened or what to do next.
+--
+-- One entry per code that a refusal on the panel's own paths can carry:
+-- pointing at something and taking it in, hanging a card on it, naming it.
+-- The store's and the backup's internal codes are not in here, and a code
+-- with no entry is reported through `Locale.missing` the way a missing string
+-- is, so the next gap is found by the debug log rather than by a player.
+Locale.reasons = {
+    -- What the editor's play-test leaves nothing to link against. Which of
+    -- them it is matters: two of the three are fixed by stopping the test,
+    -- and the third by putting the object back.
+    ["play_test_without_open_map"] =
+        "The Map Editor is play-testing but is not holding a map, so there is"
+        .. " no saved object to link this card to. Stop the test and open the"
+        .. " map again.",
+    ["play_test_of_another_map"] =
+        "This play-test is of a different map from the one the Map Editor now"
+        .. " has open, so nothing here outlives the test. Stop the test and"
+        .. " press Test again.",
+    ["play_test_copy_has_no_original"] =
+        "The Map Editor is not holding the object this play-test copy came"
+        .. " from — it was deleted, or it is not on the map that is open — so"
+        .. " a link made here would point at something that stops existing"
+        .. " when the test does.",
+    ["play_test_original_not_unique"] =
+        "The Map Editor is holding more than one object under this name, so"
+        .. " ANKIGTA cannot tell which of them the play-test copy came from.",
+    -- Pointing at something, and what it turned out to be.
+    ["entity_not_an_element"] = "That is not something in the world.",
+    ["entity_not_managed"] =
+        "That is the Map Editor's own drawing of an object rather than the"
+        .. " object itself. Aim at the object.",
+    ["entity_not_streamed"] =
+        "That object is too far away to be loaded. Go closer and try again.",
+    ["entity_no_longer_in_the_world"] =
+        "That object is no longer in the world. Refresh the list.",
+    ["entity_has_no_durable_id"] =
+        "That object has no position ANKIGTA can write down, so it cannot be"
+        .. " found again after a restart.",
+    ["target_type_not_supported"] =
+        "ANKIGTA can only hold a card on an object, a vehicle, a ped or a"
+        .. " marker.",
+    ["entity_already_adopted"] =
+        "ANKIGTA already holds this object. Use its own row to link a card to"
+        .. " it.",
+    ["entity_already_linked"] =
+        "This Map Entity already has a card. Use Replace card to change it.",
+    ["entity_runtime_not_found"] =
+        "Nothing in the world carries this Map Entity's identity right now.",
+    ["entity_runtime_not_unique"] =
+        "Two things in front of you carry this Map Entity's identity, so"
+        .. " ANKIGTA will not guess which of them you mean.",
+    ["entity_missing"] = "ANKIGTA holds no such Map Entity.",
+    ["map_entity_not_loaded"] =
+        "The map this Map Entity belongs to is not loaded.",
+    ["map_entity_not_found"] = "ANKIGTA holds no such Map Entity.",
+    ["map_entity_ambiguous"] =
+        "Two maps hold a Map Entity under this name, so ANKIGTA will not"
+        .. " guess which of them you mean.",
+    ["map_identity_not_unique"] =
+        "This map carries more than one ANKIGTA identity. Remove the extra"
+        .. " one with the Map Editor.",
+    ["persistent_map_identity_conflict"] =
+        "This map already carries a different ANKIGTA identity.",
+    ["persistent_entity_identity_conflict"] =
+        "This object already carries a different ANKIGTA identity.",
+    -- Hanging a card on it.
+    ["invalid_anki_card_identity"] = "No Anki card was chosen.",
+    ["invalid_card_identity"] = "No Anki card was chosen.",
+    ["card_missing_requires_replace"] =
+        "The linked card is gone from Anki. Use Replace card.",
+    ["pending_map_save"] =
+        "This link is waiting for the map to be saved with the stock Map"
+        .. " Editor.",
+    ["pending_map_save_exists"] =
+        "This Map Entity is already waiting for the map to be saved.",
+    ["pending_map_save_not_found"] =
+        "Nothing here is waiting for the map to be saved.",
+    ["identity_collision"] =
+        "Two maps carry this identity, so ANKIGTA is waiting for you to say"
+        .. " which is the original.",
+    ["link_not_active"] = "There is no Spatial Link here to change.",
+    ["invalid_pending_request"] =
+        "ANKIGTA could not read what was being linked.",
+    -- The map's own files.
+    ["no_loaded_map"] = "The stock Map Editor has no map open.",
+    ["ambiguous_map_file"] =
+        "This resource declares more than one map file, so ANKIGTA cannot"
+        .. " tell which one to write into.",
+    ["saved_map_not_readable"] =
+        "The saved map file could not be read. Save the map with the stock"
+        .. " Map Editor and try again.",
+    ["object_not_managed_by_stock_editor"] =
+        "That object is not one the stock Map Editor is holding.",
+    ["vehicle_not_managed_by_stock_editor"] =
+        "That vehicle is not one the stock Map Editor is holding.",
+    ["ped_not_managed_by_stock_editor"] =
+        "That ped is not one the stock Map Editor is holding.",
+    ["ankigta_edf_not_loaded"] =
+        "The Map Editor is running without ANKIGTA's element definition."
+        .. " Restart the editor.",
+    ["editor_import_failed"] =
+        "The stock Map Editor refused ANKIGTA's map identity.",
+    ["imported_map_identity_not_found"] =
+        "The map identity ANKIGTA added did not arrive in the open map.",
+    ["ambiguous_map_identity"] =
+        "This map carries more than one ANKIGTA identity. Remove the extra"
+        .. " one with the Map Editor.",
+    -- Who is asking.
+    ["authentication_required"] = "Log in to use ANKIGTA.",
+    ["forbidden"] = "Your account is not allowed to use ANKIGTA.",
+    ["invalid_player"] = "ANKIGTA does not know who asked for this.",
+    -- The store, where a player can still do something about it.
+    ["storage_unavailable"] =
+        "ANKIGTA's database is not open, so nothing can be saved.",
+    ["invalid_map_entity"] = "ANKIGTA could not read what was being saved.",
+    ["invalid_entity_metadata"] =
+        "ANKIGTA could not read what was being changed.",
+}
+
+--- Which notice keys carry a machine code rather than something a person
+--- wrote, derived from the key rather than listed.
+--
+-- A notice that names a failure ends in `Failed` or `Unavailable`, and the one
+-- thing it substitutes is why. Everything else substitutes a name, a count or
+-- somebody else's words -- Anki's rejected search, a restored file -- and must
+-- pass through untouched.
+local function carriesReason(key)
+    return key:sub(-6) == "Failed" or key:sub(-11) == "Unavailable"
+end
+
+--- What ANKIGTA has to say about itself is never a reason to word.
+local NOT_A_REASON = {["nil"] = true, ["true"] = true, ["false"] = true}
+
+--- The code inside a refusal, and whatever it was said about.
+--
+-- Two shapes, because two exist: `map_entity_not_loaded`, and the same with a
+-- subject after it -- `entity_runtime_not_unique: object (bin) (1) (2
+-- copies)`. The second is the one that most needed wording and the one a
+-- pattern matching only the first would have walked straight past.
+local function splitReason(value)
+    if type(value) ~= "string" or value == "" or NOT_A_REASON[value] then
+        return nil
+    end
+    if value:match("^[a-z][a-z0-9_]*$") then
+        return value, nil
+    end
+    return value:match("^([a-z][a-z0-9_]*):%s*(.+)$")
+end
+
+--- The sentence for a refusal code.
+--
+-- The code back where there is no sentence for it, so a refusal is never
+-- swallowed -- and reported once, so the gap is found the way a missing
+-- string is rather than by a player reading `map_entity_not_loaded`.
+function Locale.reason(code)
+    local head, subject = splitReason(code)
+    if not head then
+        return code == nil and "" or tostring(code)
+    end
+    local said = Locale.reasons[head]
+    if said == nil then
+        if not Locale.missingReasons[head] then
+            Locale.missingReasons[head] = true
+            outputDebugString(
+                "[ANKIGTA] missing_reason code=" .. tostring(head),
+                1
+            )
+        end
+        return tostring(code)
+    end
+    if subject then
+        -- The subject is a Map Entity's own name, which is the player's word
+        -- rather than a machine's, so it is kept beside the sentence.
+        return said .. " (" .. subject .. ")"
+    end
+    return said
+end
+
 --- The words for a key.
 function Locale.text(key)
     local value = Locale.strings[key]
@@ -471,16 +658,28 @@ function Locale.text(key)
 end
 
 --- The words for a key, with its placeholders filled.
--- The template comes from the table, the arguments never do: a card's text, a
--- Map Entity name or an error category is substituted in as-is. A string whose
--- placeholders do not match the call site is a bug worth seeing, but not one
--- worth taking the interface down for, so the untouched template is shown.
+-- The template comes from the table, and so does the *reason* a failure notice
+-- carries -- but nothing else does: a card's text, a Map Entity name or a
+-- count is substituted in as-is. A string whose placeholders do not match the
+-- call site is a bug worth seeing, but not one worth taking the interface down
+-- for, so the untouched template is shown.
+--
+-- Worded here rather than at each call site, so a surface that shows a refusal
+-- cannot forget to: there are two of them for one notice, and the next one to
+-- be written would have shown the code again.
 function Locale.format(key, ...)
     local template = Locale.text(key)
-    if select("#", ...) == 0 then
+    local count = select("#", ...)
+    if count == 0 then
         return template
     end
-    local ok, formatted = pcall(string.format, template, ...)
+    local arguments = {...}
+    if carriesReason(key) then
+        for index = 1, count do
+            arguments[index] = Locale.reason(arguments[index])
+        end
+    end
+    local ok, formatted = pcall(string.format, template, unpack(arguments, 1, count))
     if ok then
         return formatted
     end

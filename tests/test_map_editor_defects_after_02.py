@@ -356,7 +356,11 @@ def test_a_link_can_be_made_on_the_unsaved_map_the_editor_has_open(
 def test_the_play_test_copy_is_still_refused_and_says_so(
     server: MtaSandbox,
 ) -> None:
-    """`editor_test` is rebuilt from whatever map is open on every Test."""
+    """`editor_test` is rebuilt from whatever map is open on every Test.
+
+    Ticket 09 links the editor's own copy where there is one; here the editor
+    is not running, so there is nothing behind the test to link instead.
+    """
     play_test_root = server.add_resource("editor_test", resource_type="map")
     element = server.add_world_element("object", map_id="object (bin) (1)")
     element["__parent"] = play_test_root
@@ -367,7 +371,7 @@ def test_the_play_test_copy_is_still_refused_and_says_so(
     assert server.connection.raw.execute(
         "SELECT COUNT(*) FROM map_entities"
     ).fetchone()[0] == 0
-    assert notices(server)[-1].args[1] == "editor_play_test_map"
+    assert notices(server)[-1].args[1] == "play_test_without_open_map"
 
 
 # --- "the camera goes back to its map-editor position" -----------------------

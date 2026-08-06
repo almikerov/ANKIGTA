@@ -52,16 +52,46 @@ which of the two situations it is.
 of a player. Whatever this ticket decides the behaviour is, the refusal a person
 reads should be a sentence.
 
+## Found on the way, not fixed here
+
+- **Adoption still writes a resource name where a map identity belongs.** 02's
+  follow-up moved row *matching* onto identity; `adoptionRecord` still sets
+  `mapId = resourceName`. So a map whose document carries an `ankigtaMapId`
+  unequal to its current resource name refuses the first link on it —
+  `preparePendingMapSave` compares the identity element against the row's
+  `map_id` and answers `persistent_map_identity_conflict`. Reproducible
+  outside a play-test, which is why it is not this ticket: give
+  `editor_with_map_open` a `map_identity` in
+  `tests/test_map_editor_play_test_twin.py` and every link on that map fails.
+  The owner's `editor_dump.map` carries no identity today, so nobody is
+  hitting it yet — 0ee572a records a day when it did.
+- **`Locale.reasons` covers the panel's paths, not the store's.** Roughly a
+  hundred of the codes in `mta/ankigta/server/` are backup, migration and
+  SQLite internals that no notice reaches today; if one ever does it is shown
+  as a code, and `missing_reason` in the debug log is how that is found.
+- **`getElementData` inherits by default in MTA and not in the harness.**
+  `CLuaElementDefsShared.cpp` reads the parent chain unless told otherwise, so
+  in the game an EDF representation inherits its element's `ankigtaEntityId`
+  even where nothing wrote one on it. The harness answers per element. Nothing
+  here depends on the difference; something will.
+
 **Blocked by:** None.
 
-**Status:** ready-for-agent
+**Status:** done, unmerged — branch `claude/play-test-twin-c7c8a4`
 
-- [ ] An object linked while the editor is play-testing is adopted, not refused
-- [ ] It is recorded against the map that owns it, not against `editor_test`
-- [ ] The same object linked outside a play-test gives the same Map Entity
-- [ ] Linking the working copy and the play-test copy does not make two rows
-- [ ] A play-test document whose identity no working copy answers to is still
+- [x] An object linked while the editor is play-testing is adopted, not refused
+- [x] It is recorded against the map that owns it, not against `editor_test`
+- [x] The same object linked outside a play-test gives the same Map Entity
+- [x] Linking the working copy and the play-test copy does not make two rows
+- [x] A play-test document whose identity no working copy answers to is still
       refused, and says why in words a player can read
-- [ ] No refusal shown to a player is a bare token
-- [ ] The stubs know that a play-test duplicates every element into another
+- [x] No refusal shown to a player is a bare token
+- [x] The stubs know that a play-test duplicates every element into another
       resource and dimension, so this cannot pass in tests and fail in the game
+- [ ] **not run:** the same, in the game. Nothing here was deployed — the
+      branch is left for the main chat to merge and deploy. What to look at:
+      with a map open in the editor and Test pressed, aim at an object, pick a
+      card and press Link. It should be taken in and say `Pending Map Save`
+      rather than `The entity was not changed: editor_play_test_map`; stopping
+      the test and saving with the editor's own Save should turn it into an
+      Active Spatial Link on a row whose map is the map being edited.

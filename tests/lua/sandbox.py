@@ -57,6 +57,31 @@ RESOURCE_ROOT = Path(__file__).resolve().parents[2] / "mta" / "ankigta"
 
 IN_MEMORY = ":memory:"
 
+#: What an element table holds of its own, as against the element data a script
+#: wrote onto it. Only the second kind is what the stock editor writes into a
+#: `.map` document, and so only the second kind reaches a copy made from one.
+_INTRINSIC_ELEMENT_KEYS = frozenset(
+    {
+        "__element",
+        "__handle",
+        "__streamed",
+        "__id",
+        "__parent",
+        "__account",
+        "type",
+        "name",
+        "x",
+        "y",
+        "z",
+        "rotX",
+        "rotY",
+        "rotZ",
+        "model",
+        "interior",
+        "dimension",
+    }
+)
+
 #: What the client-side `localPlayer` global is in this harness. MTA hands out
 #: a player element; here it is a sentinel the world accessors recognise, so a
 #: test moves the player by setting `sandbox.player_position` rather than by
@@ -1633,6 +1658,102 @@ class MtaSandbox:
                 representation[key] = element[key]
         return representation
 
+    def _owned_by(self, element: Any, root: Any) -> bool:
+        """The ownership walk `World.owningResource` does, in Python."""
+        ancestor = element
+        while lua_type(ancestor) == "table":
+            if ancestor is root or (
+                ancestor["__handle"] is not None
+                and ancestor["__handle"] == root["__handle"]
+            ):
+                return True
+            if ancestor["type"] == "resourceRoot":
+                return ancestor["name"] == root["name"]
+            ancestor = ancestor["__parent"]
+        return False
+
+    def start_play_test(self, *, resource_name: str = "editor_test") -> Any:
+        """Press Test in the stock Map Editor, and return the copy's root.
+
+        The editor writes whatever map is open into a resource of its own and
+        starts it, so while a test runs **every authored element exists
+        twice**: the editor's own copy in its working dimension, and the
+        play-test's copy in the ordinary world — which is where the player
+        stands during a test, and so the copy they are pointing at. Both were
+        loaded from one document, so both answer to the same `id`.
+
+        Test is the ordinary save routine with `test = true`
+        (`editor_main/server/saveloadtest_server.lua`), so the copy carries
+        what a save carries: `createElementAttributesForSaving` writes the id,
+        the transform, and every element data key `getMapElementData` leaves
+        it — which is all of them but the ones prefixed `me:` or `edf:`. That
+        is why a stamp ANKIGTA wrote with plain `setElementData` reaches the
+        play-test copy, and why `me:ID` does not. Representations and elements
+        parked in the deleted dimension are skipped there, and here.
+        """
+        editor_root = self._editor_root()
+        if editor_root is None:
+            raise AssertionError(
+                "nothing can be play-tested until the stock Map Editor is"
+                " running: call add_resource('editor_main') first"
+            )
+        play_test_root = self.add_resource(resource_name, resource_type="map")
+        deleted_dimension = (
+            self.editor_working_dimension + 1
+            if self.editor_working_dimension is not None
+            else None
+        )
+        nodes = []
+        for element in list(self.world_elements):
+            if lua_type(element) != "table" or element["edf:rep"] is True:
+                continue
+            if not self._owned_by(element, editor_root):
+                continue
+            if (
+                deleted_dimension is not None
+                and int(element["dimension"] or 0) == deleted_dimension
+            ):
+                continue
+            copy = self.add_world_element(
+                str(element["type"]),
+                x=float(element["x"] or 0),
+                y=float(element["y"] or 0),
+                z=float(element["z"] or 0),
+                interior=int(element["interior"] or 0),
+                # The test runs in the ordinary world, whatever dimension the
+                # editor was holding the map in.
+                dimension=0,
+                map_id=str(element["__id"] or ""),
+                model=int(element["model"] or 0),
+            )
+            copy["__parent"] = play_test_root
+            attributes = {"id": str(element["__id"] or "")}
+            for key in element.keys():
+                name = str(key)
+                if name in _INTRINSIC_ELEMENT_KEYS or ":" in name:
+                    continue
+                value = element[key]
+                if not isinstance(value, (str, int, float, bool)):
+                    continue
+                copy[name] = value
+                attributes[name] = str(value)
+            nodes.append((str(element["type"]), attributes))
+        self.write_file(
+            f":{resource_name}/meta.xml",
+            f'<meta><map src="{resource_name}.map" /></meta>',
+        )
+        document = ["<map>"]
+        for kind, attributes in nodes:
+            written = " ".join(
+                f'{name}="{value}"' for name, value in sorted(attributes.items())
+            )
+            document.append(f"  <{kind} {written} />")
+        document.append("</map>")
+        self.write_file(
+            f":{resource_name}/{resource_name}.map", "\n".join(document) + "\n"
+        )
+        return play_test_root
+
     def to_python(self, value: Any) -> Any:
         """Convert a Lua value the scripts produced into plain Python.
 
@@ -2124,9 +2245,20 @@ class MtaSandbox:
             )
 
         g.getElementsByType = get_elements_by_type
-        g.getElementData = lambda element, key, *_rest: (
-            element[str(key)] if lua_type(element) == "table" else False
-        )
+        def get_element_data(element: Any = None, key: Any = None, *_rest: Any) -> Any:
+            # A key that is not set answers **boolean `false`**, never nil:
+            # `CLuaElementDefs::GetElementData` falls through to
+            # `lua_pushboolean(luaVM, false)`
+            # (Shared/mods/deathmatch/logic/luadefs/CLuaElementDefsShared.cpp).
+            # The difference is not cosmetic — `ipairs` over a list of three
+            # names stops dead at the first nil, and answered nil here where
+            # the game answers false it walked one name instead of three.
+            if lua_type(element) != "table":
+                return False
+            value = element[str(key)]
+            return False if value is None else value
+
+        g.getElementData = get_element_data
         # The `id` attribute a `.map` file gave the element. MTA fills it when
         # it loads the map, and it is the identity that survives a restart for
         # an object nobody is editing -- unlike `me:ID`, which the stock Map

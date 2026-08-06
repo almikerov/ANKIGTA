@@ -895,8 +895,17 @@ function validatePickEntity(player, entityElement, mode)
         }
     end
 
+    -- The stamp names the row wherever the element is standing today, which
+    -- `findMapEntityByRuntimeElement` cannot say on its own: it checks the
+    -- owning resource too, and the copy in front of the player during a
+    -- play-test belongs to `editor_test` while its row is stored against the
+    -- map being edited. Without the second answer, pointing at an object
+    -- ANKIGTA had already taken in reported it as not loaded.
     local row, readError =
         ANKIGTA.Store.findMapEntityByRuntimeElement(entityElement)
+    if not row then
+        row = rowByOwnStamp(entityElement)
+    end
     if not row then
         return false, readError or "map_entity_not_loaded"
     end
@@ -1862,19 +1871,26 @@ local function adoptOffer(player, entityElement)
     if not target.adoptable then
         return false, "entity_already_adopted"
     end
-    local record, recordError = adoptionRecord(
-        entityElement,
-        currentMapContext(player)
-    )
+    -- A play-test copy is the same entity seen from inside the test: the
+    -- editor wrote the map it has open out to `editor_test` on the Test press,
+    -- and both copies carry the id that one document gave them. Recording the
+    -- copy would write a Spatial Link against a resource the next Test press
+    -- rewrites -- so what is recorded is the entity as the editor holds it,
+    -- which is also what makes the same object linked inside a test and
+    -- outside one one Map Entity rather than two.
+    local element, context = entityElement, currentMapContext(player)
+    if ANKIGTA.World.isPlayTestElement(entityElement)
+        or (context and ANKIGTA.World.isPlayTestResource(context.resourceName))
+    then
+        local origin, originError = ANKIGTA.World.playTestOrigin(entityElement)
+        if not origin then
+            return false, originError
+        end
+        element, context = origin.element, origin.context
+    end
+    local record, recordError = adoptionRecord(element, context)
     if not record then
         return false, recordError
-    end
-    -- `editor_dump` and `editor_test` are the editor's own throwaway
-    -- resources, rewritten the next time it needs one. An entity taken out of
-    -- either is a Spatial Link pointing at a copy that stops existing when the
-    -- play-test does, so it is refused rather than stored and mourned later.
-    if ANKIGTA.World.isPlayTestResource(record.resourceName) then
-        return false, "editor_play_test_map"
     end
     local row, adoptError = ANKIGTA.Store.adoptMapEntity(record)
     if not row then
@@ -1882,8 +1898,13 @@ local function adoptOffer(player, entityElement)
     end
     -- Remembered on the element so the next pick resolves without the walk,
     -- and so a second Link on the same object is recognised as a replacement
-    -- rather than adopting it twice.
-    setElementData(entityElement, "ankigtaEntityId", record.entityId)
+    -- rather than adopting it twice. On both copies where there are two: the
+    -- one the player pointed at is the one they will point at again while the
+    -- test is running.
+    setElementData(element, "ankigtaEntityId", record.entityId)
+    if element ~= entityElement then
+        setElementData(entityElement, "ankigtaEntityId", record.entityId)
+    end
     return record
 end
 

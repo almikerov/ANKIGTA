@@ -2335,7 +2335,14 @@ addEventHandler(PENDING_NOTICE_EVENT, resourceRoot, function(noticeKey, outcome)
     if type(noticeKey) ~= "string" then
         return
     end
-    notice = {key = noticeKey, detail = tostring(outcome)}
+    -- Worded on the way in, because the page substitutes `detail` into the
+    -- template as it is given and has no string table of its own to word a
+    -- refusal code with. The chat line is `Locale.format`'s to word.
+    notice = {
+        key = noticeKey,
+        detail = ANKIGTA.Locale and ANKIGTA.Locale.reason(outcome)
+            or tostring(outcome),
+    }
     if ANKIGTA.Locale then
         outputChatBox(
             ANKIGTA.Locale.format(noticeKey, tostring(outcome)), 255, 196, 64

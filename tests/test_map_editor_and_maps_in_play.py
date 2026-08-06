@@ -498,13 +498,16 @@ def notices(sandbox: MtaSandbox) -> list[Any]:
     ]
 
 
-def test_an_entity_is_not_adopted_while_the_play_test_copy_owns_it(
+def test_an_entity_is_not_adopted_out_of_a_play_test_with_nothing_behind_it(
     server: MtaSandbox,
 ) -> None:
     """`editor_test` is the copy the editor play-tests from.
 
-    An entity adopted out of one is a Spatial Link pointing at a copy that
-    stops existing when the test does.
+    Where the editor is holding the map it was built from, ticket 09 links the
+    editor's own copy instead — see `test_map_editor_play_test_twin.py`. With
+    no editor there is no other copy, and an entity taken out of the test
+    alone is a Spatial Link pointing at something that stops existing when the
+    test does.
     """
     scratch_root = server.add_resource("editor_test", resource_type="map")
     element = server.add_world_element("object", map_id="object (bin) (1)")
@@ -517,7 +520,7 @@ def test_an_entity_is_not_adopted_while_the_play_test_copy_owns_it(
         "SELECT COUNT(*) FROM map_entities"
     ).fetchone()[0]
     assert stored == 0
-    assert notices(server)[-1].args[1] == "editor_play_test_map"
+    assert notices(server)[-1].args[1] == "play_test_without_open_map"
 
 
 def test_working_in_the_map_editor_normally_still_adopts(
