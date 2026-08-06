@@ -60,6 +60,13 @@ first wave got its shape.
 | 42 | UI Scale is the first setting | 08 |
 | 43 | Corona opacity reads `0.60000002` | 08 |
 | 44 | Settings should not outlive the window it was opened in | 08 |
+| 45 | `Restore global` instead of a two-state `Follow Settings` | 10 |
+| 46 | `Activation key` is bound by pressing, not chosen from a list | 10 |
+| 47 | The entity pane sits beside the list, not over it | 10 |
+| 48 | `Apply to all` on the line of its field | 10 |
+| 49 | Linking refused during a play-test | 09 |
+| 50 | The panel fades when the mouse leaves it | 11 |
+| 51 | Drag the panel anywhere; F7 always restores it | 11 |
 | 45 | `Follow settings` becomes one `Restore global` button | 10 |
 | 46 | `Activation key` is bound by pressing, not chosen from a list | 10 |
 | 47 | `editor_play_test_map` refuses a link during a play-test | 09 |
