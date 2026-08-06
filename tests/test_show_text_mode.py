@@ -179,13 +179,13 @@ def send_labels(
 
 
 def draw(sandbox: MtaSandbox) -> None:
-    """Decide what the marks are, then render one frame of them.
+    """One poll of each side, then one rendered frame.
 
-    The label module has no timer of its own: it is drawn per frame from the
-    Runtime Instances `client/world_marks.lua` already found, which is what
-    keeps a label on a moving object rather than 250 ms behind it.
+    Both modules split the same way: which entities carry a mark is decided at
+    the polling cadence, and the drawing follows the element per frame.
     """
     sandbox.eval("function() return ANKIGTA.WorldMarks.refresh() end")()
+    sandbox.eval("function() return ANKIGTA.TextLabelDisplay.refresh() end")()
     sandbox.drawn_text.clear()
     sandbox.drawn_text_boxes.clear()
     sandbox.trigger("onClientRender")
@@ -351,6 +351,43 @@ def test_every_labelled_entity_in_range_carries_its_line(
     assert "hola" in client.drawn_text
     assert "adios" in client.drawn_text
     assert diagnostics(client)["drawn"] == 2
+
+
+def test_the_decision_is_polled_and_the_drawing_follows_the_element(
+    client: MtaSandbox,
+) -> None:
+    """Which labels are near enough is a pass over every Spatial Link there is,
+    so it happens on a timer rather than sixty times a second. Where the object
+    has got to is read on the frame it is drawn, so a label on a vehicle keeps
+    up with it rather than trailing a quarter of a second behind."""
+    labelled_world(client, [label(lines=["hola"])])
+    draw(client)
+    element = client.eval(
+        """
+        function(mapId, entityId)
+            return ANKIGTA.WorldMarks.elementFor(mapId, entityId)
+        end
+        """
+    )(MAP_ID, "gate-17")
+    before = min(
+        box["left"] for box in client.drawn_text_boxes if box["text"] == "hola"
+    )
+
+    # The object moves, and only the frame is redrawn -- no poll.
+    element["x"] = 4.0
+    client.drawn_text.clear()
+    client.drawn_text_boxes.clear()
+    client.trigger("onClientRender")
+
+    after = min(
+        box["left"] for box in client.drawn_text_boxes if box["text"] == "hola"
+    )
+    assert after != before
+    # And the poll really is a timer the resource started, not something a test
+    # is calling on the code's behalf.
+    assert client.eval(
+        "function() return isTimer(ANKIGTA.TextLabelDisplay.timer) end"
+    )() is True
 
 
 def test_a_label_is_drawn_over_a_dark_outline_in_the_chosen_colour(

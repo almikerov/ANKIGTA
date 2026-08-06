@@ -1472,6 +1472,44 @@ def test_a_falling_back_label_reads_as_falling_back_rather_than_correct() -> Non
     )
 
 
+def test_a_note_whose_words_look_like_a_pattern_is_drawn_as_written() -> None:
+    """`String.replace` reads `$&` out of its *replacement*, and what goes in
+    here is a card's own words. A card whose front is `$&` was drawn as the
+    sentence around it."""
+    answer = run_page(
+        [
+            {
+                "receive": selecting(
+                    entity(textLabel=text_label(lines=["$& and $`"])),
+                    locale={"f7.textLabel.showing": "Showing %s: %s"},
+                )
+            }
+        ]
+    )
+
+    assert (
+        node(answer, "entity-text-label-state")["text"]
+        == "Showing Front: $& and $`"
+    )
+
+
+def test_a_row_whose_card_is_missing_is_not_told_no_card_is_linked() -> None:
+    """A card is linked; Anki no longer has it. The row's own state cell says
+    so, and a second line claiming nothing is linked is simply false."""
+    answer = run_page(
+        [
+            {
+                "receive": selecting(
+                    entity(linkState="Card missing", textLabel=False),
+                    locale={"f7.textLabel.notLinked": "No card is linked."},
+                )
+            }
+        ]
+    )
+
+    assert node(answer, "entity-text-label-state")["text"] == ""
+
+
 def test_a_row_with_nothing_cached_or_nothing_linked_says_which() -> None:
     """Silence would be indistinguishable from a note that says nothing."""
     uncached = run_page(

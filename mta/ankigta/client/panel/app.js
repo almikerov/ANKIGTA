@@ -821,27 +821,53 @@
    * words of the setting. A label falling back to another field is the case
    * this exists for: the box says `Front` and the object says something else,
    * and without this the row reads as correct. */
+  /* Which link states are the row saying "there is no card here" rather than
+   * something more specific. Every other state — card missing, entity missing,
+   * a collision, a pending map save — is already named in the row's own state
+   * cell, and a second line under it claiming nothing is linked would be a
+   * claim that is simply false. */
+  var UNLINKED_STATES = {"Unlinked": true, "Not adopted": true};
+
+  /* One placeholder filled with a value, never a pattern.
+   *
+   * `String.replace` reads `$&`, `` $` `` and `$'` out of the *replacement*,
+   * and the values going in here are a note's own words and a note type's own
+   * field names. A card whose front is `$&` would have been drawn as the
+   * template around it. A function replacement is taken literally. */
+  function fill(template, value) {
+    return String(template).replace("%s", function () {
+      return String(value === undefined || value === null ? "" : value);
+    });
+  }
+
   function textLabelState(entity) {
     var label = entity.textLabel;
-    if (!label) return t("f7.textLabel.notLinked");
+    if (!label) {
+      return UNLINKED_STATES[entity.linkState]
+        ? t("f7.textLabel.notLinked")
+        : "";
+    }
     var shown = (label.lines || []).join(" ");
     if (label.reason === "not_cached") return t("f7.textLabel.notCached");
     if (label.reason === "no_words") return t("f7.textLabel.noWords");
+    /* Each key written out rather than chosen into a variable: a string is
+     * only reachable if a surface asks for it by name, and that is checked by
+     * reading this file. */
     if (label.reason === "field_missing") {
-      return t("f7.textLabel.fallbackMissing")
-        .replace("%s", label.requestedField)
-        .replace("%s", label.fieldName)
-        .replace("%s", shown);
+      return fill(
+        fill(fill(t("f7.textLabel.fallbackMissing"), label.requestedField),
+             label.fieldName),
+        shown
+      );
     }
     if (label.reason === "field_wordless") {
-      return t("f7.textLabel.fallbackWordless")
-        .replace("%s", label.requestedField)
-        .replace("%s", label.fieldName)
-        .replace("%s", shown);
+      return fill(
+        fill(fill(t("f7.textLabel.fallbackWordless"), label.requestedField),
+             label.fieldName),
+        shown
+      );
     }
-    return t("f7.textLabel.showing")
-      .replace("%s", label.fieldName)
-      .replace("%s", shown);
+    return fill(fill(t("f7.textLabel.showing"), label.fieldName), shown);
   }
 
   function renderEntityPane(entity) {

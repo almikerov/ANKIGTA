@@ -20,24 +20,30 @@ local function schema()
     return ANKIGTA.Settings
 end
 
+--- The settings a Text Label is made of, and what an entity calls each of them.
+--
+-- The schema's own names on both sides: `Store.overridesOf` answers in the
+-- override *field*, which the schema lets differ from the setting key -- the
+-- Activation Zone's is `activationRadius` overridden as `radius` -- and these
+-- three agree only by having been named that way. Reading both from the schema
+-- is what keeps that from being a coincidence something later relies on.
+local SETTING_KEYS = {"textLabelField", "textLabelColor", "textLabelSize"}
+
 --- The three globals a Text Label falls back on.
 --
 -- Read through the schema's own default where the store has nothing, so a
 -- fresh database draws the same label a configured one with untouched settings
 -- does.
 function TextLabels.globals()
-    local function value(key)
+    local values = {}
+    for _, key in ipairs(SETTING_KEYS) do
         local stored = ANKIGTA.SettingsStore.get(key)
         if stored == nil then
-            return schema().default(key)
+            stored = schema().default(key)
         end
-        return stored
+        values[key] = stored
     end
-    return {
-        textLabelField = value("textLabelField"),
-        textLabelColor = value("textLabelColor"),
-        textLabelSize = value("textLabelSize"),
-    }
+    return values
 end
 
 --- What one entity ends up with: its own answer, or the global behind it.
@@ -54,8 +60,8 @@ function TextLabels.styleFor(overrides, globals)
     overrides = type(overrides) == "table" and overrides or {}
     globals = type(globals) == "table" and globals or {}
     local style = {overridden = false}
-    for _, key in ipairs({"textLabelField", "textLabelColor", "textLabelSize"}) do
-        local own = overrides[key]
+    for _, key in ipairs(SETTING_KEYS) do
+        local own = overrides[schema().entityOverrideField(key) or key]
         if own ~= nil and schema().validate(key, own) then
             style[key] = own
             style.overridden = true

@@ -38,7 +38,11 @@ The owner's database holds no Map Entity. To see anything at all:
   wall, then against a bright midday sky. It stays readable.
 - Set it to black and stand under a night sky. Same.
 - Set `Text Label size` to 0.25 and to 5 and confirm both are usable rather
-  than unreadable at one end and covering the screen at the other.
+  than unreadable at one end and covering the screen at the other. Judge each
+  standing next to the object: a label also shrinks with distance on purpose —
+  the size is multiplied by roughly 1.5 up close and 0.55 at the far edge of
+  the distance setting — so `0.25` read from thirty metres away is meant to be
+  small, and `0.25` read from two metres is the one to judge.
 
 ## Wrapping and the ellipsis
 

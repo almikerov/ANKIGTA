@@ -281,8 +281,7 @@ Locale.strings = {
     -- did without changing mode first.
     ["f7.textLabel"] = "Text Label",
     ["f7.textLabel.field"] = "Field",
-    ["f7.textLabel.fieldClearHint"] =
-        "Empty the box to follow Settings again",
+    ["f7.textLabel.clearHint"] = "Empty the box to follow Settings again",
     ["f7.textLabel.color"] = "Colour",
     ["f7.textLabel.size"] = "Size",
     -- What the object really says, so a row reads as correct only when it is.

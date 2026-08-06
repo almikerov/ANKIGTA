@@ -145,6 +145,13 @@ local function markKey(mapId, entityId)
     return tostring(mapId) .. "/" .. tostring(entityId)
 end
 
+--- The same, for a module that draws through one of the doors below.
+--
+-- Exposed rather than copied. A third spelling of the separator is a third
+-- place for it to drift, and the one that drifts stops resolving on the day
+-- one of the other two changes.
+WorldMarks.key = markKey
+
 --- The Activation Zone radius in force for a mark.
 --
 -- `false` on the mark is the entity saying nothing of its own, which means the

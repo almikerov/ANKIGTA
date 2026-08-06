@@ -117,6 +117,27 @@ draw distance, and a setting that reads as saved and changes nothing is a
 control arguing with the thing that obeys it. The two numbers are pinned
 together by a test rather than by one file reading the other.
 
+**`Text Label size` is multiplied by how far away the object is**, between
+0.55 and 1.5 across the distance setting. The ticket asks for "the size" and
+does not say this, so it is a decision rather than a reading: text drawn at a
+constant pixel size is the same size at two metres and at a hundred, which
+reads as a HUD element pasted over the world rather than as something hanging
+on that object over there. The manual list says so, because a player setting
+`0.25` and walking away will otherwise think the setting is broken.
+
+**The cap is nearest by distance, not nearest of the ones on screen.** Which
+labels are being looked at changes every time the player turns their head, and
+a cap re-picked on that would make a label three metres away pop out because a
+nearer one came into view behind it. So `+N more Text Labels nearby` counts
+what is in range and past the cap — which is what the words say — rather than
+what the projection then declined to draw.
+
+**The cache is also refreshed on entering the mode**, which is a fourth moment
+the ticket does not list beside "when the link is made, on connecting, and when
+a note is saved". Without it, a note edited in Anki itself while the player was
+in another mode is never seen, and the labels open saying what the card stopped
+saying. It costs one batch read, once, when the mode is turned on.
+
 ## Carried findings
 
 - **`Follow Settings` on the *corona* colour has been broken since 05.** The

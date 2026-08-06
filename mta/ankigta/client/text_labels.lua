@@ -24,8 +24,25 @@ ANKIGTA = ANKIGTA or {}
 -- The Activation Zone has one because opening a card while driving is a card
 -- you cannot read and did not ask for. A label covers nothing and demands
 -- nothing, and reading one while driving past is the point (ADR 0029).
+--
+-- ## Cadence
+--
+-- Which labels are near enough, and which of them survive the cap, is decided
+-- every `POLL_INTERVAL_MS` and drawn every frame -- the same split
+-- `client/world_marks.lua` makes, for the same reason. Deciding per frame is a
+-- pass over every Spatial Link in the world sixty times a second, and what
+-- changes between two frames is where things are, not which of them are near
+-- enough to read. The drawing follows the element, so a label on a moving
+-- object still moves with it frame by frame.
 
 local TEXT_LABELS_EVENT = "ankigta:textLabels"
+
+--- How often the decision is remade, in milliseconds.
+--
+-- `client/spatial.lua`'s number, for the reason stated there: one pass over
+-- the reference world is most of a millisecond, and everything ANKIGTA draws
+-- and decides shares a 2 ms frame budget (story 58).
+local POLL_INTERVAL_MS = 250
 
 --- How large the text is drawn at the near and far ends of the distance
 --- setting, before the size setting multiplies it.
@@ -43,10 +60,11 @@ local Display = {
     byEntity = {},
     --- How far a label carries, from the global setting.
     distance = false,
-    --- What the last frame drew, and how many it had to leave out, so a report
-    --- can be read without looking at a screen.
+    --- What the last decision chose to draw, and how many it had to leave out,
+    --- so a report can be read without looking at a screen.
     drawn = {},
     dropped = 0,
+    timer = false,
 }
 
 local function schema()
@@ -76,7 +94,15 @@ local function maximumDrawn()
     return ANKIGTA.TextLabel.MAX_DRAWN
 end
 
+--- What one Map Entity is filed under here.
+--
+-- The drawing module's, which is the panel's: a mark, a label and a row all
+-- have to agree about which entity they are about, and three spellings of one
+-- separator is two of them waiting to drift.
 local function entityKey(mapId, entityId)
+    if marks() and marks().key then
+        return marks().key(mapId, entityId)
+    end
     return tostring(mapId) .. "/" .. tostring(entityId)
 end
 
@@ -147,6 +173,10 @@ function Display.plan(observer, labels, maxDistance, positionOf)
         )
     end)
 
+    -- Nearest by distance, not "nearest of the ones on screen". Which labels
+    -- are being looked at changes every time the player turns their head, and
+    -- a cap re-picked on that would make a label three metres away pop out
+    -- because a nearer one came into view behind it.
     local limit = maximumDrawn()
     local dropped = 0
     if #inRange > limit then
@@ -212,36 +242,52 @@ function Display.renderDroppedNotice(dropped)
     return true
 end
 
-function Display.render()
+--- Decide which labels the world is showing, and which the cap left out.
+--
+-- At the polling cadence, not per frame: this walks every Text Label there is,
+-- which on a reference world is every Spatial Link in it.
+function Display.refresh()
     if #Display.labels == 0 or not marks() then
+        Display.drawn = {}
+        Display.dropped = 0
+        return false
+    end
+    Display.drawn, Display.dropped = Display.plan(
+        viewpoint(),
+        Display.labels,
+        Display.maxDistance(),
+        positionOf
+    )
+    return true
+end
+
+function Display.render()
+    if #Display.drawn == 0 or not marks() then
         -- An incremental reload can hand this client one script ahead of
         -- another, and a frame drawn in that window has no door to draw
         -- through. Nothing rather than an error every frame until it does.
         return false
     end
-    local observer = viewpoint()
     local maxDistance = Display.maxDistance()
-    local entries, dropped = Display.plan(
-        observer,
-        Display.labels,
-        maxDistance,
-        positionOf
-    )
-    Display.drawn = entries
-    Display.dropped = dropped
-
-    for _, entry in ipairs(entries) do
-        marks().label(
-            entry.x,
-            entry.y,
-            entry.z,
-            entry.label.lines,
-            entry.label.color,
-            Display.scaleFor(entry, maxDistance)
-        )
+    for _, entry in ipairs(Display.drawn) do
+        -- Where the thing has got to *this* frame, so a label on a vehicle
+        -- keeps up with it rather than trailing a quarter of a second behind.
+        -- Where it was when the decision was made is what decided whether it
+        -- is drawn at all, which is a slower question.
+        local spot = positionOf(entry.label)
+        if spot then
+            marks().label(
+                spot.x,
+                spot.y,
+                spot.z,
+                entry.label.lines,
+                entry.label.color,
+                Display.scaleFor(entry, maxDistance)
+            )
+        end
     end
 
-    Display.renderDroppedNotice(dropped)
+    Display.renderDroppedNotice(Display.dropped)
     return true
 end
 
@@ -303,10 +349,10 @@ function Display.setLabels(labels, distance)
     if distance ~= nil then
         Display.distance = tonumber(distance) or Display.distance
     end
-    if #accepted == 0 then
-        Display.drawn = {}
-        Display.dropped = 0
-    end
+    -- Decided now rather than at the next poll: a set that has just changed is
+    -- the one moment the answer is certainly out of date, and a quarter of a
+    -- second of the old labels is a quarter of a second of the old mode.
+    Display.refresh()
     return #accepted
 end
 
@@ -317,6 +363,17 @@ end)
 
 addEventHandler("onClientRender", root, function()
     Display.render()
+end)
+
+addEventHandler("onClientResourceStart", resourceRoot, function()
+    Display.timer = setTimer(Display.refresh, POLL_INTERVAL_MS, 0)
+end)
+
+addEventHandler("onClientResourceStop", resourceRoot, function()
+    if Display.timer and isTimer(Display.timer) then
+        killTimer(Display.timer)
+    end
+    Display.timer = false
 end)
 
 if ANKIGTA.WorldMarks then
