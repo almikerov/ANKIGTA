@@ -143,6 +143,31 @@ def adopt(sandbox: MtaSandbox, player: Any, name: str) -> None:
     )
 
 
+def seed_entity(
+    sandbox: MtaSandbox,
+    *,
+    map_id: str,
+    entity_id: str,
+    map_name: str,
+    entity_type: str = "object",
+) -> None:
+    """A Map Entity ANKIGTA already holds, without going through adoption."""
+    connection: sqlite3.Connection = sandbox.connection.raw
+    connection.execute(
+        "INSERT OR IGNORE INTO maps (map_id, resource_name, map_name)"
+        " VALUES (?, ?, ?)",
+        (map_id, map_id, map_name),
+    )
+    connection.execute(
+        "INSERT OR REPLACE INTO map_entities (map_id, entity_id, entity_type,"
+        " model, authored_x, authored_y, authored_z, rotation_x, rotation_y,"
+        " rotation_z, interior, dimension)"
+        " VALUES (?, ?, ?, 1337, 0, 0, 0, 0, 0, 0, 0, 0)",
+        (map_id, entity_id, entity_type),
+    )
+    connection.commit()
+
+
 def notices(sandbox: MtaSandbox) -> list[Any]:
     return [
         event
@@ -345,6 +370,164 @@ def test_the_card_is_hung_on_the_copy_that_outlives_the_test(
     # during the same test is recognised rather than adopted again -- but the
     # editor's own copy is the one that had to be.
     assert "editor_main" in stamped.split(",")
+
+
+def link_card(
+    sandbox: MtaSandbox, player: Any, map_id: str, entity_id: str
+) -> tuple[Any, Any]:
+    """`linkCardToEntity` on a row the store already holds.
+
+    The other half of Link, reached on its own: `adoptOffer` stamps the
+    element it recorded, so a test that goes through both cannot say which of
+    them wrote what.
+    """
+    return sandbox.eval(
+        """
+        function(player, mapId, entityId, identity)
+            local ok, reason = linkCardToEntity(player, mapId, entityId, identity)
+            if not ok then
+                return false, tostring(reason)
+            end
+            return ok.state, false
+        end
+        """
+    )(
+        player,
+        map_id,
+        entity_id,
+        sandbox.lua.table_from({"collectionUuid": UUID, "cardId": 42}),
+    )
+
+
+def test_the_identity_is_written_where_the_editor_will_save_it(
+    server: MtaSandbox,
+) -> None:
+    """Written onto the play-test copy it is never saved, so the read-back can
+    never confirm — and the element it was written on is destroyed with the
+    test."""
+    editor_root = editor_with_map_open(server)
+    working = editor_element(
+        server, editor_root, entity_id="object (crate) (1)"
+    )
+    server.start_play_test()
+    # Already a Map Entity, so only the link half of the button runs.
+    seed_entity(
+        server,
+        map_id="editor_dump",
+        entity_id="object (crate) (1)",
+        map_name="editor_dump.map",
+    )
+    player = study_player(server, dimension=0)
+
+    state, reason = link_card(
+        server, player, "editor_dump", "object (crate) (1)"
+    )
+
+    assert reason is False, reason
+    assert state == "Pending Map Save"
+    assert working["ankigtaEntityId"] == "object (crate) (1)"
+    play_test_copy = server.eval(
+        """
+        function()
+            for _, element in ipairs(getElementsByType("object")) do
+                if ANKIGTA.World.isPlayTestElement(element) then
+                    return tostring(
+                        getElementData(element, "ankigtaEntityId")
+                    )
+                end
+            end
+            return "no play-test copy"
+        end
+        """
+    )()
+    assert play_test_copy == "false", play_test_copy
+
+
+def test_the_play_tests_own_map_identity_is_not_a_second_identity(
+    server: MtaSandbox,
+) -> None:
+    """The editor writes the open map out identity and all on every Test press.
+
+    Counting both made a map that had been linked once refuse every link
+    afterwards, as `map_identity_not_unique`.
+    """
+    editor_root = editor_with_map_open(server, map_identity="editor_dump")
+    editor_element(server, editor_root, entity_id="object (crate) (1)")
+    server.start_play_test()
+    identities = server.eval(
+        """
+        function()
+            return #getElementsByType("ankigta_map_identity")
+        end
+        """
+    )()
+    assert identities == 2, "the fixture has to hold both copies"
+    seed_entity(
+        server,
+        map_id="editor_dump",
+        entity_id="object (crate) (1)",
+        map_name="editor_dump.map",
+    )
+    player = study_player(server, dimension=0)
+
+    state, reason = link_card(
+        server, player, "editor_dump", "object (crate) (1)"
+    )
+
+    assert reason is False, reason
+    assert state == "Pending Map Save"
+
+
+def test_the_map_being_tested_is_the_current_map_in_the_list(
+    server: MtaSandbox,
+) -> None:
+    """A play-test is not a map of its own.
+
+    Called one, every row of the map being tested fell outside the current map
+    — emitted once as a row nobody claimed and once as an offer to adopt the
+    element standing right there.
+    """
+    editor_root = editor_with_map_open(server, map_identity="editor_dump")
+    element = editor_element(
+        server, editor_root, entity_id="object (crate) (1)"
+    )
+    element["ankigtaEntityId"] = "object (crate) (1)"
+    # A map that has been linked on and saved: the document carries both
+    # halves of the identity, so the row is present rather than missing.
+    server.write_file(
+        ":editor_dump/editor_dump.map",
+        "<map>\n"
+        '  <ankigta_map_identity ankigtaMapId="editor_dump" />\n'
+        '  <object id="object (crate) (1)"'
+        ' ankigtaEntityId="object (crate) (1)" />\n'
+        "</map>\n",
+    )
+    server.start_play_test()
+    seed_entity(
+        server,
+        map_id="editor_dump",
+        entity_id="object (crate) (1)",
+        map_name="editor_dump.map",
+    )
+    player = study_player(server, dimension=0)
+
+    server.trigger(
+        "ankigta:requestF7", server.lua.globals().resourceRoot, client=player
+    )
+    snapshot = server.to_python(server.recorder.client_events[-1].args[0])
+
+    assert snapshot["currentMap"]["resourceName"] == "editor_dump"
+    rows = [
+        entry
+        for entry in snapshot["entities"]
+        if entry["mapEntity"]["entityId"] == "object (crate) (1)"
+    ]
+    assert len(rows) == 1, rows
+    assert rows[0].get("adoptable") is not True
+    # Not "Entity missing", and not a row shown only because it was stored
+    # against the play-test: it is a row of the map being tested.
+    assert rows[0]["link"]["state"] == "Unlinked"
+    assert rows[0]["link"].get("editorScratchMap") is not True
 
 
 def test_the_same_object_is_one_map_entity_inside_and_outside_a_play_test(

@@ -95,15 +95,32 @@ MTA source reference, read 2026-08-06T12:25Z:
   `tests/test_map_editor_play_test_twin.py` and every link on that map fails.
   The owner's `editor_dump.map` carries no identity today, so nobody is
   hitting it yet — 0ee572a records a day when it did.
-- **`Locale.reasons` covers the panel's paths, not the store's.** Roughly a
-  hundred of the codes in `mta/ankigta/server/` are backup, migration and
-  SQLite internals that no notice reaches today; if one ever does it is shown
-  as a code, and `missing_reason` in the debug log is how that is found.
+- **`Locale.reasons` covers the panel's paths, not the store's plumbing.**
+  Every code `server/main.lua`, `server/map_identity.lua`, `server/world.lua`
+  and `server/teleport.lua` return — the four modules a notice comes out of —
+  is worded, along with the store codes a panel button can surface. The
+  seventy-odd left are backup, migration, connection-config and SQLite
+  internals; the recovery window has words of its own for the ones it shows,
+  and if one of the rest ever reaches a notice it is shown as a code, with
+  `missing_reason` in the debug log to say so.
 - **`getElementData` inherits by default in MTA and not in the harness.**
   `CLuaElementDefsShared.cpp` reads the parent chain unless told otherwise, so
   in the game an EDF representation inherits its element's `ankigtaEntityId`
   even where nothing wrote one on it. The harness answers per element. Nothing
   here depends on the difference; something will.
+- **Two maps can hand the editor the same element id.** `object (crate) (1)`
+  is generated from the type and an ordinal, so a play-test of one map and a
+  map open in the editor can collide on a name with no identity to tell them
+  apart, and the walk would take the wrong object. Left alone deliberately:
+  the editor suspends its own interface for the length of a test
+  (`startWhenLoaded` returns early and `onClientRender` does nothing while
+  `g_in_test` is set — `editor_main/client/main.lua`,
+  `sha256 550cbcb838158e7f9e8565e406fea987a991a3784ed7fb3eb27ba49ba9039c20`,
+  read 2026-08-06T13:10Z), so a map cannot be opened without stopping the
+  test, which stops `editor_test` with it. The obvious second discriminator is
+  wrong and was measured to be wrong: on the owner's server the play-test's
+  Sentinel stands 80 m from the editor's, because somebody drove it, so
+  matching on the transform would refuse every vehicle a test was used on.
 
 **Blocked by:** None.
 
@@ -115,7 +132,9 @@ MTA source reference, read 2026-08-06T12:25Z:
 - [x] Linking the working copy and the play-test copy does not make two rows
 - [x] A play-test document whose identity no working copy answers to is still
       refused, and says why in words a player can read
-- [x] No refusal shown to a player is a bare token
+- [x] No refusal shown to a player is a bare token — every code the four
+      modules a notice comes out of can return, and the store codes a button
+      can surface. What is left is named under "Found on the way".
 - [x] The stubs know that a play-test duplicates every element into another
       resource and dimension, so this cannot pass in tests and fail in the game
 - [ ] **not run:** the same, in the game. Nothing here was deployed — the

@@ -565,6 +565,19 @@ function World.enduring(element, editor)
     -- editor's copy carries. A test still running against a map the editor
     -- has since closed carries an identity no working copy answers to, and
     -- there is no other copy to adopt against.
+    --
+    -- Where neither document carries an identity there is nothing to compare,
+    -- and the walk below falls back to the `.map` id alone -- which two maps
+    -- can share, because the editor generates `object (crate) (1)` from the
+    -- type and an ordinal. That gap is not closed here, for two reasons. The
+    -- editor suspends itself for the length of a test -- `startWhenLoaded`
+    -- returns early and `onClientRender` does nothing while `g_in_test` is set
+    -- (editor_main/client/main.lua) -- so a map cannot be opened without
+    -- stopping the test, which stops `editor_test` with it. And the obvious
+    -- second discriminator is wrong: on the owner's server the play-test's
+    -- Sentinel stands 80 metres from the editor's, because somebody drove it,
+    -- so matching on the transform would refuse every vehicle a test was used
+    -- on.
     local byOwner = World.mapIdsByOwner()
     local playTestIds = World.mapIdsForOwner(PLAY_TEST_RESOURCE, byOwner)
     if playTestIds then

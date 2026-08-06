@@ -543,6 +543,49 @@ Locale.reasons = {
     ["link_not_active"] = "There is no Spatial Link here to change.",
     ["invalid_pending_request"] =
         "ANKIGTA could not read what was being linked.",
+    ["card_changed"] =
+        "The card on this Map Entity is not the one this was asked about any"
+        .. " more. Look at it again.",
+    ["replacement_card_unchanged"] =
+        "That is the card already linked here.",
+    -- Moving a link from one Map Entity to another.
+    ["relink_target_not_adopted"] =
+        "ANKIGTA does not hold that object yet, so a link cannot be moved onto"
+        .. " it. Link a card to it first.",
+    ["relink_target_already_linked"] =
+        "That Map Entity already has a card, so a link cannot be moved onto"
+        .. " it.",
+    ["target_entity_already_linked"] =
+        "That Map Entity already has a card, so a link cannot be moved onto"
+        .. " it.",
+    ["target_entity_not_unlinked"] =
+        "That Map Entity is not free to take a link.",
+    ["target_entity_missing"] = "ANKIGTA holds no such Map Entity to move to.",
+    ["source_entity_not_missing"] =
+        "The Map Entity this link is on is still on its map, so there is"
+        .. " nothing to move it off.",
+    ["source_spatial_link_missing"] =
+        "There is no Spatial Link on that Map Entity to move.",
+    ["single_map_entity_required"] =
+        "This asks about one Map Entity, and more than one was named.",
+    -- What the study session and Review Mode refuse.
+    ["review_open"] =
+        "A card is open. Close it before changing this.",
+    ["review_in_flight"] =
+        "A rating is still being applied. Try again in a moment.",
+    ["show_text_mode"] =
+        "Review mode is Show text, which opens no cards.",
+    ["no_links"] =
+        "No card is linked to anything yet, so there is nothing to study.",
+    ["not_pending"] = "Nothing here is waiting to be checked.",
+    ["nothing_to_undo"] = "There is nothing to undo.",
+    ["nothing_to_redo"] = "There is nothing to redo.",
+    ["not_in_recovery"] = "ANKIGTA's database is not waiting to be recovered.",
+    ["request_in_flight"] = "That request is already running.",
+    ["spatial_link_not_found"] = "There is no Spatial Link here.",
+    ["spatial_link_identity_changed"] =
+        "This Spatial Link changed while the question was on screen. Look at"
+        .. " it again.",
     -- What the read-back after a save can answer.
     ["partial_read_back"] =
         "The saved map does not carry both identities yet. Repeat the stock"
@@ -586,12 +629,50 @@ Locale.reasons = {
     ["authentication_required"] = "Log in to use ANKIGTA.",
     ["forbidden"] = "Your account is not allowed to use ANKIGTA.",
     ["invalid_player"] = "ANKIGTA does not know who asked for this.",
-    -- The store, where a player can still do something about it.
+    -- The store, as far as a panel action can reach it. Backup, migration and
+    -- SQLite plumbing is not in here: none of it answers a button, and the
+    -- recovery window has words of its own.
     ["storage_unavailable"] =
         "ANKIGTA's database is not open, so nothing can be saved.",
     ["invalid_map_entity"] = "ANKIGTA could not read what was being saved.",
     ["invalid_entity_metadata"] =
         "ANKIGTA could not read what was being changed.",
+    ["invalid_target"] = "ANKIGTA could not read what this was about.",
+    ["invalid_spatial_link"] = "ANKIGTA could not read the link being made.",
+    ["invalid_unlink_request"] = "ANKIGTA could not read what to unlink.",
+    ["invalid_replace_request"] = "ANKIGTA could not read what to replace.",
+    ["invalid_relink_request"] = "ANKIGTA could not read what to move.",
+    ["invalid_map_identity"] = "ANKIGTA could not read the map's identity.",
+    ["invalid_map_locator"] = "ANKIGTA could not read where the map lives.",
+    ["map_identity_not_found"] = "ANKIGTA holds no such map.",
+    ["entity_read_failed"] = "The Map Entity could not be read.",
+    ["entity_metadata_read_failed"] =
+        "What this Map Entity says of its own could not be read.",
+    ["entity_override_read_failed"] =
+        "What this Map Entity says of its own could not be read.",
+    ["wrong_authority"] = "This setting is owned elsewhere.",
+    ["invalid_user_setting"] = "That is not a setting ANKIGTA holds.",
+    ["not_a_stored_setting"] = "That is not a setting ANKIGTA holds.",
+    -- Undo and Redo.
+    ["history_read_failed"] = "The change history could not be read.",
+    ["history_entry_missing"] = "That change is no longer in the history.",
+    ["invalid_history_change"] = "ANKIGTA could not read that change.",
+    ["invalid_history_target"] = "ANKIGTA could not read what that change was"
+        .. " about.",
+    ["unsupported_history_operation"] =
+        "That change cannot be undone or redone.",
+    -- Asking Anki.
+    ["invalid_query"] = "That search could not be read.",
+    ["query_rejected"] = "Anki did not accept that search.",
+    ["fetch_rejected"] = "Anki refused the request.",
+    ["invalid_scope"] = "Choose either Cards or Notes.",
+    ["invalid_pagination"] = "That page of results could not be read.",
+    ["invalid_deck_filter"] = "That deck filter could not be read.",
+    ["invalid_rating"] = "That is not a rating Anki takes.",
+    ["card_note_cache_read_failed"] =
+        "The words ANKIGTA holds for the linked cards could not be read.",
+    ["card_state_refresh_failed"] =
+        "Anki did not say which cards are due.",
 }
 
 --- The one notice that names an outcome without saying so in its key.
