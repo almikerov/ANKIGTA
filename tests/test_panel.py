@@ -812,13 +812,18 @@ def test_letting_go_of_the_button_ends_the_drag(client: MtaSandbox) -> None:
     assert panel_rect(client)[1] == moved[1]
 
 
-def test_a_dragged_panel_is_remembered_as_a_fraction_of_the_screen(
+def test_a_dragged_panel_follows_the_cursor_for_this_session(
     client: MtaSandbox,
 ) -> None:
-    """Ticket 28's rule: a placement means the same corner at any resolution."""
+    """The drag moves the panel by exactly the cursor's own movement.
+
+    Held as a fraction of the screen for as long as the window lives; where it
+    used to be written down, closing the window now forgets it (ticket 11).
+    """
     authorize(client)
     press_f7(client)
     page_ready(client)
+    before = panel_rect(client)
 
     cursor_at(client, 900, 400)
     hold_mouse(client, True)
@@ -827,28 +832,36 @@ def test_a_dragged_panel_is_remembered_as_a_fraction_of_the_screen(
     render(client)
     hold_mouse(client, False)
 
-    placement = client.eval(
-        'function() return ANKIGTA.Layout.placements["panel"] end'
-    )()
-    assert placement is not None
-    assert 0 <= placement.x <= 1 and 0 <= placement.y <= 1
+    moved = panel_rect(client)
+    assert (moved[1], moved[2]) == (before[1] - 200, before[2] - 100)
 
 
-def test_the_panel_never_leaves_the_screen(client: MtaSandbox) -> None:
+def test_the_panel_may_be_dragged_past_every_screen_edge(
+    client: MtaSandbox,
+) -> None:
+    """The clamp is gone, and the way back is F7: it opens at the default
+    position every time, so off screen is somewhere the panel can be."""
     authorize(client)
     press_f7(client)
     page_ready(client)
+    default = panel_rect(client)
 
     cursor_at(client, 900, 400)
     hold_mouse(client, True)
     act(client, "dragStart")
     cursor_at(client, 5000, 5000)
     render(client)
+    hold_mouse(client, False)
 
     rect = panel_rect(client)
-    x, y, width, height = rect[1], rect[2], rect[3], rect[4]
-    assert x >= 0 and y >= 0
-    assert x + width <= 1920 and y + height <= 1080
+    assert rect[1] > 1920 - rect[3] or rect[2] > 1080 - rect[4]
+
+    # Close and reopen: back where it always opens, unconditionally.
+    press_f7(client)
+    press_f7(client)
+    page_ready(client)
+    reopened = panel_rect(client)
+    assert (reopened[1], reopened[2]) == (default[1], default[2])
 
 
 # --- the settings section -----------------------------------------------------

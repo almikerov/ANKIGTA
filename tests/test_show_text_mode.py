@@ -1709,7 +1709,7 @@ def test_only_a_setting_with_something_to_say_carries_a_note(
     rows = client.pushed_panel_state()["settings"]["rows"]
 
     with_note = {row["key"] for row in rows if row["noteKey"]}
-    assert with_note == {"reviewMode"}
+    assert with_note == {"reviewMode", "panelIdleOpacity"}
 
 
 def test_the_size_a_row_reports_is_at_the_precision_its_rule_declares(

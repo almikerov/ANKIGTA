@@ -1687,9 +1687,6 @@
     button.setAttribute("aria-pressed", String(next));
     send("editHud", {value: next});
   });
-  document.getElementById("reset-layout").addEventListener("click", function () {
-    send("resetLayout");
-  });
   document.getElementById("close-settings").addEventListener("click", function () {
     send("closeSettings");
   });
@@ -1909,6 +1906,19 @@
     var tag = target && target.tagName;
     return tag === "INPUT" || tag === "TEXTAREA";
   }
+
+  /* A field being typed into is being used, whatever the mouse is doing, so
+   * Lua is told while one holds the keyboard and the panel stays opaque. Focus
+   * moving from one field to the next is still typing -- `relatedTarget` is
+   * where the focus went -- so the hop does not read as letting go. */
+  document.addEventListener("focusin", function (event) {
+    if (typingInto(event.target)) send("typing", {active: true});
+  });
+  document.addEventListener("focusout", function (event) {
+    if (!typingInto(event.target)) return;
+    if (typingInto(event.relatedTarget)) return;
+    send("typing", {active: false});
+  });
 
   document.addEventListener("keydown", function (event) {
     /* A control waiting for a key takes the press whole, before anything else

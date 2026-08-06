@@ -67,6 +67,14 @@ local browser = nil
 -- the panel then jumped by the old delta the next time it opened with the
 -- button held, which is the panel drifting on its own.
 local dragFrom = nil
+-- Whether the page reports a field holding keyboard focus. While it does, the
+-- panel is being used whatever the mouse is doing -- MTA's cursor does not
+-- move on its own -- so it stays opaque. A panel that fades mid-sentence is
+-- worse than one that never fades.
+local typingInPanel = false
+-- The opacity the panel's surface is drawn at right now, moved a step per
+-- frame toward fully opaque or toward the idle setting.
+local panelAlpha = 1
 local pageReady = false
 local cursorOwned = false
 local focusedCamera = nil
@@ -321,12 +329,20 @@ local function closePanel()
     pageReady = false
     searchIssued = false
     editorOpen = false
-    -- The panel opens where it always opens: on the list. What outlives the
-    -- window is the *answer* -- the settings the player changed, which are
-    -- stored and untouched by this -- and not the screen they changed it on. A
-    -- window that reopens on Settings is a window whose state the player has to
-    -- notice and undo before doing the thing they opened it for.
+    typingInPanel = false
+    panelAlpha = 1
+    -- The panel opens where it always opens: on the list, at its default
+    -- position. One rule with two halves: the screen it was showing and the
+    -- place it was dragged to are both state of the window, and nothing about
+    -- the window outlives the window. What does outlive it is the *answer* --
+    -- the settings the player changed, which are stored and untouched by this.
+    -- A window that reopens on Settings, or wherever it was last shoved, is a
+    -- window whose state the player has to notice and undo before doing the
+    -- thing they opened it for.
     requestedSection = nil
+    if ANKIGTA.Layout then
+        ANKIGTA.Layout.forget("panel")
+    end
     -- The selection is deliberately not cleared. `Draw radius` stops drawing
     -- with the window, but the row the player was working on is still the row
     -- they were working on, so opening F7 again puts the zone straight back
@@ -1377,6 +1393,11 @@ if ANKIGTA.Layout then
         margin = 20,
         anchorX = 0.5,
         anchorY = 0.5,
+        -- Dragged anywhere at all, off screen included, and forgotten with
+        -- the window: `closePanel` drops the placement, so F7 opens the panel
+        -- at this default position every time and there is nowhere it can be
+        -- lost.
+        transient = true,
     })
 end
 
@@ -1464,6 +1485,87 @@ local function openPanel()
     end
 end
 
+-- --- fading when it is not being used -----------------------------------------
+
+--- How far the panel's opacity moves toward its target per frame.
+--
+-- Per frame rather than per millisecond, deliberately: the fade then converges
+-- in a fixed, testable number of steps, and at 60 fps the full swing from
+-- opaque to the lowest idle value takes about an eighth of a second -- felt as
+-- a fade, never waited for.
+local FADE_STEP = 0.1
+
+--- One step of `value` toward `target`, landing exactly on it.
+--
+-- Landing exactly matters: 0.1 is not exact in a float, so accumulating steps
+-- would circle the target forever and repaint the surface every frame for a
+-- difference nobody can see.
+local function stepToward(value, target)
+    if target > value + FADE_STEP then
+        return value + FADE_STEP
+    end
+    if target < value - FADE_STEP then
+        return value - FADE_STEP
+    end
+    return target
+end
+
+--- The opacity the panel rests at while nothing is using it.
+local function panelIdleAlpha()
+    local value = tonumber(currentValue("panelIdleOpacity"))
+    if not value then
+        return 1
+    end
+    return value
+end
+
+--- Is the cursor on the panel?
+--
+-- Against the widget's own geometry rather than the layout's answer, because
+-- the widget is the thing the cursor is or is not over: the card editor
+-- widens it past what the layout knows.
+local function cursorOverPanel()
+    if not isCursorShowing() then
+        return false
+    end
+    local relX, relY = getCursorPosition()
+    if not relX or not relY then
+        return false
+    end
+    local screenWidth, screenHeight = guiGetScreenSize()
+    local cursorX, cursorY = relX * screenWidth, relY * screenHeight
+    local x, y = guiGetPosition(guiBrowser, false)
+    local width, height = guiGetSize(guiBrowser, false)
+    if type(x) ~= "number" or type(width) ~= "number" then
+        return false
+    end
+    return cursorX >= x and cursorX <= x + width
+        and cursorY >= y and cursorY <= y + height
+end
+
+--- Fully opaque while it is being used; the idle opacity while it is not.
+--
+-- "Being used" is any of three things: the cursor is on it, it is being
+-- dragged -- a fast drag outruns the cursor test for a frame or two -- or a
+-- field on it holds keyboard focus. The floor on the setting is what makes
+-- the idle state safe: no value the store can hold makes the panel invisible.
+local function fadePanel()
+    if not isPanelOpen() then
+        return
+    end
+    local target = 1
+    if not (dragFrom or typingInPanel or cursorOverPanel()) then
+        target = panelIdleAlpha()
+    end
+    if target == panelAlpha then
+        return
+    end
+    panelAlpha = stepToward(panelAlpha, target)
+    guiSetAlpha(guiBrowser, panelAlpha)
+end
+
+-- --- dragging -----------------------------------------------------------------
+
 -- The page reports only that a drag started: the cursor is MTA's to report, and
 -- a mouse button released outside the page never reaches it, so the loop
 -- watches the button. `dragFrom` itself is declared at the top of this file.
@@ -1498,7 +1600,11 @@ local function followCursor()
     guiSetPosition(guiBrowser, x, y, false)
 end
 
-addEventHandler("onClientRender", root, followCursor)
+-- The drag first, so the fade reads the position the frame will be drawn at.
+addEventHandler("onClientRender", root, function()
+    followCursor()
+    fadePanel()
+end)
 
 function togglePanel()
     if not authorized then
@@ -1571,12 +1677,16 @@ end)
 
 addCommandHandler("ankigta-connection", togglePanel)
 
---- The two ways out of a layout that went wrong.
+--- The way into Settings that does not go through the panel's own buttons.
 --
--- Both are commands rather than only buttons, because "always reachable" has
--- to hold in the case they exist for: the panel is the wrong size, in the
--- wrong place, or off the screen entirely. A button inside it would be behind
--- the very problem it fixes.
+-- A command rather than only a button, because "always reachable" has to hold
+-- when the key is bound to something else or the panel is the thing that is
+-- wrong. `/ankigta-ui-reset` and the `Reset UI layout` button are gone: both
+-- existed because a window could be put somewhere unreachable, and none can
+-- be now. F7 opens the panel at its default position every time, the HUD and
+-- Review Mode keep their clamps and cannot leave the screen, and UI Scale is
+-- bounded to 0.5..2 by its own rule and editable from a panel that is always
+-- where it should be.
 addCommandHandler("ankigta-ui", function()
     if not authorized then
         return
@@ -1588,17 +1698,6 @@ addCommandHandler("ankigta-ui", function()
         end
     end
     actions.openSettings()
-end)
-
-addCommandHandler("ankigta-ui-reset", function()
-    if ANKIGTA.Layout then
-        ANKIGTA.Layout.reset()
-    end
-    if isPanelOpen() then
-        local x, y = panelRect()
-        guiSetPosition(guiBrowser, x, y, false)
-        push()
-    end
 end)
 
 -- --- what the page sends back -------------------------------------------------
@@ -1622,19 +1721,6 @@ function actions.openSettings()
     -- Server-owned values are the server's to report; ask, then render what
     -- comes back rather than guessing from a default.
     triggerServerEvent(SETTINGS_REQUEST_EVENT, resourceRoot)
-    push()
-end
-
---- Put UI scale and every placement back where they shipped.
-function actions.resetLayout()
-    if ANKIGTA.Layout then
-        ANKIGTA.Layout.reset()
-    end
-    if isPanelOpen() then
-        local x, y = panelRect()
-        guiSetPosition(guiBrowser, x, y, false)
-    end
-    notice = {key = "ui.resetDone", detail = false}
     push()
 end
 
@@ -1724,6 +1810,15 @@ end
 
 function actions.dragEnd()
     stopDrag()
+end
+
+--- The page's fields have taken the keyboard, or let it go.
+--
+-- Focus, not keystrokes: a player who has clicked into a field and paused to
+-- read the card is still mid-sentence, and the cursor has not moved because
+-- MTA's cursor never moves on its own.
+function actions.typing(payload)
+    typingInPanel = payload.active == true
 end
 
 function actions.startStudy()

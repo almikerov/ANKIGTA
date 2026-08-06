@@ -242,13 +242,6 @@ def settings_row(sandbox: MtaSandbox, key: str) -> Any:
     return None
 
 
-def reset_layout(sandbox: MtaSandbox) -> None:
-    sandbox.eval(
-        'function() triggerEvent("ankigta:panelAction", resourceRoot,'
-        ' "resetLayout", "{}") end'
-    )()
-
-
 def page_ready(sandbox: MtaSandbox) -> None:
     """The page telling Lua it loaded; nothing is pushed into it before that."""
     sandbox.eval(
@@ -571,24 +564,26 @@ def test_a_surface_too_big_for_the_screen_is_capped_and_the_setting_is_not() -> 
 
 #: Where these tests drag the panel to, and what fraction of a 1920x1080 screen
 #: that is.
-#:
-#: Inside the room the panel leaves. It is 1580 wide -- three columns, since the
-#: selected entity's pane became one of them -- so its left edge can be anywhere
-#: from 0 to 340, and a target past that would be measuring the clamp rather
-#: than the drag. `test_a_placement_off_the_new_screen_is_clamped_back_onto_it`
-#: is where the clamp is measured on purpose.
 DRAG_X, DRAG_Y = 192, 216
 DRAGGED_TO = {"x": 0.1, "y": 0.2}
 
 
-def test_dragging_f7_by_its_title_is_remembered_as_a_fraction_of_the_screen(
+def test_dragging_the_panel_holds_the_spot_for_this_session_only(
     client: MtaSandbox,
 ) -> None:
+    """The drag is honoured while the window lives, and never written down.
+
+    Ticket 11: the panel's placement is transient -- `Layout.snapshot`, which
+    is what the settings file stores, must not carry it, because F7 opens the
+    panel at its default position every time and nothing would ever read it
+    back.
+    """
     open_f7(client)
 
     drag_panel(client, DRAG_X, DRAG_Y)
 
-    assert placement(client)["panel"] == DRAGGED_TO
+    assert panel_rect(client)[:2] == (DRAG_X, DRAG_Y)
+    assert "panel" not in placement(client)
 
 
 def test_a_window_is_movable_by_its_title_and_never_resizable(
@@ -615,68 +610,152 @@ def test_a_window_is_movable_by_its_title_and_never_resizable(
     assert (x, y) == (DRAG_X, DRAG_Y)
     assert (width, height) == (width_before, height_before)
 
-def test_a_placement_survives_a_restart(client: MtaSandbox) -> None:
+def test_a_panel_drag_does_not_survive_the_window_let_alone_a_restart(
+    client: MtaSandbox,
+) -> None:
+    """F7 puts the panel at its default position, every time.
+
+    Not "restores it if it is off screen": unconditionally, so there is one
+    thing the player can rely on and no state to notice. The half that already
+    shipped is the Settings screen not outliving the window (ticket 08); this
+    is the same rule applied to where the window is.
+    """
     open_f7(client)
+    default = panel_rect(client)[:2]
     drag_panel(client, DRAG_X, DRAG_Y)
-    # The write is debounced, so a drag is one write rather than one per frame.
     client.fire_timers()
-    assert stored_settings(client)["uiPlacement"]["panel"] == DRAGGED_TO
+    # A file that was never written is the same proof as one without the key:
+    # nothing about the drag reached disk.
+    try:
+        stored = stored_settings(client)
+    except KeyError:
+        stored = {}
+    assert "panel" not in stored.get("uiPlacement", {})
+
+    # Close and reopen: the default spot, not the dragged one.
+    open_f7(client)
+    open_f7(client)
+    assert panel_rect(client)[:2] == default
 
     restarted = start_client(dict(client.files))
     try:
         open_f7(restarted)
-        assert panel_rect(restarted)[:2] == (DRAG_X, DRAG_Y)
+        assert panel_rect(restarted)[:2] == default
     finally:
         restarted.close()
 
 
-def test_a_drag_is_written_once_rather_than_once_per_frame(
-    client: MtaSandbox,
-) -> None:
-    """CEGUI reports a drag as a stream of moves."""
+def test_a_panel_drag_schedules_no_write_at_all(client: MtaSandbox) -> None:
+    """Nothing would ever read it back, so nothing is written."""
     open_f7(client)
 
     for step in range(20):
         drag_panel(client, 400 + step, 300 + step)
 
     pending = [timer for timer in client.recorder.timers if not timer.cancelled]
-    assert len([timer for timer in pending if timer.repeats == 1]) == 1
+    assert [timer for timer in pending if timer.repeats == 1] == []
 
 
-def test_a_placement_made_at_one_resolution_lands_in_the_same_place_at_another(
+def test_the_panel_can_be_dragged_past_every_screen_edge(
+    client: MtaSandbox,
+) -> None:
+    """The clamp is gone for the panel, in all four directions.
+
+    It could only go because the previous test holds: a window that opens at
+    its default position every time has nowhere it cannot come back from.
+    """
+    open_f7(client)
+
+    drag_panel(client, -400, -250)
+    assert panel_rect(client)[:2] == (-400, -250)
+
+    drag_panel(client, 1800, 1000)
+    assert panel_rect(client)[:2] == (1800, 1000)
+
+
+def test_a_panel_dragged_off_screen_does_not_poison_the_hud_write(
+    client: MtaSandbox,
+) -> None:
+    """An off-screen fraction is outside 0..1, which the placement rule
+    rightly refuses. If the snapshot carried the panel, the refusal would take
+    the HUD's own placement down with it."""
+    open_f7(client)
+    drag_panel(client, -400, -250)
+    push_statistics(client)
+    client.eval("function() ANKIGTA.Layout.setHudEditMode(true) end")()
+    x, y, _width, _height = rect(client, "hud")
+
+    drag_drawn_surface(client, (x + 10, y + 10), (400, 400))
+    client.fire_timers()
+
+    stored = stored_settings(client)["uiPlacement"]
+    assert "panel" not in stored
+    assert stored["hud"] == {
+        "x": pytest.approx(390 / 1920),
+        "y": pytest.approx(390 / 1080),
+    }
+
+
+def test_a_stored_panel_placement_from_an_older_build_is_ignored() -> None:
+    """Builds before ticket 11 wrote the panel's spot down; it is dropped on
+    read rather than honoured once and then forgotten."""
+    sandbox = MtaSandbox()
+    sandbox.write_file(
+        "@ankigta-settings.json",
+        json.dumps({"uiPlacement": {"panel": {"x": 0.1, "y": 0.2}}}),
+    )
+    try:
+        for script in manifest_client_scripts():
+            sandbox.load(script)
+        sandbox.trigger("onClientResourceStart")
+
+        assert placement(sandbox) == {}
+        assert sandbox.eval(
+            'function() return ANKIGTA.Layout.placements["panel"] == nil end'
+        )() is True
+    finally:
+        sandbox.close()
+
+
+def test_a_hud_placement_made_at_one_resolution_lands_in_the_same_place_at_another(
     client: MtaSandbox,
 ) -> None:
     """Normalized, so the corner means the same thing on every screen."""
-    open_f7(client)
-    drag_panel(client, DRAG_X, DRAG_Y)
+    client.eval("function(x, y) ANKIGTA.Layout.remember('hud', x, y) end")(
+        192, 216
+    )
     client.fire_timers()
 
     for width, height in RESOLUTIONS:
         restarted = start_client(dict(client.files), width=width, height=height)
         try:
-            x, y, panel_width, panel_height = rect(restarted, "panel")
+            x, y, hud_width, hud_height = rect(restarted, "hud")
             # The fraction is what was stored, so it lands in the same place —
-            # except where the surface is nearly as large as the screen, and
-            # then being wholly visible wins over being at the same fraction.
-            # Both are ticket 28's rule; the clamp is the half that matters at
-            # 1280x720.
+            # except where being wholly visible wins over being at the same
+            # fraction. Both are ticket 28's rule.
             assert (x, y) == (
-                min(round(DRAGGED_TO["x"] * width), width - panel_width),
-                min(round(DRAGGED_TO["y"] * height), height - panel_height),
+                min(round(0.1 * width), width - hud_width),
+                min(round(0.2 * height), height - hud_height),
             )
             assert x >= 0 and y >= 0
-            assert x + panel_width <= width and y + panel_height <= height
+            assert x + hud_width <= width and y + hud_height <= height
         finally:
             restarted.close()
 
 
-def test_a_placement_off_the_new_screen_is_clamped_back_onto_it() -> None:
-    """A window dragged to the bottom-right of a 4K screen, reopened at 720p."""
+def test_a_hud_placement_off_the_new_screen_is_clamped_back_onto_it() -> None:
+    """The HUD dragged to the bottom-right of a 4K screen, reopened at 720p.
+
+    The HUD keeps its clamp and its saved placement (ticket 11's decision): it
+    has no "open" moment to reset on, and it is placed deliberately in Edit
+    HUD layout -- so the clamp is what keeps it reachable.
+    """
     big = start_client(width=3840, height=2160)
     try:
-        open_f7(big)
-        _x, _y, width, height = rect(big, "panel")
-        drag_panel(big, 3840 - width, 2160 - height)
+        _x, _y, width, height = rect(big, "hud")
+        big.eval("function(x, y) ANKIGTA.Layout.remember('hud', x, y) end")(
+            3840 - width, 2160 - height
+        )
         big.fire_timers()
         files = dict(big.files)
     finally:
@@ -684,26 +763,26 @@ def test_a_placement_off_the_new_screen_is_clamped_back_onto_it() -> None:
 
     small = start_client(files, width=1280, height=720)
     try:
-        x, y, width, height = rect(small, "panel")
+        x, y, width, height = rect(small, "hud")
         assert x + width <= 1280
         assert y + height <= 720
-        # The title bar is what the player has to be able to grab.
         assert y >= 0 and x >= 0
     finally:
         small.close()
 
 
-def test_the_screen_changing_size_puts_an_open_window_back_on_it(
+def test_the_screen_changing_size_keeps_a_placed_hud_on_it(
     client: MtaSandbox,
 ) -> None:
     """MTA reports no resolution change, so the manager polls for it."""
-    open_f7(client)
-    drag_panel(client, 1000, 700)
+    client.eval("function(x, y) ANKIGTA.Layout.remember('hud', x, y) end")(
+        1800, 1000
+    )
 
     client.screen_width, client.screen_height = 1280, 720
     client.eval("function() return ANKIGTA.Layout.refresh() end")()
 
-    x, y, width, height = panel_rect(client)
+    x, y, width, height = rect(client, "hud")
     assert x + width <= 1280
     assert y + height <= 720
 
@@ -712,7 +791,7 @@ def test_a_stored_placement_that_is_not_one_is_discarded_with_a_diagnostic() -> 
     sandbox = MtaSandbox()
     sandbox.write_file(
         "@ankigta-settings.json",
-        json.dumps({"uiPlacement": {"panel": {"x": 4.5, "y": -2}}}),
+        json.dumps({"uiPlacement": {"hud": {"x": 4.5, "y": -2}}}),
     )
     try:
         for script in manifest_client_scripts():
@@ -731,14 +810,15 @@ def test_a_stored_placement_that_is_not_one_is_discarded_with_a_diagnostic() -> 
 def test_a_placement_the_file_will_not_take_is_reported_rather_than_lost(
     client: MtaSandbox,
 ) -> None:
-    """The window stays where the player put it; the file did not take it."""
-    open_f7(client)
+    """The HUD stays where the player put it; the file did not take it."""
     client.file_writes_fail = True
 
-    drag_panel(client, DRAG_X, DRAG_Y)
+    client.eval("function(x, y) ANKIGTA.Layout.remember('hud', x, y) end")(
+        DRAG_X, DRAG_Y
+    )
     client.fire_timers()
 
-    assert placement(client)["panel"] == DRAGGED_TO
+    assert placement(client)["hud"] == DRAGGED_TO
     assert any(
         "ui_placement_not_stored" in line
         for line in client.recorder.debug_messages()
@@ -751,7 +831,7 @@ def test_a_placement_for_a_surface_this_version_no_longer_has_is_dropped() -> No
     sandbox.write_file(
         "@ankigta-settings.json",
         json.dumps(
-            {"uiPlacement": {"panel": {"x": 0.1, "y": 0.2}, "gone": {"x": 0.3, "y": 0.4}}}
+            {"uiPlacement": {"hud": {"x": 0.1, "y": 0.2}, "gone": {"x": 0.3, "y": 0.4}}}
         ),
     )
     try:
@@ -759,7 +839,7 @@ def test_a_placement_for_a_surface_this_version_no_longer_has_is_dropped() -> No
             sandbox.load(script)
         sandbox.trigger("onClientResourceStart")
 
-        assert set(placement(sandbox)) == {"panel"}
+        assert set(placement(sandbox)) == {"hud"}
     finally:
         sandbox.close()
 
@@ -916,106 +996,95 @@ def test_the_hud_follows_the_scale(client: MtaSandbox) -> None:
     )
 
 
-# --- Reset UI layout ----------------------------------------------------------
+# --- the rescue that no longer rescues ----------------------------------------
+#
+# `Reset UI layout` and `/ankigta-ui-reset` existed because a window could be
+# put somewhere unreachable. Ticket 11 removed the ways that could happen, so
+# the control went with them -- and these tests hold each link of the argument
+# that let it go.
 
 
-def test_reset_ui_layout_restores_the_shipped_scale_and_placement(
-    client: MtaSandbox,
-) -> None:
+def test_the_reset_button_and_command_are_gone(client: MtaSandbox) -> None:
+    assert "ankigta-ui-reset" not in client.commands
+
     open_f7(client)
-    drag_panel(client, 40, 40)
-    set_scale(client, 1.8)
-    client.eval("function() ANKIGTA.Layout.setHudEditMode(true) end")()
+    page_ready(client)
+    set_setting_action(client, "resetLayout", {})
 
-    reset_layout(client)
-
-    assert scale(client) == 1
-    assert placement(client) == {}
-    assert client.eval("function() return ANKIGTA.Layout.hudEditMode() end")() is False
-    assert stored_settings(client)["uiPlacement"] == {}
-    assert stored_settings(client)["uiScale"] == 1
+    assert any(
+        "panel_unknown_action" in line
+        for line in client.recorder.debug_messages()
+    )
 
 
-def test_reset_ui_layout_survives_a_restart(client: MtaSandbox) -> None:
-    open_f7(client)
-    drag_panel(client, 40, 40)
-    client.fire_timers()
-    reset_layout(client)
-
-    restarted = start_client(dict(client.files))
-    try:
-        assert placement(restarted) == {}
-        assert scale(restarted) == 1
-    finally:
-        restarted.close()
-
-
-@pytest.mark.parametrize("wanted", SCALES)
+@pytest.mark.parametrize("wanted", [0.5, 2])
 @pytest.mark.parametrize(
     ("width", "height"), RESOLUTIONS, ids=lambda value: str(value)
 )
-def test_reset_ui_layout_is_reachable_however_the_layout_was_left(
+def test_ui_scale_is_recoverable_from_its_extremes_without_a_reset(
     wanted: float,
     width: int,
     height: int,
 ) -> None:
-    """The way back cannot depend on the state it is the way back from.
+    """The link the removal leans on hardest.
 
-    `Reset UI layout` is a row in the settings panel, but that panel is laid
-    out by the very thing being reset. So the way back is also a command, which
-    cannot be too big for the screen, dragged off it, or scaled out of reach.
+    `Layout.reset` was also the only way back from a UI Scale of 0.5, so it
+    could only go if the scale is recoverable through the panel itself: the
+    panel opens at its default position -- on screen, since its size is capped
+    to the screen -- at every allowed scale and resolution, and the scale row
+    takes a typed value back to 1.
     """
     sandbox = start_client(width=width, height=height)
     try:
-        set_scale(sandbox, wanted)
-        open_f7(sandbox)
-        # Everything shoved into one corner, at the extreme scale.
-        for surface in ("f7", "cardPicker", "hud", "review"):
-            sandbox.eval("function(k, x, y) ANKIGTA.Layout.remember(k, x, y) end")(
-                surface, width, height
-            )
-
-        sandbox.commands["ankigta-ui-reset"][0]()
-
-        assert scale(sandbox) == 1
-        assert placement(sandbox) == {}
-    finally:
-        sandbox.close()
-
-
-@pytest.mark.parametrize("wanted", SCALES)
-@pytest.mark.parametrize(
-    ("width", "height"), RESOLUTIONS, ids=lambda value: str(value)
-)
-def test_the_reset_row_is_inside_the_panel_at_every_scale(
-    wanted: float,
-    width: int,
-    height: int,
-) -> None:
-    """Reset stays reachable however the layout was left.
-
-    The row itself is HTML and CSS keeps it inside the page, so what this
-    checks is the part that can still go wrong here: the panel is on screen,
-    and the reset it offers actually puts scale and placement back.
-    """
-    sandbox = start_client(width=width, height=height)
-    try:
-        set_scale(sandbox, wanted)
+        assert set_scale(sandbox, wanted) is True
         sandbox.commands["ankigta-ui"][0]()
         page_ready(sandbox)
-        drag_panel(sandbox, width * 0.4, height * 0.4)
 
         panel_x, panel_y, panel_width, panel_height = rect(sandbox, "panel")
         assert panel_x >= 0 and panel_y >= 0
         assert panel_x + panel_width <= width
         assert panel_y + panel_height <= height
+        assert pushed_section(sandbox) == "settings"
 
-        reset_layout(sandbox)
-
+        set_setting(sandbox, "uiScale", 1)
         assert scale(sandbox) == 1
-        assert placement(sandbox) == {}
     finally:
         sandbox.close()
+
+
+def test_the_hud_still_cannot_be_dragged_off_screen(client: MtaSandbox) -> None:
+    """The HUD's own rescue is its clamp, and it stays."""
+    push_statistics(client)
+    client.eval("function() ANKIGTA.Layout.setHudEditMode(true) end")()
+    x, y, _width, _height = rect(client, "hud")
+
+    drag_drawn_surface(client, (x + 10, y + 10), (5000, 5000))
+
+    moved_x, moved_y, width, height = rect(client, "hud")
+    assert moved_x + width <= 1920
+    assert moved_y + height <= 1080
+
+
+def test_review_mode_keeps_its_clamp_and_its_placement(
+    client: MtaSandbox,
+) -> None:
+    """Ticket 11's decision for the third surface, written down as a test.
+
+    Review Mode reopens on every card of a session; forgetting its placement
+    each time would undo the player's adjustment fifty times an hour. So it
+    keeps the saved placement -- and therefore keeps the clamp, which is what
+    guarantees a surface that remembers where it was can never be lost.
+    """
+    client.eval("function(x, y) ANKIGTA.Layout.remember('review', x, y) end")(
+        5000, 5000
+    )
+    client.fire_timers()
+
+    x, y, width, height = rect(client, "review")
+    assert x + width <= 1920
+    assert y + height <= 1080
+    assert "review" in placement(client)
+    assert "review" in stored_settings(client)["uiPlacement"]
 
 def test_the_panel_is_reachable_from_f7_as_well_as_from_the_command(
     client: MtaSandbox,

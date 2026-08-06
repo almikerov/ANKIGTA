@@ -342,6 +342,19 @@ Settings.schema = {
     -- read a list -- so this is the way to say no. The player's own machine
     -- decides where the player's own camera goes, hence CLIENT.
     focusOnSelect = {authority = CLIENT, default = true, rule = toggle()},
+    -- How visible the panel is while the mouse is elsewhere. Under the cursor,
+    -- or while a field is being typed into, it is fully opaque whatever this
+    -- says: a panel being used is not in anybody's way.
+    --
+    -- The floor is a rule, not a warning. Zero would be a window that is still
+    -- there, still eats the cursor, and cannot be seen -- so a value below the
+    -- minimum is refused like any other out-of-range number, and no stored
+    -- value can make the panel invisible.
+    panelIdleOpacity = {
+        authority = CLIENT,
+        default = 0.6,
+        rule = numeric(0.2, 1, nil, 2),
+    },
     reviewProtection = {authority = CLIENT, default = true, rule = toggle()},
     disablePlayerControls = {authority = CLIENT, default = true, rule = toggle()},
     closeAfterRating = {authority = CLIENT, default = true, rule = toggle()},
@@ -406,6 +419,7 @@ Settings.order = {
     "indicatorMode",
     "showEntitiesOnMap",
     "focusOnSelect",
+    "panelIdleOpacity",
     "reviewProtection",
     "disablePlayerControls",
     "closeAfterRating",

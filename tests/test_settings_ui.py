@@ -859,13 +859,14 @@ def test_a_stored_value_the_schema_no_longer_accepts_falls_back_to_the_default()
     sandbox.close()
 
 
-def test_the_panel_placement_is_remembered_without_entering_change_history() -> None:
-    """Dragged, not positioned by hand.
+def test_the_panel_placement_lives_and_dies_with_the_window() -> None:
+    """Dragged, honoured for this session, and never written down.
 
-    Ticket 28 made placement the layout manager's business: it hears the drag,
-    stores it as a fraction of the screen, and puts the window back there. The
-    panel is a page rather than a CEGUI window, so the drag arrives as an
-    action and Lua follows the cursor — but the manager's part is unchanged.
+    Ticket 28 made placement the layout manager's business; ticket 11 made the
+    panel's transient: the drag is followed while the window lives, closing
+    the window forgets it, and F7 opens the panel at its default position
+    every time. So nothing reaches the file — and a placement that is never
+    stored can enter no Change History either.
     """
     first = open_client()
     open_panel(first)
@@ -875,8 +876,12 @@ def test_the_panel_placement_is_remembered_without_entering_change_history() -> 
     first.cursor_position = (1020 / 1920, 640 / 1080)
     first.trigger("onClientRender")
     first.key_states["mouse1"] = False
-    # The write is debounced, so a drag is one write rather than one per frame.
     first.fire_timers()
+
+    held = call(
+        first, 'function() return ANKIGTA.Layout.placements["panel"] end'
+    )
+    assert held is not None, "the drag was not followed"
     disk = dict(first.files)
     first.close()
 
@@ -886,8 +891,7 @@ def test_the_panel_placement_is_remembered_without_entering_change_history() -> 
     placement = call(
         second, 'function() return ANKIGTA.Layout.placements["panel"] end'
     )
-    assert placement is not None, "the drag was not remembered"
-    assert 0 <= placement["x"] <= 1 and 0 <= placement["y"] <= 1
+    assert placement is None, "a session placement outlived the session"
     assert (
         call(
             second,

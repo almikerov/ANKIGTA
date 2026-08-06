@@ -386,6 +386,10 @@ class Widget:
     #: with both enabled (`CGUIWindow_Impl`), so that is what they start as.
     movable: bool = True
     sizable: bool = True
+    #: `guiSetAlpha` / `guiGetAlpha`. CEGUI windows start fully opaque, and
+    #: MTA clamps a set to 0..1 before applying it
+    #: (`CLuaGUIDefs::GUISetAlpha`).
+    alpha: float = 1.0
 
 
 class MtaSandbox:
@@ -2883,6 +2887,20 @@ class MtaSandbox:
             widget = widget_of(handle)
             return len(widget.rows) if widget is not None else 0
 
+        def set_alpha(handle: Any, alpha: Any) -> bool:
+            widget = widget_of(handle)
+            if widget is None:
+                return False
+            # MTA clamps before applying (`CLuaGUIDefs::GUISetAlpha` passes
+            # `Clamp(0.0f, alpha, 1.0f)`), so an out-of-range value never
+            # reaches CEGUI.
+            widget.alpha = min(1.0, max(0.0, float(alpha)))
+            return True
+
+        def get_alpha(handle: Any) -> Any:
+            widget = widget_of(handle)
+            return widget.alpha if widget is not None else False
+
         g.guiSetEnabled = set_enabled
         g.guiGetEnabled = get_enabled
         g.guiSetProperty = lambda *_args: True
@@ -2904,6 +2922,8 @@ class MtaSandbox:
         g.guiGetSize = get_size
         g.guiWindowSetMovable = set_movable
         g.guiWindowSetSizable = set_sizable
+        g.guiSetAlpha = set_alpha
+        g.guiGetAlpha = get_alpha
         g.guiBringToFront = lambda *_args: True
 
     def _destroy_widget(self, index: int) -> None:
