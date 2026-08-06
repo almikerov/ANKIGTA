@@ -1,4 +1,9 @@
 mypy>=1.15,<2
 pytest>=9,<10
+# The suite is 1780 tests and no single one is slow -- the top twelve are 25s
+# of 130. So the only lever is running them at once: `-n 8` takes it to ~26s,
+# measured three times, same 1780 passing. Every test builds its own sandbox
+# and its own tmp database, which is what makes that safe.
+pytest-xdist>=3.8,<4
 # Lua 5.1 interpreter for the executable MTA resource harness (tests/lua).
 lupa>=2.5,<3
