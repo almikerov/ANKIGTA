@@ -1485,6 +1485,19 @@ local function openPanel()
     end
 end
 
+--- The cursor in screen pixels, or nothing while there is none to read.
+--
+-- MTA reports it as a fraction of the screen; everything here wants pixels,
+-- and three readers doing their own multiplication is how one of them forgets.
+local function cursorPixels()
+    local relX, relY = getCursorPosition()
+    if not relX or not relY then
+        return nil
+    end
+    local screenWidth, screenHeight = guiGetScreenSize()
+    return relX * screenWidth, relY * screenHeight
+end
+
 -- --- fading when it is not being used -----------------------------------------
 
 --- How far the panel's opacity moves toward its target per frame.
@@ -1528,12 +1541,10 @@ local function cursorOverPanel()
     if not isCursorShowing() then
         return false
     end
-    local relX, relY = getCursorPosition()
-    if not relX or not relY then
+    local cursorX, cursorY = cursorPixels()
+    if not cursorX then
         return false
     end
-    local screenWidth, screenHeight = guiGetScreenSize()
-    local cursorX, cursorY = relX * screenWidth, relY * screenHeight
     local x, y = guiGetPosition(guiBrowser, false)
     local width, height = guiGetSize(guiBrowser, false)
     if type(x) ~= "number" or type(width) ~= "number" then
@@ -1580,13 +1591,12 @@ local function followCursor()
     if not getKeyState("mouse1") then
         return stopDrag()
     end
-    local cursorX, cursorY = getCursorPosition()
-    if not cursorX or not cursorY then
+    local cursorX, cursorY = cursorPixels()
+    if not cursorX then
         return stopDrag()
     end
-    local screenWidth, screenHeight = guiGetScreenSize()
-    local x = dragFrom.x + (cursorX * screenWidth - dragFrom.cursorX)
-    local y = dragFrom.y + (cursorY * screenHeight - dragFrom.cursorY)
+    local x = dragFrom.x + (cursorX - dragFrom.cursorX)
+    local y = dragFrom.y + (cursorY - dragFrom.cursorY)
     if ANKIGTA.Layout then
         -- Clamping, storing, writing and repositioning are the layout
         -- manager's, so a drag cannot put the panel somewhere the next
@@ -1794,18 +1804,12 @@ function actions.dragStart()
     if not isPanelOpen() or not isCursorShowing() then
         return
     end
-    local cursorX, cursorY = getCursorPosition()
-    if not cursorX or not cursorY then
+    local cursorX, cursorY = cursorPixels()
+    if not cursorX then
         return
     end
-    local screenWidth, screenHeight = guiGetScreenSize()
     local x, y = guiGetPosition(guiBrowser, false)
-    dragFrom = {
-        cursorX = cursorX * screenWidth,
-        cursorY = cursorY * screenHeight,
-        x = x,
-        y = y,
-    }
+    dragFrom = {cursorX = cursorX, cursorY = cursorY, x = x, y = y}
 end
 
 function actions.dragEnd()
