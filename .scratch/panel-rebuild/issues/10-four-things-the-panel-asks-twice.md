@@ -94,11 +94,19 @@ is checked. It does not lay anything out, so these stay for the deploy:
   control is appended straight after the field rather than after the sentence
   that belongs below it; the column it lands in is the stylesheet's.
 
-The first of these was asked for on the running server and could not be
-answered: `mcp__mta-agent-devtools__status` reports `clientReachable: false`
-with no player connected, and the server is not running this build. Both are
-needed — the branch deployed and the owner in game — and neither is this
-chat's to arrange. **Still unchecked live.**
+The first of these was asked of the running server and could not be answered:
+with a player connected, the server the devtools is attached to has **no
+`ankigta` resource at all** — `resource ankigta` answers `NO_SUCH_RESOURCE`, 4
+of 47 resources are running, and the client reports zero CEF browsers. There was
+nothing there to look at, and deploying is the main chat's so that the server
+always equals the trunk (`HOWTO.md`). The owner is checking it after the deploy.
+
+It is the check this correction most needs. The last version passed its tests on
+class names and was still wrong on screen, so what is pinned in a test now is
+the structural fact underneath the report: the pane is not inside the list's
+column, and its own column comes before it
+(`test_the_pane_and_the_list_are_different_columns`). Where those columns
+actually land is the stylesheet's, and only a rendered page can say.
 
 ## Found while doing it, not fixed
 

@@ -606,9 +606,9 @@ label {
 .entity-settings .inline > span:first-child { flex: 0 0 84px; }
 .entity-settings input[type="number"] { width: 90px; }
 .entity-settings .key-capture { width: 120px; }
-/* A tick and its word, in that order and close together: the label belongs to
-   the box rather than standing in the column of field names beside it. */
-.entity-settings .check > span { flex: 0 1 auto; }
+/* A tick and its word, in that order: the label belongs to the box rather than
+   standing in the column of field names beside it, which is what the box being
+   the row's first child says. */
 .entity-settings input[type="checkbox"] {
   flex: 0 0 auto;
   width: 16px;
