@@ -128,6 +128,14 @@ CEGUI window placed mid-screen does not appear in its captures at all, so the
 capture path excludes the GUI layer — verified before concluding, probes and
 screenshots destroyed after.
 
+What the repository carries forward from that probe is the sandbox stub
+(`tests/lua/sandbox.py`: `guiSetAlpha` accepts, clamps 0..1, and
+`guiGetAlpha` reads back) and the tests standing on it. The probe itself is a
+one-off against a running client and is not re-runnable evidence — which is
+the rule in `docs/agents/mta-gta-reference-policy.md`: a live finding becomes
+a test, or it did not happen. Anyone doubting the stub can repeat the probe:
+`guiCreateBrowser`, `guiSetAlpha(probe, 0.25)`, `guiGetAlpha(probe)`.
+
 **The surfaces, decided.** `panel` is `transient` (`client/layout.lua`,
 `Layout.define` docs): unclamped in `rect`/`moveTo`, excluded from
 `snapshot` — an off-screen fraction outside 0..1 would otherwise poison the
@@ -145,11 +153,13 @@ exist** — `Layout` knows `panel`, `review`, `hud` plus dead CEGUI-era defines
 code.
 
 **The rescue, removed with its argument checked.** Every link is now a test
-(`tests/test_ui_layout.py`, "the rescue that no longer rescues"): F7 opens the
-panel at its default position at every allowed scale and resolution, the HUD
-and Review Mode cannot be dragged off screen, and UI Scale is recoverable from
-both extremes by typing into the panel's own row (`/ankigta-ui` still opens
-Settings directly). `#reset-layout`, `actions.resetLayout`,
+(`tests/test_ui_layout.py`, "the rescue that no longer rescues"): pressing F7
+at either extreme of the allowed scale, at each supported resolution, puts the
+panel wholly on screen, and UI Scale is typed back to 1 from the row it opens
+onto; the HUD and Review Mode cannot be dragged off screen. The test presses
+F7 rather than calling `/ankigta-ui` on purpose — the command is the fallback,
+and a link tested only through the fallback is a link that has not been
+tested. `#reset-layout`, `actions.resetLayout`,
 `/ankigta-ui-reset`, `Layout.reset` and the `ui.reset*` strings are gone.
 
 **What remains manual** (`docs/agents/mta-gta-reference-policy.md` §testing):

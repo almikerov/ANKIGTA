@@ -1691,12 +1691,9 @@ addCommandHandler("ankigta-connection", togglePanel)
 --
 -- A command rather than only a button, because "always reachable" has to hold
 -- when the key is bound to something else or the panel is the thing that is
--- wrong. `/ankigta-ui-reset` and the `Reset UI layout` button are gone: both
--- existed because a window could be put somewhere unreachable, and none can
--- be now. F7 opens the panel at its default position every time, the HUD and
--- Review Mode keep their clamps and cannot leave the screen, and UI Scale is
--- bounded to 0.5..2 by its own rule and editable from a panel that is always
--- where it should be.
+-- wrong. It is the only one of these left: `/ankigta-ui-reset` and the
+-- `Reset UI layout` button are gone, for the reason written down where
+-- `Layout.reset` used to be.
 addCommandHandler("ankigta-ui", function()
     if not authorized then
         return

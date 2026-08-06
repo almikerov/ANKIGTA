@@ -1037,13 +1037,18 @@ def test_ui_scale_is_recoverable_from_its_extremes_without_a_reset(
     sandbox = start_client(width=width, height=height)
     try:
         assert set_scale(sandbox, wanted) is True
-        sandbox.commands["ankigta-ui"][0]()
+        # By the key the player presses, not by the command: the command is
+        # the fallback, and a link tested only through the fallback is a link
+        # that has not been tested.
+        open_f7(sandbox)
         page_ready(sandbox)
 
         panel_x, panel_y, panel_width, panel_height = rect(sandbox, "panel")
         assert panel_x >= 0 and panel_y >= 0
         assert panel_x + panel_width <= width
         assert panel_y + panel_height <= height
+
+        set_setting_action(sandbox, "openSettings", {})
         assert pushed_section(sandbox) == "settings"
 
         set_setting(sandbox, "uiScale", 1)

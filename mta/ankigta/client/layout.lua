@@ -66,6 +66,17 @@ end
 
 Layout.scaleValue = schemaDefault(SCALE_KEY, 1)
 
+--- Does this surface's placement last only as long as the surface does?
+--
+-- Asked by name in the four places that care, rather than each of them
+-- reaching into `Layout.surfaces` for the flag: the four are one decision (see
+-- `Layout.define`), and four spellings of the same lookup is how three of them
+-- come to answer it and the fourth to forget.
+local function transient(key)
+    local surface = Layout.surfaces[key]
+    return surface ~= nil and surface.transient == true
+end
+
 local function clamp(value, low, high)
     if high < low then
         return low
@@ -200,7 +211,7 @@ function Layout.rect(key)
     -- surface goes exactly where the player put it, off screen included:
     -- closing and reopening is what brings it back, so there is nowhere it can
     -- be lost.
-    if not surface.transient then
+    if not transient(key) then
         x = clamp(x, 0, screenWidth - width)
         y = clamp(y, 0, screenHeight - height)
     end
@@ -225,7 +236,7 @@ function Layout.moveTo(key, x, y)
     end
     local width, height = Layout.size(key)
     x, y = tonumber(x) or 0, tonumber(y) or 0
-    if not surface.transient then
+    if not transient(key) then
         x = clamp(x, 0, screenWidth - width)
         y = clamp(y, 0, screenHeight - height)
     end
@@ -246,8 +257,7 @@ end
 function Layout.snapshot()
     local snapshot = {}
     for key, spot in pairs(Layout.placements) do
-        local surface = Layout.surfaces[key] or {}
-        if not surface.transient then
+        if not transient(key) then
             snapshot[key] = {x = spot.x, y = spot.y}
         end
     end
@@ -305,8 +315,7 @@ function Layout.remember(key, x, y)
     if not moved then
         return false, reason
     end
-    local surface = Layout.surfaces[key] or {}
-    if not surface.transient then
+    if not transient(key) then
         schedulePersist()
     end
     return true
@@ -440,7 +449,7 @@ function Layout.applySettings(scale, placement)
             -- rather than carried around forever -- and so is one stored for a
             -- surface that is transient now, by a build from before it was.
             if Layout.surfaces[key]
-                and not Layout.surfaces[key].transient
+                and not transient(key)
                 and type(spot) == "table"
             then
                 local x, y = tonumber(spot.x), tonumber(spot.y)
