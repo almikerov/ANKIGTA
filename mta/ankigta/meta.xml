@@ -13,6 +13,10 @@
          one". They share the order so they cannot drift into two answers. -->
     <script src="shared/nearest.lua" type="shared" />
     <script src="shared/entity_types.lua" type="shared" />
+    <!-- What a Text Label says, between a note field and a drawn line. Shared
+         because the server resolves the words and the panel shows the same
+         answer the world does. -->
+    <script src="shared/text_label.lua" type="shared" />
     <script src="server/connection_config.lua" type="server" />
     <script src="server/companion.lua" type="server" />
     <!-- Before the store: the store asks it for a verified copy before it
@@ -26,6 +30,9 @@
     <script src="server/map_identity.lua" type="server" />
     <script src="server/teleport.lua" type="server" />
     <script src="server/statistics.lua" type="server" />
+    <!-- Which Map Entity is showing what in `Show text`. After the store it
+         reads the links, the overrides and the cached words out of. -->
+    <script src="server/text_labels.lua" type="server" />
     <script src="server/main.lua" type="server" />
     <!-- First on this side: every window asks it where it goes and how big it
          is, and the settings store hands it the stored scale and placement. -->
@@ -42,6 +49,10 @@
          at. Before the polling below, which asks it whether a corona already
          marks a spot before the indicator puts a second mark on top of one. -->
     <script src="client/world_marks.lua" type="client" cache="false" />
+    <!-- After it: a Text Label is drawn through one of its doors, is found by
+         its look at the world, and holds back the `<KEY> to view` prompt on
+         the entity it has taken. -->
+    <script src="client/text_labels.lua" type="client" cache="false" />
     <!-- After both: it is the world-polling that feeds them, and it hands the
          indicator the source its markers follow. -->
     <script src="client/spatial.lua" type="client" cache="false" />

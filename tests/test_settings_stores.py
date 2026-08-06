@@ -547,6 +547,13 @@ SERVER_VALUES = {
     "showCorona": True,
     "coronaColor": "#ffaa00",
     "coronaOpacity": 0.35,
+    # What `Show text` draws on the object, how it looks and how far it
+    # carries. The world's for the same reason the corona is: every player
+    # standing near the object reads the same line off it.
+    "textLabelField": "Back",
+    "textLabelColor": "#00ff80",
+    "textLabelSize": 1.5,
+    "textLabelDistance": 40,
 }
 
 
@@ -654,6 +661,10 @@ def test_a_snapshot_carries_every_answerable_setting_and_no_secret(
         "activationDelaySeconds",
         "maxActivationSpeedKmh",
         "reviewMode",
+        "textLabelField",
+        "textLabelColor",
+        "textLabelSize",
+        "textLabelDistance",
         "showCorona",
         "coronaColor",
         "coronaOpacity",

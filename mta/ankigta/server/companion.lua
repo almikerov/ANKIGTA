@@ -8,6 +8,7 @@ local CARD_SEARCH_PATH = "/v1/cards/search"
 local CARD_READ_PATH = "/v1/cards/read"
 local CARD_STATES_PATH = "/v1/cards/states"
 local NOTE_UPDATE_PATH = "/v1/notes/update"
+local NOTE_READ_PATH = "/v1/notes/read"
 local CARD_STATE_REFRESHED_EVENT = "ankigta:cardStateRefreshed"
 local CARD_STATES_REFRESHED_EVENT = "ankigta:cardStatesRefreshed"
 local STUDY_STATE_EVENT = "ankigta:studyStateChanged"
@@ -1520,6 +1521,50 @@ function Gateway.requestNoteUpdate(player, cardIdentity, fields, tags, settle)
         cardId = tonumber(cardIdentity.cardId),
         fields = fields,
         tags = tags,
+    }, settle)
+end
+
+--- The words behind many cards at once, for the Text Label cache.
+--
+-- A batch because this is asked on connecting, for every Spatial Link there
+-- is: one request per card over a reference world would be thousands of round
+-- trips before the first label could be drawn.
+--
+-- Nothing here is part of rating, and the mode that reads it has no rating at
+-- all (ADR 0029). What comes back is a copy for display; Anki remains the
+-- owner of it (ADR 0017).
+function Gateway.requestNotes(player, identities, settle)
+    if not canPresentTo(player) then
+        settle(false, "forbidden")
+        return false, "forbidden"
+    end
+    if type(identities) ~= "table" then
+        settle(false, "invalid_anki_card_identity")
+        return false, "invalid_anki_card_identity"
+    end
+    local body = {}
+    for _, identity in ipairs(identities) do
+        if type(identity) ~= "table"
+            or type(identity.collectionUuid) ~= "string"
+            or identity.collectionUuid == ""
+            or (tonumber(identity.cardId) or 0) <= 0
+        then
+            settle(false, "invalid_anki_card_identity")
+            return false, "invalid_anki_card_identity"
+        end
+        body[#body + 1] = {
+            collectionUuid = identity.collectionUuid,
+            cardId = tonumber(identity.cardId),
+        }
+    end
+    if #body == 0 then
+        -- Nothing linked is not a failure and not a request: answering it here
+        -- keeps the caller from having to tell an empty world from a refusal.
+        settle(true, {notes = {}})
+        return true, "no_identities"
+    end
+    return companionRequest(player, NOTE_READ_PATH, {
+        cardIdentities = body,
     }, settle)
 end
 

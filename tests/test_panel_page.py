@@ -365,12 +365,33 @@ def entity(**over: Any) -> dict[str, Any]:
         "coronaColorInherited": True,
         "coronaOpacity": 0.6,
         "coronaOpacityInherited": True,
+        "textLabelField": "",
+        "textLabelFieldInherited": True,
+        "textLabelColor": "#ffffff",
+        "textLabelColorInherited": True,
+        "textLabelSize": 1,
+        "textLabelSizeInherited": True,
+        "textLabel": False,
         "linkedCard": False,
         "recheckAvailable": False,
         "copyCollision": False,
     }
     row.update(over)
     return row
+
+
+def text_label(**over: Any) -> dict[str, Any]:
+    """What one row's Text Label really shows, as `server/main.lua` reports it."""
+    label: dict[str, Any] = {
+        "requestedField": "",
+        "fieldName": "Front",
+        "fallback": False,
+        "reason": False,
+        "truncated": False,
+        "lines": ["hola"],
+    }
+    label.update(over)
+    return label
 
 
 def selecting(row: dict[str, Any], **over: Any) -> dict[str, Any]:
@@ -1198,6 +1219,380 @@ def test_a_typed_opacity_is_sent_as_the_number_it_is() -> None:
     )
 
     assert actions(answer, "setEntityMarks") == [{"coronaOpacity": 0.25}]
+
+
+# --- what the object says, in Review mode `Show text` ------------------------
+
+
+def test_the_pane_offers_the_three_things_a_text_label_is_made_of() -> None:
+    """Field, colour and size, each on the row where the overrides are set --
+    so a player can set them without changing mode first."""
+    answer = run_page([{"receive": selecting(entity())}])
+
+    assert node(answer, "entity-text-label-field")["disabled"] is False
+    assert node(answer, "entity-text-label-size")["disabled"] is False
+    assert picker_button(answer, "entityTextLabelColor")["disabled"] is False
+
+
+def test_the_text_label_controls_show_the_values_in_force() -> None:
+    """The entity's own where it has one, the global where it has not: a blank
+    box would claim the entity has no answer when it plainly has."""
+    answer = run_page(
+        [
+            {
+                "receive": selecting(
+                    entity(
+                        textLabelField="Back",
+                        textLabelFieldInherited=False,
+                        textLabelSize=2.5,
+                        textLabelSizeInherited=False,
+                        textLabelColor="#ff8000",
+                        textLabelColorInherited=False,
+                    )
+                )
+            }
+        ]
+    )
+
+    assert node(answer, "entity-text-label-field")["value"] == "Back"
+    assert node(answer, "entity-text-label-size")["value"] == "2.5"
+    assert (
+        picker_button(answer, "entityTextLabelColor")["attrs"]["data-value"]
+        == "#ff8000"
+    )
+
+
+def test_a_text_label_setting_that_is_inherited_says_so() -> None:
+    following = run_page(
+        [
+            {
+                "receive": selecting(
+                    entity(), locale={"f7.inherited": "following Settings"}
+                )
+            }
+        ]
+    )
+    for control in (
+        "entity-text-label-field-inherited",
+        "entity-text-label-color-inherited",
+        "entity-text-label-size-inherited",
+    ):
+        assert node(following, control)["hidden"] is False, control
+        assert node(following, control)["text"] == "following Settings"
+
+    chosen = run_page(
+        [
+            {
+                "receive": selecting(
+                    entity(
+                        textLabelField="Back",
+                        textLabelFieldInherited=False,
+                        textLabelColor="#ff8000",
+                        textLabelColorInherited=False,
+                        textLabelSize=2.5,
+                        textLabelSizeInherited=False,
+                    )
+                )
+            }
+        ]
+    )
+    for control in (
+        "entity-text-label-field-inherited",
+        "entity-text-label-color-inherited",
+        "entity-text-label-size-inherited",
+    ):
+        assert node(chosen, control)["hidden"] is True, control
+
+
+def test_a_typed_field_and_size_are_sent_as_this_entitys_own() -> None:
+    answer = run_page(
+        [
+            {"receive": selecting(entity())},
+            {"set": {"id": "entity-text-label-field", "value": "Back"}},
+            {"change": {"id": "entity-text-label-field"}},
+            {"set": {"id": "entity-text-label-size", "value": "2.5"}},
+            {"change": {"id": "entity-text-label-size"}},
+        ]
+    )
+
+    assert actions(answer, "setEntityMarks") == [
+        {"textLabelField": "Back"},
+        {"textLabelSize": 2.5},
+    ]
+
+
+def test_emptying_a_text_label_box_asks_to_follow_settings_again() -> None:
+    """The two rules every box on this pane follows, and the word ticket 05
+    settled on: `"inherit"`, never `false`."""
+    answer = run_page(
+        [
+            {
+                "receive": selecting(
+                    entity(
+                        textLabelField="Back",
+                        textLabelFieldInherited=False,
+                        textLabelSize=2.5,
+                        textLabelSizeInherited=False,
+                    )
+                )
+            },
+            {"set": {"id": "entity-text-label-field", "value": ""}},
+            {"change": {"id": "entity-text-label-field"}},
+            {"set": {"id": "entity-text-label-size", "value": ""}},
+            {"change": {"id": "entity-text-label-size"}},
+        ]
+    )
+
+    assert actions(answer, "setEntityMarks") == [
+        {"textLabelField": "inherit"},
+        {"textLabelSize": "inherit"},
+    ]
+
+
+def test_the_text_label_colour_is_chosen_in_the_picker_this_panel_already_has(
+) -> None:
+    """Ticket 03's, the one the corona's colour uses. A native colour dialog
+    has nowhere to open over a page rendered into a game window, and a third
+    way to choose a colour would be a third thing to keep in step."""
+    answer = run_page(
+        [
+            {"receive": selecting(entity())},
+            {
+                "click": {
+                    "under": "entity-text-label-color",
+                    "attr": "data-picker",
+                    "is": "entityTextLabelColor",
+                }
+            },
+            {
+                "click": {
+                    "under": "entity-text-label-color",
+                    "attr": "data-value",
+                    "is": "#f97316",
+                }
+            },
+        ]
+    )
+
+    assert actions(answer, "setEntityMarks") == [{"textLabelColor": "#f97316"}]
+
+
+def test_the_text_label_colour_can_be_handed_back_to_settings() -> None:
+    answer = run_page(
+        [
+            {
+                "receive": selecting(
+                    entity(
+                        textLabelColor="#ff8000", textLabelColorInherited=False
+                    )
+                )
+            },
+            {
+                "click": {
+                    "under": "entity-text-label-color",
+                    "attr": "data-picker-clear",
+                    "is": "entityTextLabelColor",
+                }
+            },
+        ]
+    )
+
+    assert actions(answer, "setEntityMarks") == [{"textLabelColor": "inherit"}]
+
+
+def test_the_row_says_what_the_object_really_shows() -> None:
+    answer = run_page(
+        [
+            {
+                "receive": selecting(
+                    entity(textLabel=text_label(fieldName="Front", lines=["hola"])),
+                    locale={"f7.textLabel.showing": "Showing %s: %s"},
+                )
+            }
+        ]
+    )
+
+    assert node(answer, "entity-text-label-state")["text"] == "Showing Front: hola"
+
+
+def test_a_falling_back_label_reads_as_falling_back_rather_than_correct() -> None:
+    """The box says `Meaning` and the object says something else. Without this
+    the row reads as correct."""
+    missing = run_page(
+        [
+            {
+                "receive": selecting(
+                    entity(
+                        textLabelField="Meaning",
+                        textLabelFieldInherited=False,
+                        textLabel=text_label(
+                            requestedField="Meaning",
+                            fieldName="Front",
+                            fallback=True,
+                            reason="field_missing",
+                        ),
+                    ),
+                    locale={
+                        "f7.textLabel.fallbackMissing":
+                            'No field "%s", so "%s" is shown: %s'
+                    },
+                )
+            }
+        ]
+    )
+    assert (
+        node(missing, "entity-text-label-state")["text"]
+        == 'No field "Meaning", so "Front" is shown: hola'
+    )
+
+    wordless = run_page(
+        [
+            {
+                "receive": selecting(
+                    entity(
+                        textLabel=text_label(
+                            requestedField="Front",
+                            fieldName="Back",
+                            fallback=True,
+                            reason="field_wordless",
+                            lines=["hello"],
+                        )
+                    ),
+                    locale={
+                        "f7.textLabel.fallbackWordless":
+                            '"%s" holds no words, so "%s" is shown: %s'
+                    },
+                )
+            }
+        ]
+    )
+    assert (
+        node(wordless, "entity-text-label-state")["text"]
+        == '"Front" holds no words, so "Back" is shown: hello'
+    )
+
+
+def test_a_note_whose_words_look_like_a_pattern_is_drawn_as_written() -> None:
+    """`String.replace` reads `$&` out of its *replacement*, and what goes in
+    here is a card's own words. A card whose front is `$&` was drawn as the
+    sentence around it."""
+    answer = run_page(
+        [
+            {
+                "receive": selecting(
+                    entity(textLabel=text_label(lines=["$& and $`"])),
+                    locale={"f7.textLabel.showing": "Showing %s: %s"},
+                )
+            }
+        ]
+    )
+
+    assert (
+        node(answer, "entity-text-label-state")["text"]
+        == "Showing Front: $& and $`"
+    )
+
+
+def test_a_row_whose_card_is_missing_is_not_told_no_card_is_linked() -> None:
+    """A card is linked; Anki no longer has it. The row's own state cell says
+    so, and a second line claiming nothing is linked is simply false."""
+    answer = run_page(
+        [
+            {
+                "receive": selecting(
+                    entity(linkState="Card missing", textLabel=False),
+                    locale={"f7.textLabel.notLinked": "No card is linked."},
+                )
+            }
+        ]
+    )
+
+    assert node(answer, "entity-text-label-state")["text"] == ""
+
+
+def test_a_row_with_nothing_cached_or_nothing_linked_says_which() -> None:
+    """Silence would be indistinguishable from a note that says nothing."""
+    uncached = run_page(
+        [
+            {
+                "receive": selecting(
+                    entity(textLabel=text_label(reason="not_cached", lines=[])),
+                    locale={"f7.textLabel.notCached": "Not read from Anki yet."},
+                )
+            }
+        ]
+    )
+    assert (
+        node(uncached, "entity-text-label-state")["text"]
+        == "Not read from Anki yet."
+    )
+
+    unlinked = run_page(
+        [
+            {
+                "receive": selecting(
+                    entity(textLabel=False),
+                    locale={"f7.textLabel.notLinked": "No card is linked."},
+                )
+            }
+        ]
+    )
+    assert node(unlinked, "entity-text-label-state")["text"] == "No card is linked."
+
+
+def test_the_review_mode_row_says_that_reading_does_not_rate() -> None:
+    """Where the mode is chosen, rather than left to be discovered. A setting
+    gains the sentence by gaining the string; the page keeps no list."""
+    answer = run_page(
+        [
+            {
+                "receive": state(
+                    section="settings",
+                    settings={
+                        "rows": [
+                            {
+                                **CHOICE_ROW,
+                                "options": ["allow_due", "allow_all", "show_text"],
+                                "noteKey": "settings.reviewMode.note",
+                            }
+                        ]
+                    },
+                    locale={
+                        "settings.reviewMode.note": "Reading a label rates nothing."
+                    },
+                )
+            }
+        ]
+    )
+
+    notes = [
+        candidate
+        for candidate in walk(node(answer, "settings-rows"))
+        if candidate["attrs"].get("data-setting-note") == "reviewMode"
+    ]
+    assert len(notes) == 1
+    assert notes[0]["text"] == "Reading a label rates nothing."
+
+
+def test_a_setting_with_nothing_extra_to_say_carries_no_note() -> None:
+    answer = run_page(
+        [
+            {
+                "receive": state(
+                    section="settings", settings={"rows": [NUMBER_ROW]}
+                )
+            }
+        ]
+    )
+
+    assert (
+        [
+            candidate
+            for candidate in walk(node(answer, "settings-rows"))
+            if "data-setting-note" in candidate["attrs"]
+        ]
+        == []
+    )
 
 
 # --- `Draw radius` is beside `Show corona`, and is still the player's --------

@@ -75,22 +75,83 @@ matter.
 
 **Blocked by:** 01, 03, 04, 05.
 
-**Status:** ready-for-agent
+**Status:** done, not yet looked at in game
 
-- [ ] `Review mode: Show text` draws a Text Label on every linked entity in range
-- [ ] The review surface never opens and no rating is possible in this mode
-- [ ] The panel states that reading does not rate, where the mode is chosen
-- [ ] Field, colour and size each have a global default and a per-link override
+Manual pass: `docs/checklists/panel-rebuild-06-show-text.md`, `not run`. Every
+item below is covered by an executed test except the two the harness cannot
+reach, which are marked.
+
+- [x] `Review mode: Show text` draws a Text Label on every linked entity in range
+- [x] The review surface never opens and no rating is possible in this mode
+- [x] The panel states that reading does not rate, where the mode is chosen
+- [x] Field, colour and size each have a global default and a per-link override
 - [ ] A dark outline keeps any chosen colour legible against a night sky and a
-      white wall
-- [ ] A missing or wordless field falls through to the first field with words
-- [ ] A falling-back label is identifiable as such in the panel
-- [ ] Long text wraps by words to the line limit and ends in an ellipsis
-- [ ] Labels face the player
-- [ ] The label cap is applied nearest-first and the number dropped is reported
-- [ ] Labels show at the global distance regardless of speed
-- [ ] Labels are drawn with Anki closed, from the cache
-- [ ] Editing the note in the inspector updates the label
-- [ ] No filtered deck, admission or Review Transaction happens in this mode
-- [ ] An entity never shows a Text Label and ticket 05's key prompt at once
-- [ ] The card row's `label` key no longer collides with **Text Label**
+      white wall — **the outline is drawn and asserted; whether it is legible
+      is a frame, and stays on the manual list**
+- [x] A missing or wordless field falls through to the first field with words
+- [x] A falling-back label is identifiable as such in the panel
+- [x] Long text wraps by words to the line limit and ends in an ellipsis
+- [x] Labels face the player — drawn in screen space at the projected point, so
+      there is no orientation to get wrong; asserted from four sides
+- [x] The label cap is applied nearest-first and the number dropped is reported
+- [x] Labels show at the global distance regardless of speed
+- [x] Labels are drawn with Anki closed, from the cache
+- [x] Editing the note in the inspector updates the label
+- [x] No filtered deck, admission or Review Transaction happens in this mode
+- [x] An entity never shows a Text Label and ticket 05's key prompt at once
+- [x] The card row's `label` key no longer collides with **Text Label** — it is
+      `sortField` now, the name Anki and the companion both use
+
+## What this ticket decided that the ticket did not say
+
+**An entity cannot ask for "the first field with words".** Every override in
+this resource is a NULL column, which is what makes ticket 05's sweep able to
+clear them without a list — so an empty `Text Label field` on a row is the
+override being cleared, not an override whose value is "". A player who wants
+one object to fall through while the global names a field cannot say so. The
+alternative was a spelling of "nothing of its own" that only these three
+settings used, which is the shape 05 spent a ticket removing.
+
+**`Text Label distance` stops at 150 m** because that is `world_marks.lua`'s
+draw distance, and a setting that reads as saved and changes nothing is a
+control arguing with the thing that obeys it. The two numbers are pinned
+together by a test rather than by one file reading the other.
+
+**`Text Label size` is multiplied by how far away the object is**, between
+0.55 and 1.5 across the distance setting. The ticket asks for "the size" and
+does not say this, so it is a decision rather than a reading: text drawn at a
+constant pixel size is the same size at two metres and at a hundred, which
+reads as a HUD element pasted over the world rather than as something hanging
+on that object over there. The manual list says so, because a player setting
+`0.25` and walking away will otherwise think the setting is broken.
+
+**The cap is nearest by distance, not nearest of the ones on screen.** Which
+labels are being looked at changes every time the player turns their head, and
+a cap re-picked on that would make a label three metres away pop out because a
+nearer one came into view behind it. So `+N more Text Labels nearby` counts
+what is in range and past the cap — which is what the words say — rather than
+what the projection then declined to draw.
+
+**The cache is also refreshed on entering the mode**, which is a fourth moment
+the ticket does not list beside "when the link is made, on connecting, and when
+a note is saved". Without it, a note edited in Anki itself while the player was
+in another mode is never seen, and the labels open saying what the card stopped
+saying. It costs one batch read, once, when the mode is turned on.
+
+## Carried findings
+
+- **`Follow Settings` on the *corona* colour has been broken since 05.** The
+  picker sends `false` and the server's `proposed` only recognises `"inherit"`,
+  so the write is refused as `settings.error.not_a_color`, the override stays,
+  and the player is told "The entity was not changed: Enter a colour as
+  #rrggbb". Reproduced on the server harness, not inferred.
+  `tests/test_panel_page.py::test_a_colour_can_be_handed_back_to_settings`
+  asserts the broken payload, so both it and `app.js` move together. One word
+  in `app.js` and one line in that test. Ticket 06's own colour picker sends
+  `"inherit"` and works; not fixed here because it is 05's control.
+- **`%s`, `%a` and `%d` in Lua patterns answer about the C locale.** In a
+  Windows-1252 one `isspace(0xA0)` is true, and 0xA0 is the last byte of many
+  UTF-8 characters — `%s+` collapsing whitespace ate it and handed the renderer
+  half a character. Fixed in `shared/text_label.lua` by writing every class out;
+  nothing else in the resource does character-class work on user text today,
+  but the next thing that does should know.

@@ -570,7 +570,9 @@
       row.setAttribute("role", "listitem");
 
       var primary = element("div", "primary-cell");
-      primary.appendChild(element("strong", null, card.label || card.cardId));
+      primary.appendChild(
+        element("strong", null, card.sortField || card.cardId)
+      );
       primary.appendChild(element("span", "sub", card.deck));
       if (card.foreignMapName) {
         primary.appendChild(
@@ -586,7 +588,7 @@
 
       if (card.cardId === selected.cardId) {
         row.className = "row card selected";
-        selectedCardLabel = (card.label || card.cardId) + " — " + card.deck;
+        selectedCardLabel = (card.sortField || card.cardId) + " — " + card.deck;
       }
       bindSelectCard(row, card);
       host.appendChild(row);
@@ -735,6 +737,24 @@
     .getElementById("entity-show-corona")
     .appendChild(showCoronaMenu.root);
 
+  /* The Text Label's colour on this one entity. The same picker the corona
+   * uses, for the same reason it exists at all; `Follow Settings` clears the
+   * override rather than choosing a colour, which is what an emptied box says
+   * for the two fields beside it. */
+  var textLabelColorPicker = colorPicker({
+    name: "entityTextLabelColor",
+    value: false,
+    onChoose: function (value) {
+      send("setEntityMarks", {textLabelColor: value});
+    },
+    onClear: function () {
+      send("setEntityMarks", {textLabelColor: INHERIT});
+    }
+  });
+  document
+    .getElementById("entity-text-label-color")
+    .appendChild(textLabelColorPicker.root);
+
   /* `Draw radius` is on this pane and is not the entity's: it is this player's
    * own way of looking, and it draws the selected row's Activation Zone while
    * F7 is open. So it is sent as a setting rather than as an override, and it
@@ -797,6 +817,59 @@
    * selection and vanish with it, so the panel jumped every time the player
    * moved down the list; the fields are disabled rather than removed, which
    * keeps their place, and the pane says why it is empty. */
+  /* What the object really shows, in the words of the row rather than in the
+   * words of the setting. A label falling back to another field is the case
+   * this exists for: the box says `Front` and the object says something else,
+   * and without this the row reads as correct. */
+  /* Which link states are the row saying "there is no card here" rather than
+   * something more specific. Every other state — card missing, entity missing,
+   * a collision, a pending map save — is already named in the row's own state
+   * cell, and a second line under it claiming nothing is linked would be a
+   * claim that is simply false. */
+  var UNLINKED_STATES = {"Unlinked": true, "Not adopted": true};
+
+  /* One placeholder filled with a value, never a pattern.
+   *
+   * `String.replace` reads `$&`, `` $` `` and `$'` out of the *replacement*,
+   * and the values going in here are a note's own words and a note type's own
+   * field names. A card whose front is `$&` would have been drawn as the
+   * template around it. A function replacement is taken literally. */
+  function fill(template, value) {
+    return String(template).replace("%s", function () {
+      return String(value === undefined || value === null ? "" : value);
+    });
+  }
+
+  function textLabelState(entity) {
+    var label = entity.textLabel;
+    if (!label) {
+      return UNLINKED_STATES[entity.linkState]
+        ? t("f7.textLabel.notLinked")
+        : "";
+    }
+    var shown = (label.lines || []).join(" ");
+    if (label.reason === "not_cached") return t("f7.textLabel.notCached");
+    if (label.reason === "no_words") return t("f7.textLabel.noWords");
+    /* Each key written out rather than chosen into a variable: a string is
+     * only reachable if a surface asks for it by name, and that is checked by
+     * reading this file. */
+    if (label.reason === "field_missing") {
+      return fill(
+        fill(fill(t("f7.textLabel.fallbackMissing"), label.requestedField),
+             label.fieldName),
+        shown
+      );
+    }
+    if (label.reason === "field_wordless") {
+      return fill(
+        fill(fill(t("f7.textLabel.fallbackWordless"), label.requestedField),
+             label.fieldName),
+        shown
+      );
+    }
+    return fill(fill(t("f7.textLabel.showing"), label.fieldName), shown);
+  }
+
   function renderEntityPane(entity) {
     var empty = document.getElementById("entity-empty");
     var name = document.getElementById("entity-name");
@@ -808,6 +881,15 @@
     var coronaMark = document.getElementById("entity-show-corona-inherited");
     var typeMark = document.getElementById("entity-activation-type-inherited");
     var keyMark = document.getElementById("entity-activation-key-inherited");
+    var labelField = document.getElementById("entity-text-label-field");
+    var labelSize = document.getElementById("entity-text-label-size");
+    var labelFieldMark =
+      document.getElementById("entity-text-label-field-inherited");
+    var labelColorMark =
+      document.getElementById("entity-text-label-color-inherited");
+    var labelSizeMark =
+      document.getElementById("entity-text-label-size-inherited");
+    var labelState = document.getElementById("entity-text-label-state");
 
     /* What these say comes from `applyLocale`, like every other fixed word on
      * the page; what this decides is which of them are on screen and whether
@@ -820,6 +902,9 @@
     showCoronaMenu.button.disabled = !entity;
     activationTypeMenu.button.disabled = !entity;
     activationKeyMenu.button.disabled = !entity;
+    labelField.disabled = !entity;
+    labelSize.disabled = !entity;
+    textLabelColorPicker.button.disabled = !entity;
 
     if (!entity) {
       reportedEntity = null;
@@ -838,6 +923,15 @@
       coronaMark.hidden = true;
       typeMark.hidden = true;
       keyMark.hidden = true;
+      labelField.value = "";
+      labelField.setAttribute("data-inherited", "false");
+      labelSize.value = "";
+      labelSize.setAttribute("data-inherited", "false");
+      textLabelColorPicker.setValue(false);
+      labelFieldMark.hidden = true;
+      labelColorMark.hidden = true;
+      labelSizeMark.hidden = true;
+      labelState.textContent = "";
       return;
     }
 
@@ -852,7 +946,10 @@
       entity.coronaColor,
       entity.showCorona === true,
       entity.activationType,
-      entity.activationKey
+      entity.activationKey,
+      entity.textLabelField,
+      entity.textLabelColor,
+      entity.textLabelSize
     ]);
     if (reported !== reportedEntity) {
       reportedEntity = reported;
@@ -882,7 +979,17 @@
       showCoronaMenu.setValue(entity.showCorona === true);
       activationTypeMenu.setValue(entity.activationType);
       activationKeyMenu.setValue(entity.activationKey);
+      /* The three the Text Label is drawn from, each showing the value in
+       * force — the entity's own where it has one, the global where it has
+       * not — and inside the same guard for the same reason: a push reporting
+       * the same entity must not take a half-typed field name away. */
+      labelField.value = entity.textLabelField || "";
+      labelSize.value = entity.textLabelSize;
+      textLabelColorPicker.setValue(entity.textLabelColor);
     }
+    /* Outside it: what the object says changes when the note does, and that
+     * arrives without any of the three settings above moving. */
+    labelState.textContent = textLabelState(entity);
     /* Shown, and said: a number that came from Settings looks exactly like a
      * number somebody chose. */
     radius.setAttribute("data-inherited", String(entity.radiusInherited === true));
@@ -895,6 +1002,15 @@
     coronaMark.hidden = entity.showCoronaInherited !== true;
     typeMark.hidden = entity.activationTypeInherited !== true;
     keyMark.hidden = entity.activationKeyInherited !== true;
+    labelField.setAttribute(
+      "data-inherited", String(entity.textLabelFieldInherited === true)
+    );
+    labelFieldMark.hidden = entity.textLabelFieldInherited !== true;
+    labelColorMark.hidden = entity.textLabelColorInherited !== true;
+    labelSize.setAttribute(
+      "data-inherited", String(entity.textLabelSizeInherited === true)
+    );
+    labelSizeMark.hidden = entity.textLabelSizeInherited !== true;
   }
 
   /* --- the card editor --------------------------------------------------- */
@@ -1034,7 +1150,8 @@
     return JSON.stringify(rows.map(function (row) {
       return [
         row.kind, row.key, row.labelKey || "", row.options || false,
-        row.min, row.max, row.step, row.clearOverrides === true
+        row.min, row.max, row.step, row.clearOverrides === true,
+        row.noteKey || ""
       ];
     }));
   }
@@ -1123,6 +1240,16 @@
 
     var control = settingControl(row, wrap, error);
     wrap.appendChild(control.node);
+    /* A sentence under the control, where the name of the setting does not say
+     * enough on its own. `Review mode` is the one that needs it: `Show text`
+     * writes no repetition, and a player who assumes their reading counted has
+     * been told something false by omission. Which rows have one is Lua's
+     * answer, out of the string table — the page keeps no list. */
+    if (row.noteKey) {
+      var note = element("p", "setting-note", t(row.noteKey));
+      note.setAttribute("data-setting-note", row.key);
+      wrap.appendChild(note);
+    }
     /* Beside the global it is about, because that is the thing it is about:
      * "every link that was told otherwise goes back to following this". It is
      * here for every setting a link can override, and Lua says which those are
@@ -1422,6 +1549,25 @@
       var typed = document.getElementById("entity-corona-opacity").value;
       send("setEntityMarks", {
         coronaOpacity: String(typed) === "" ? INHERIT : parseFloat(typed)
+      });
+    });
+  /* The Text Label's field and size on this one entity, under the two rules
+   * every box on this pane follows: sent when the field is left, and emptied
+   * means "follow Settings again". */
+  document
+    .getElementById("entity-text-label-field")
+    .addEventListener("change", function () {
+      var typed = document.getElementById("entity-text-label-field").value;
+      send("setEntityMarks", {
+        textLabelField: String(typed) === "" ? INHERIT : String(typed)
+      });
+    });
+  document
+    .getElementById("entity-text-label-size")
+    .addEventListener("change", function () {
+      var typed = document.getElementById("entity-text-label-size").value;
+      send("setEntityMarks", {
+        textLabelSize: String(typed) === "" ? INHERIT : parseFloat(typed)
       });
     });
 

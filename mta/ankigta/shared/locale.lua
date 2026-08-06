@@ -38,6 +38,20 @@ Locale.strings = {
     ["settings.value.key"] = "Key",
     ["settings.showCorona"] = "Show corona",
     ["settings.reviewMode"] = "Review mode",
+    -- Said where the mode is chosen rather than left to be discovered. A
+    -- player who reads a label, believes they have repeated the card and finds
+    -- the scheduler never saw it is worse off than one who has no such mode:
+    -- they think they are learning while their schedule quietly diverges from
+    -- their memory (ADR 0029). A setting gains a note like this by gaining the
+    -- `.note` key; the panel keeps no list of which rows have one.
+    ["settings.reviewMode.note"] =
+        "Show text draws a line from the note on the object itself. No card"
+        .. " is opened and nothing is rated: reading a label writes no"
+        .. " repetition.",
+    ["settings.textLabelField"] = "Text Label field",
+    ["settings.textLabelColor"] = "Text Label colour",
+    ["settings.textLabelSize"] = "Text Label size",
+    ["settings.textLabelDistance"] = "Text Label distance (m)",
     ["settings.coronaColor"] = "Corona colour",
     ["settings.coronaOpacity"] = "Corona opacity (0–1)",
     ["settings.indicatorMode"] = "Next Card Indicator",
@@ -72,6 +86,9 @@ Locale.strings = {
     -- this stopped being a checkbox called "Allow early review".
     ["settings.value.allow_due"] = "Allow due",
     ["settings.value.allow_all"] = "Allow all",
+    -- The third: nothing is opened at all, and the object carries a line from
+    -- the note instead.
+    ["settings.value.show_text"] = "Show text",
     ["settings.error.unknown"] = "Unknown setting",
     ["settings.error.not_a_number"] = "Enter a number",
     ["settings.error.out_of_range"] = "Value is outside the allowed range",
@@ -80,6 +97,7 @@ Locale.strings = {
     ["settings.error.not_a_boolean"] = "Choose on or off",
     ["settings.error.not_a_choice"] = "Choose one of the offered options",
     ["settings.error.not_a_string"] = "Enter text",
+    ["settings.error.too_long"] = "That is longer than this field allows",
     ["settings.error.not_a_color"] = "Enter a colour as #rrggbb",
     ["settings.error.secret_not_readable"] =
         "This value is never shown again after it is saved",
@@ -257,6 +275,29 @@ Locale.strings = {
     ["f7.coronaOpacity"] = "Corona opacity",
     ["f7.coronaFollowSettings"] = "Follow Settings",
     ["f7.coronaOpacityClearHint"] = "Empty the box to follow Settings again",
+    -- The Text Label this row would carry in `Show text`, and what it is
+    -- really showing. Present on every row whatever the mode is: the three
+    -- overrides are set here, and a player setting them has to see what they
+    -- did without changing mode first.
+    ["f7.textLabel"] = "Text Label",
+    ["f7.textLabel.field"] = "Field",
+    ["f7.textLabel.clearHint"] = "Empty the box to follow Settings again",
+    ["f7.textLabel.color"] = "Colour",
+    ["f7.textLabel.size"] = "Size",
+    -- What the object really says, so a row reads as correct only when it is.
+    ["f7.textLabel.showing"] = "Showing %s: %s",
+    ["f7.textLabel.fallbackMissing"] =
+        "This note has no field \"%s\", so it falls back to \"%s\": %s",
+    ["f7.textLabel.fallbackWordless"] =
+        "Field \"%s\" holds no words, so it falls back to \"%s\": %s",
+    ["f7.textLabel.noWords"] = "This note has no words to show.",
+    ["f7.textLabel.notCached"] =
+        "Not read from Anki yet. Connect the companion once.",
+    ["f7.textLabel.notLinked"] = "No card is linked, so there is no label.",
+    -- A cap applied quietly reads as "that is all there is", and a player
+    -- standing in a room they filled with cards would conclude the rest never
+    -- got linked.
+    ["textLabel.capped"] = "+%d more Text Labels nearby",
     ["f7.replaceTitle"] = "Replace the linked card?",
     ["f7.replaceWarning"] = "The current link is discarded. The card"
         .. " itself is not touched.",

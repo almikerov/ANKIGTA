@@ -57,6 +57,13 @@ function Diagnostics.snapshot()
         -- for. The decision's own report cannot say either.
         report.polling = ANKIGTA.Spatial.diagnostics()
     end
+    if ANKIGTA.TextLabelDisplay and ANKIGTA.TextLabelDisplay.diagnostics then
+        -- How many Text Labels the world holds, how many the last frame drew
+        -- and how many the cap left out. The cap is why it is here: the notice
+        -- on screen goes with the frame, and "the rest never got linked" is
+        -- what a player concludes without a number they can paste.
+        report.textLabels = ANKIGTA.TextLabelDisplay.diagnostics()
+    end
     return report
 end
 

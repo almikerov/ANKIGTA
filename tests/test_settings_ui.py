@@ -331,6 +331,7 @@ def test_every_setting_in_the_schema_is_reachable_in_the_panel(
             "choice",
             "key",
             "color",
+            "text",
             "delegated",
             "placement",
         ), f"{key} has no usable control kind"

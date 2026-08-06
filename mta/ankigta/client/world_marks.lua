@@ -74,6 +74,23 @@ local PROMPT_HEIGHT = 1.2
 local PROMPT_SCALE = 1.5
 local PROMPT_COLOR = {255, 255, 255, 255}
 
+--- How far above the thing a Text Label floats, in metres.
+--
+-- Lower than the prompt, which is an offer about the object and belongs over
+-- it. A label is what the object *says*, and several lines of it starting
+-- where the prompt starts would float free of the thing they are about.
+local LABEL_HEIGHT = 1.0
+
+--- How far the dark outline is offset, in pixels at scale 1.
+--
+-- The outline is the whole of why a Text Label colour can be chosen freely:
+-- white text picked in daylight is unreadable against a white wall and a
+-- bright sky without it, and offering only a safe palette instead would be
+-- solving a different problem badly.
+local LABEL_OUTLINE_OFFSET = 1
+
+local LABEL_OUTLINE_COLOR = {0, 0, 0, 220}
+
 --- What a zone is drawn at when nothing says otherwise.
 --
 -- Only reached before the first settings have arrived; after that the schema's
@@ -127,6 +144,13 @@ local function markKey(mapId, entityId)
     end
     return tostring(mapId) .. "/" .. tostring(entityId)
 end
+
+--- The same, for a module that draws through one of the doors below.
+--
+-- Exposed rather than copied. A third spelling of the separator is a third
+-- place for it to drift, and the one that drifts stops resolving on the day
+-- one of the other two changes.
+WorldMarks.key = markKey
 
 --- The Activation Zone radius in force for a mark.
 --
@@ -309,6 +333,74 @@ function WorldMarks.prompt(x, y, z, text)
     return true
 end
 
+--- A Text Label: what a card's note says, drawn on the object (ADR 0029).
+--
+-- Screen space at the point the world position projects to, rather than a quad
+-- standing in the world. That is what makes it face the player from every
+-- angle: there is no orientation to get wrong, because there is no surface. A
+-- label you have to walk around is not a glance.
+--
+-- Through this door rather than beside it, so a Text Label stops where
+-- everything else ANKIGTA draws stops. `Show text` has a distance of its own
+-- and it is a smaller number chosen under this one, never a second answer to
+-- the same question: past `DRAW_DISTANCE` nothing is drawn whatever any
+-- setting says, and this is the only place that is decided.
+--
+-- Returns how many lines were drawn, so a caller can tell "out of range or
+-- behind the camera" from "drawn" without looking at the screen.
+function WorldMarks.label(x, y, z, lines, color, scale)
+    if type(lines) ~= "table" or #lines == 0 then
+        return 0
+    end
+    if not WorldMarks.visible(x, y, z) then
+        return 0
+    end
+    local screenX, screenY = getScreenFromWorldPosition(x, y, z + LABEL_HEIGHT)
+    if type(screenX) ~= "number" or type(screenY) ~= "number" then
+        return 0
+    end
+    local size = tonumber(scale) or 1
+    local red, green, blue = 255, 255, 255
+    local ownRed, ownGreen, ownBlue = schema().colorChannels(color)
+    if ownRed ~= nil then
+        red, green, blue = ownRed, ownGreen, ownBlue
+    end
+    local outline = tocolor(
+        LABEL_OUTLINE_COLOR[1],
+        LABEL_OUTLINE_COLOR[2],
+        LABEL_OUTLINE_COLOR[3],
+        LABEL_OUTLINE_COLOR[4]
+    )
+    local chosen = tocolor(red, green, blue, 255)
+    local offset = math.max(LABEL_OUTLINE_OFFSET, LABEL_OUTLINE_OFFSET * size)
+    local lineHeight = dxGetFontHeight(size, "default-bold")
+    local drawn = 0
+    for index, line in ipairs(lines) do
+        if type(line) == "string" and line ~= "" then
+            local top = screenY + (index - 1) * lineHeight
+            -- Four offsets rather than eight: enough to separate any colour
+            -- from any background, and half the draw calls of a full ring.
+            for _, spot in ipairs({
+                {screenX - offset, top},
+                {screenX + offset, top},
+                {screenX, top - offset},
+                {screenX, top + offset},
+            }) do
+                dxDrawText(
+                    line, spot[1], spot[2], spot[1], spot[2],
+                    outline, size, "default-bold", "center", "top"
+                )
+            end
+            dxDrawText(
+                line, screenX, top, screenX, top,
+                chosen, size, "default-bold", "center", "top"
+            )
+            drawn = drawn + 1
+        end
+    end
+    return drawn
+end
+
 -- --- what to draw --------------------------------------------------------
 
 --- What the marks should be right now.
@@ -483,6 +575,7 @@ local function look()
     local marks = panel().markable()
     local selectedMapId, selectedEntityId = panel().selection()
     local offer = WorldMarks.currentOffer()
+    local elsewhere = WorldMarks.alsoDrawnOn()
     local wanted = {}
     for _, mark in ipairs(marks) do
         local wearsCorona = mark.showCorona
@@ -498,6 +591,9 @@ local function look()
             or (offer
                 and mark.mapId == offer.mapId
                 and mark.entityId == offer.entityId)
+            -- And whatever another module is about to draw on through one of
+            -- the doors above, for the same reason.
+            or elsewhere[markKey(mark.mapId, mark.entityId)] == true
         then
             wanted[#wanted + 1] = {
                 mapId = mark.mapId,
@@ -536,6 +632,50 @@ local promptHeldBack = false
 function WorldMarks.holdPromptBackWhen(answer)
     promptHeldBack = type(answer) == "function" and answer or false
     return true
+end
+
+--- Map Entity something else is about to draw on through one of the doors.
+--
+-- Registered for the same reason the prompt's answer is: `look` resolves the
+-- Runtime Instance of the entities *this* module has a reason to draw on, and
+-- a module drawing through `WorldMarks.label` has reasons of its own that this
+-- one has no business knowing. Answering with a list of `{mapId, entityId}` is
+-- the whole of what it takes to have an object found for you.
+local drawnOnElsewhere = false
+
+function WorldMarks.alsoDrawOn(answer)
+    drawnOnElsewhere = type(answer) == "function" and answer or false
+    return true
+end
+
+--- The same, as the set `look` compares against.
+function WorldMarks.alsoDrawnOn()
+    local wanted = {}
+    if drawnOnElsewhere == false then
+        return wanted
+    end
+    local asked = drawnOnElsewhere()
+    for _, entity in ipairs(type(asked) == "table" and asked or {}) do
+        if type(entity) == "table" then
+            wanted[markKey(entity.mapId, entity.entityId)] = true
+        end
+    end
+    return wanted
+end
+
+--- The Runtime Instance of one Map Entity, as of the last look at the world.
+--
+-- Exposed so a module drawing through one of the doors reads the element this
+-- one already found rather than walking the world a second time. The element,
+-- not a position: a mark follows a moving object by reading its position on
+-- the frame it is drawn, and a coordinate handed over at poll cadence would
+-- lag a vehicle by up to a quarter of a second.
+function WorldMarks.elementFor(mapId, entityId)
+    local element = WorldMarks.resolved[markKey(mapId, entityId)]
+    if element == nil or not isElement(element) then
+        return false
+    end
+    return element
 end
 
 --- The card being offered right now, if anything is.

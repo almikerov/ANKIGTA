@@ -777,6 +777,9 @@ OVERRIDE_VALUES = {
     "showCorona": True,
     "coronaColor": "#ff8000",
     "coronaOpacity": 0.25,
+    "textLabelField": "Back",
+    "textLabelColor": "#00ff80",
+    "textLabelSize": 1.5,
 }
 
 
@@ -1025,7 +1028,7 @@ def test_every_global_a_link_can_override_offers_the_bulk_control(
     }
 
     assert offered == set(overridable(client))
-    # And it is the set this ticket and 04 built between them, so a control
+    # And it is the set tickets 04, 05 and 06 built between them, so a control
     # that quietly stopped being offered is a failure here.
     assert offered == {
         "activationRadius",
@@ -1034,28 +1037,36 @@ def test_every_global_a_link_can_override_offers_the_bulk_control(
         "showCorona",
         "coronaColor",
         "coronaOpacity",
+        "textLabelField",
+        "textLabelColor",
+        "textLabelSize",
     }
 
 
 def test_a_setting_that_gains_an_override_gains_the_control(
     client: MtaSandbox,
 ) -> None:
-    """Without being added to a list anywhere. The set has grown three times in
-    three tickets, and ticket 06 grows it again."""
+    """Without being added to a list anywhere. The set has grown four times in
+    four tickets, and the fifth will not edit the panel to do it either.
+
+    The setting invented here is deliberately not one the schema holds: proving
+    "a setting gains the control by having an override" needs one that has just
+    gained one, and every shipped setting gained its control before this ran.
+    """
     open_panel(client)
     before = client.pushed_panel_state()["settings"]["rows"]
-    assert "textLabelSize" not in {row["key"] for row in before}
+    assert "invented" not in {row["key"] for row in before}
 
     client.eval(
         """
         function()
-            ANKIGTA.Settings.schema.textLabelSize = {
+            ANKIGTA.Settings.schema.invented = {
                 authority = ANKIGTA.Settings.SERVER,
                 default = 1,
                 rule = {kind = "number", minimum = 0.5, maximum = 4},
                 entityOverride = {
-                    column = "text_label_size_override",
-                    field = "textLabelSize",
+                    column = "invented_override",
+                    field = "invented",
                 },
             }
         end
@@ -1064,7 +1075,7 @@ def test_a_setting_that_gains_an_override_gains_the_control(
 
     repush(client)
     after = client.pushed_panel_state()["settings"]["rows"]
-    added = [row for row in after if row["key"] == "textLabelSize"]
+    added = [row for row in after if row["key"] == "invented"]
 
     assert len(added) == 1
     assert added[0]["clearOverrides"] is True
