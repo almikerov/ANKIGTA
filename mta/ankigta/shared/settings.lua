@@ -84,7 +84,12 @@ end
 --
 -- A list rather than "any string": `bindKey` refuses a name it does not know,
 -- and a refusal there is a setting that reads as saved and binds nothing.
-local KEY_NAMES = {
+--
+-- It is also what a *captured* key is checked against. The key is pressed now
+-- rather than chosen from a list, so the panel has to name the key that was
+-- pressed -- and a physical key MTA has no word for is refused here rather than
+-- stored under a name `bindKey` will not take.
+Settings.bindableKeys = {
     "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
     "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
     "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
@@ -99,18 +104,19 @@ local KEY_NAMES = {
 }
 
 local function keyName()
-    return {kind = "key", values = KEY_NAMES}
+    return {kind = "key", values = Settings.bindableKeys}
 end
 
---- The keys a player may actually be offered.
+--- The keys a player may actually end up with.
 --
--- `KEY_NAMES` is every key ANKIGTA is willing to bind and this is the part of
--- it that is still free, so the reserved ones are refused by the rule *and*
--- absent from the list. Offering a value the validator will refuse is a control
--- that argues with itself.
+-- `bindableKeys` is every key ANKIGTA is willing to bind and this is the part of
+-- it that is still free. The panel takes a key by listening for it rather than
+-- by offering a list, so this is what separates the two refusals a press can
+-- earn: a name absent from `bindableKeys` is a key MTA cannot name, and a name
+-- present there but absent here is one ANKIGTA already answers to.
 function Settings.offeredKeys()
     local free = {}
-    for _, name in ipairs(KEY_NAMES) do
+    for _, name in ipairs(Settings.bindableKeys) do
         if not Settings.keyIsReserved(name) then
             free[#free + 1] = name
         end

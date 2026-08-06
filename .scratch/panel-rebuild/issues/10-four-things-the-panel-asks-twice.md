@@ -49,18 +49,55 @@ now covers the list. On the row, beside the field.
 **Blocked by:** None. Runs beside ticket 09, which is server-side; they share
 `shared/locale.lua` and nothing else.
 
-**Status:** ready-for-agent
+**Status:** done, not yet deployed
 
-- [ ] One `Restore global` control clears an override, everywhere one can be set
-- [ ] `Follow Settings` is gone from the drawn menus and from the colour picker
-- [ ] An override cleared this way follows the global again, and does not store
+- [x] One `Restore global` control clears an override, everywhere one can be set
+- [x] `Follow Settings` is gone from the drawn menus and from the colour picker
+- [x] An override cleared this way follows the global again, and does not store
       a copy of today's value
-- [ ] `Activation key` is set by pressing a key
-- [ ] A key ANKIGTA already answers to is refused, with the reason, on the press
-- [ ] A key MTA cannot name is refused rather than stored
-- [ ] The globally set key and a per-link key are both set this way
-- [ ] Settings is a column beside the entity list, not over it
-- [ ] The entity list stays readable while Settings is open
-- [ ] The panel widens for it rather than narrowing the other columns
-- [ ] `Apply to all` is on the same row as the field it applies
-- [ ] `app.js` is exercised by tests for each of the above
+- [x] `Activation key` is set by pressing a key
+- [x] A key ANKIGTA already answers to is refused, with the reason, on the press
+- [x] A key MTA cannot name is refused rather than stored
+- [x] The globally set key and a per-link key are both set this way
+- [x] Settings is a column beside the entity list, not over it
+- [x] The entity list stays readable while Settings is open
+- [x] The panel widens for it rather than narrowing the other columns
+- [x] `Apply to all` is on the same row as the field it applies
+- [x] `app.js` is exercised by tests for each of the above
+
+## What only a person can see
+
+The harness runs `app.js` in Node against the real `index.html` parsed into a
+tree, so "this control exists, in this part of the page, and sends this action"
+is checked. It does not lay anything out, so these stay for the deploy:
+
+- Four columns abreast — Settings, the list, the cards, the editor — at the
+  widened width, on the owner's resolution.
+- `Restore global` beside nine fields without the pane wrapping badly.
+- `Apply to all` landing in the row's third grid column rather than under the
+  field. The harness has no layout engine, so what a test can see is that the
+  control is appended straight after the field rather than after the sentence
+  that belongs below it; the column it lands in is the stylesheet's.
+
+## Found while doing it, not fixed
+
+- **The `key_in_use` refusal cannot be reached with `F7` in the running game.**
+  The panel never calls `guiSetInputMode("no_binds")`, so MTA keeps firing
+  `bindKey` handlers while the page has focus: pressing `F7` into the capture
+  control closes the panel rather than arriving as a press. The refusal is
+  right and is tested — it reads the reserved list rather than naming `F7`, so
+  it holds for whatever the list gains — but the one key on it today can only
+  be refused in a test. `escape`, the other one, cancels the capture on purpose.
+  Fixing it means deciding what every game bind does while the panel is open,
+  which is its own ticket.
+- The number, text and colour boxes on the entity pane still take an emptied
+  value as "follow Settings again", beside the new button that says the same
+  thing. Kept: emptying a box has to mean *something*, and the hints
+  (`f7.radiusClearHint` and its two neighbours) already promise it. It is one
+  idea with two spellings, which is the shape this ticket was about.
+- `test_ui_layout.py`'s placement tests opened the panel through the Settings
+  door, so they now measure a window 34% wider than the one a player drags.
+  Changed here to open it by its key, because the change is this ticket's.
+- The per-map leftovers this ticket was told to clean out of `app.js` —
+  `heading`, `note`, `settingClass`'s `per-map`, `mapId` on the wire — were
+  already gone. Ticket 03 removed them and left the tests that hold them gone.

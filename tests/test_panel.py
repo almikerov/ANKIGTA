@@ -869,10 +869,14 @@ def row_for(sandbox: MtaSandbox, key: str) -> dict[str, Any]:
     raise AssertionError(f"{key} is not offered: {[r['key'] for r in settings_rows(sandbox)]}")
 
 
-def test_settings_are_a_section_of_the_panel_not_a_window(
+def test_settings_are_a_column_of_the_panel_not_a_window(
     client: MtaSandbox,
 ) -> None:
-    """The last window folds in; eight became one, and now one becomes none."""
+    """The last window folds in; eight became one, and now one becomes none.
+
+    A column rather than a section: it covered the Map Entity list while it was
+    one, and a setting is usually changed while looking at what it affects.
+    """
     authorize(client)
     announce(client, state="connected")
     press_f7(client)
@@ -880,9 +884,36 @@ def test_settings_are_a_section_of_the_panel_not_a_window(
 
     open_settings(client)
 
-    assert last_state(client)["section"] == "settings"
+    assert last_state(client)["settingsOpen"] is True
+    assert last_state(client)["section"] == "entities"
     titles = client.widget_texts("window")
     assert not [title for title in titles if "Settings" in title], titles
+
+
+def test_the_panel_widens_for_settings_rather_than_narrowing_the_columns(
+    client: MtaSandbox,
+) -> None:
+    """The card editor's arrangement, for the same reason: fitting another
+    column inside a window sized for two leaves all of them cramped, and the
+    lists did not ask to be narrower because somebody opened Settings.
+
+    Both together take both shares. A window that grew once for whichever came
+    first would leave the second one squeezing the lists after all.
+    """
+    open_workspace(client)
+    shut = client.browsers[0]["width"]
+
+    open_settings(client)
+    with_settings = client.browsers[0]["width"]
+    assert with_settings > shut
+
+    act(client, "editorVisible", {"open": True})
+    assert client.browsers[0]["width"] > with_settings
+
+    act(client, "editorVisible", {"open": False})
+    act(client, "closeSettings")
+
+    assert client.browsers[0]["width"] == shut
 
 
 def test_every_setting_the_schema_owns_is_offered(client: MtaSandbox) -> None:
@@ -1082,6 +1113,7 @@ def test_leaving_settings_returns_to_where_the_player_was(
 
     act(client, "closeSettings")
 
+    assert last_state(client)["settingsOpen"] is False
     assert last_state(client)["section"] == "entities"
 
 
@@ -1102,12 +1134,13 @@ def test_closing_f7_on_settings_and_reopening_lands_on_the_list(
     press_f7(client)
     page_ready(client)
     open_settings(client)
-    assert last_state(client)["section"] == "settings"
+    assert last_state(client)["settingsOpen"] is True
 
     press_f7(client)
     press_f7(client)
     page_ready(client)
 
+    assert last_state(client)["settingsOpen"] is False
     assert last_state(client)["section"] == "entities"
 
 

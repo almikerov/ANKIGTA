@@ -269,13 +269,25 @@ Locale.strings = {
     -- key is substituted in, never looked up here: it is a stored technical
     -- value, and this is the whole of how the player discovers it.
     ["f7.activationPrompt"] = "%s to view",
-    -- The way back for a field that offers a choice rather than a number, and
-    -- so cannot be emptied: an entry in the list that means "follow Settings".
-    ["f7.followSettings"] = "Follow Settings",
+    -- The key is answered by pressing it, so the control says what it is
+    -- waiting for -- and says how to stop waiting, because `escape` is a key
+    -- ANKIGTA already answers to and can therefore never be the answer.
+    ["f7.pressAKey"] = "Press a key… (Esc cancels)",
+    -- One way back to the global, beside every field that can hold an override.
+    -- It replaces two spellings of the same idea: a `Follow Settings` entry at
+    -- the bottom of each drawn list, which made "stop having an opinion" look
+    -- like one of the values a setting can hold, and a second button inside the
+    -- colour picker's surface.
+    --
+    -- The single-entity half of `Apply to all`: that one puts every Map Entity
+    -- back on one setting, this one puts one Map Entity back on one setting.
+    ["f7.restoreGlobal"] = "Restore global",
+    ["f7.restoreGlobalHint"] =
+        "Drops this Map Entity's own answer, so it follows Settings again —"
+        .. " now and whenever Settings changes.",
     ["f7.showCorona"] = "Show corona",
     ["f7.coronaColor"] = "Corona colour",
     ["f7.coronaOpacity"] = "Corona opacity",
-    ["f7.coronaFollowSettings"] = "Follow Settings",
     ["f7.coronaOpacityClearHint"] = "Empty the box to follow Settings again",
     -- The Text Label this row would carry in `Show text`, and what it is
     -- really showing. Present on every row whatever the mode is: the three
