@@ -260,6 +260,22 @@ local function rowByOwnStamp(entityElement)
     return found
 end
 
+--- The Map Entity an element in the world is, by either half of its identity.
+--
+-- Both, because neither answers on its own. The store's walk checks the owning
+-- resource as well as the id, which is right for an element loaded from the
+-- map it is recorded against and wrong for the copy in front of the player
+-- during a play-test. The stamp answers wherever the element is standing, and
+-- is only there once ANKIGTA has taken the element in.
+local function rowForRuntimeElement(entityElement)
+    local row, readError =
+        ANKIGTA.Store.findMapEntityByRuntimeElement(entityElement)
+    if row then
+        return row
+    end
+    return rowByOwnStamp(entityElement), readError
+end
+
 --- What this row's Text Label would say, for the panel row that sets it.
 --
 -- Carried on every row rather than only in `Show text`, because the row is
@@ -895,8 +911,11 @@ function validatePickEntity(player, entityElement, mode)
         }
     end
 
-    local row, readError =
-        ANKIGTA.Store.findMapEntityByRuntimeElement(entityElement)
+    -- Both halves of the identity: without the stamp, pointing at an object
+    -- ANKIGTA had already taken in reported it as not loaded, because the copy
+    -- in front of the player during a play-test belongs to `editor_test` while
+    -- its row is stored against the map being edited.
+    local row, readError = rowForRuntimeElement(entityElement)
     if not row then
         return false, readError or "map_entity_not_loaded"
     end
@@ -1862,19 +1881,24 @@ local function adoptOffer(player, entityElement)
     if not target.adoptable then
         return false, "entity_already_adopted"
     end
+    -- A play-test copy is the same entity seen from inside the test: the
+    -- editor wrote the map it has open out to `editor_test` on the Test press,
+    -- and both copies carry the id that one document gave them. Recording the
+    -- copy would write a Spatial Link against a resource the next Test press
+    -- rewrites -- so what is recorded is the entity as the editor holds it,
+    -- which is also what makes the same object linked inside a test and
+    -- outside one one Map Entity rather than two. Outside a test this answers
+    -- with what it was given, and the map is the one the player is standing in.
+    local enduring, enduringError = ANKIGTA.World.enduring(entityElement)
+    if not enduring then
+        return false, enduringError
+    end
     local record, recordError = adoptionRecord(
-        entityElement,
-        currentMapContext(player)
+        enduring.element,
+        enduring.context or currentMapContext(player)
     )
     if not record then
         return false, recordError
-    end
-    -- `editor_dump` and `editor_test` are the editor's own throwaway
-    -- resources, rewritten the next time it needs one. An entity taken out of
-    -- either is a Spatial Link pointing at a copy that stops existing when the
-    -- play-test does, so it is refused rather than stored and mourned later.
-    if ANKIGTA.World.isPlayTestResource(record.resourceName) then
-        return false, "editor_play_test_map"
     end
     local row, adoptError = ANKIGTA.Store.adoptMapEntity(record)
     if not row then
@@ -1882,8 +1906,13 @@ local function adoptOffer(player, entityElement)
     end
     -- Remembered on the element so the next pick resolves without the walk,
     -- and so a second Link on the same object is recognised as a replacement
-    -- rather than adopting it twice.
-    setElementData(entityElement, "ankigtaEntityId", record.entityId)
+    -- rather than adopting it twice. On both copies where there are two: the
+    -- one the player pointed at is the one they will point at again while the
+    -- test is running.
+    setElementData(enduring.element, "ankigtaEntityId", record.entityId)
+    if enduring.element ~= entityElement then
+        setElementData(entityElement, "ankigtaEntityId", record.entityId)
+    end
     return record
 end
 
@@ -1968,8 +1997,7 @@ addEventHandler(ENTITY_METADATA_REQUEST_EVENT, resourceRoot, function(
             )
         end
         if element then
-            local adopted = ANKIGTA.Store.findMapEntityByRuntimeElement(element)
-                or rowByOwnStamp(element)
+            local adopted = rowForRuntimeElement(element)
             if adopted then
                 mapId, entityId = adopted.map_id, adopted.entity_id
             else

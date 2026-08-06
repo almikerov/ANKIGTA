@@ -20,8 +20,11 @@ local SUPPORTED_ENTITY_ORDER = ANKIGTA.EntityTypes.order
 --
 -- `editor_test` is rebuilt from whatever map is open every time Test is
 -- pressed and torn down when the test ends, and every map reuses the name --
--- so an entity adopted out of it is a Spatial Link pointing at a copy that
--- stops existing when the test does.
+-- so an entity recorded *as* one is a Spatial Link pointing at a copy that
+-- stops existing when the test does. That is a statement about where the
+-- entity is written down, not about whether the player may link it: the copy
+-- they are pointing at is the same entity seen from inside the test, and
+-- `playTestOrigin` below is what takes it back out.
 --
 -- `editor_dump` is NOT one of these, though ticket 02 said it was and broke
 -- linking for it. It is the editor's autosave of the map being edited, and it
@@ -33,6 +36,9 @@ local SUPPORTED_ENTITY_ORDER = ANKIGTA.EntityTypes.order
 -- Knowing which of the editor's resources is the play-test is reading it, not
 -- changing it (ADR 0025).
 local PLAY_TEST_RESOURCE = "editor_test"
+
+--- The stock editor itself, which owns the copy of a map it has open.
+local EDITOR_RESOURCE = "editor_main"
 
 --- Is this the resource the editor play-tests from?
 function World.isPlayTestResource(name)
@@ -74,6 +80,48 @@ end
 -- the export does not exist at all.
 function World.isEditorRepresentation(element)
     return getElementData(element, "edf:rep") == true
+end
+
+--- Is this element one the editor's play-test is holding?
+--
+-- Asked of the element rather than of the player's surroundings, because the
+-- copy in front of them is what decides -- and it is the same ownership walk
+-- the store checks a Map Entity against, so the two cannot disagree.
+function World.isPlayTestElement(element)
+    if not isElement(element) then
+        return false
+    end
+    return World.isPlayTestResource(World.owningResource(element))
+end
+
+--- Every name this element could be recognised by.
+--
+-- Three, because a Map Entity is stored under whichever of them named it: the
+-- ANKIGTA stamp, the editor's `me:ID` where it had to invent one, and the `id`
+-- the `.map` file gave the element. A server restart takes the stamp with it
+-- while the `.map` keeps the id, and a play-test copy carries the id alone.
+--
+-- `elementCarriesIdentity` asks the same three questions and deliberately does
+-- not come through here: it is asked once per element per stored row inside
+-- F7's two-second budget, and it answers by comparing rather than by building
+-- a table it then throws away.
+local function durableNames(element)
+    local candidates = {
+        getElementData(element, "ankigtaEntityId"),
+        getElementData(element, "me:ID"),
+        getElementID(element),
+    }
+    local names = {}
+    -- Counted rather than walked with `ipairs`, which stops at the first hole:
+    -- an element carrying only the third of these is the ordinary case inside
+    -- a play-test, where the copy has the `.map` id and nothing else.
+    for index = 1, 3 do
+        local name = candidates[index]
+        if type(name) == "string" and name ~= "" then
+            names[name] = true
+        end
+    end
+    return names
 end
 
 --- What the stock Map Editor currently holds, or `false` if it is not running.
@@ -165,6 +213,28 @@ local function playerWorldScore(owner, player)
     return score
 end
 
+--- The map the editor has open, seen from wherever the player is standing.
+--
+-- The map is the same one either way; which copy of it they are looking at is
+-- not. `candidateOwner` is that copy, and `workingDimension` is the editor's
+-- deleted dimension minus one -- which is meaningful only while the player is
+-- in the editor's own world. Inside a play-test it is `false`, because every
+-- element the walk will meet there belongs to `editor_test` and stands in
+-- dimension 0: the editor's Delete parks its own elements and never touches
+-- the test's, and the test is written out without the parked ones
+-- (`dumpMap` skips `DESTROYED_ELEMENT_DIMENSION`).
+local function editorContext(editor, candidateOwner, workingDimension)
+    return {
+        resourceName = editor.mapName,
+        candidateOwner = candidateOwner,
+        workingDimension = workingDimension,
+        -- The identities the editor's own copy carries: the play-test's are a
+        -- duplicate of them, and a stored row belongs to the map rather than
+        -- to whichever copy of it is being looked at.
+        mapIds = World.mapIdsForOwner(EDITOR_RESOURCE),
+    }
+end
+
 --- The map the player is actually working in or playing on.
 --
 -- The stock editor keeps an editable copy under `editor_main` in its working
@@ -178,12 +248,9 @@ function World.currentMapContext(player, storedRows)
         if isElement(player)
             and getElementDimension(player) == editor.workingDimension
         then
-            return {
-                resourceName = editor.mapName,
-                candidateOwner = "editor_main",
-                workingDimension = editor.workingDimension,
-                mapIds = World.mapIdsForOwner("editor_main"),
-            }
+            return editorContext(
+                editor, EDITOR_RESOURCE, editor.workingDimension
+            )
         end
     end
 
@@ -214,6 +281,18 @@ function World.currentMapContext(player, storedRows)
         end
     end
     if runningMap then
+        -- The editor's play-test is not a map of its own. It is the map the
+        -- editor has open, written out on the Test press and started in the
+        -- ordinary world -- so the elements in front of the player belong to
+        -- `editor_test` and the map they belong to is the one being edited.
+        -- Calling it `editor_test` is what made every row of the map being
+        -- tested fall outside the current map, and what made a link recorded
+        -- during a test point at a resource the next Test press rewrites.
+        if World.isPlayTestResource(runningMap)
+            and editor and editor.mapName
+        then
+            return editorContext(editor, runningMap, false)
+        end
         return {
             resourceName = runningMap,
             candidateOwner = runningMap,
@@ -396,14 +475,8 @@ function World.deletedIdentities()
             then
                 -- Under every name the identity match would accept, so a row
                 -- stored under any of them finds it.
-                for _, name in ipairs({
-                    getElementData(element, "ankigtaEntityId"),
-                    getElementData(element, "me:ID"),
-                    getElementID(element),
-                }) do
-                    if type(name) == "string" and name ~= "" then
-                        deleted[name] = element
-                    end
+                for name in pairs(durableNames(element)) do
+                    deleted[name] = element
                 end
             end
         end
@@ -458,6 +531,101 @@ function World.runtimeInstance(mapId, entityId, player)
         World.runtimeInstances(mapId, entityId),
         player
     )
+end
+
+--- The copy of what the player pointed at that outlives a play-test, and the
+--- map that owns it.
+--
+-- A play-test copy is not a different entity. The editor wrote whatever map
+-- it had open out to `editor_test` on the Test press, so both copies came out
+-- of one document and answer to the same `id` -- and the copy that outlives
+-- the test is the editor's. That is the one a Spatial Link has to be made
+-- against, and the one whose identity has to be written where the editor will
+-- save it.
+--
+-- Returns `{element = ..., context = ...}` -- the element itself and no map of
+-- its own where it is not a play-test copy at all, so a caller that does not
+-- care whether a test is running can simply ask. Or `false` and which of the
+-- ways there is nothing to resolve it to: refusing is still right where there
+-- is nothing else, because a link made against the copy alone points at
+-- something that stops existing when the test does.
+function World.enduring(element, editor)
+    if not World.isPlayTestElement(element) then
+        return {element = element, context = false}
+    end
+    if editor == nil then
+        editor = World.editor()
+    end
+    if not editor or not editor.mapName or not editor.workingDimension then
+        return false, "play_test_without_open_map"
+    end
+
+    -- What the test is a test *of*. One walk, because both answers come out
+    -- of it: the identities the play-test copy carries, and the ones the
+    -- editor's copy carries. A test still running against a map the editor
+    -- has since closed carries an identity no working copy answers to, and
+    -- there is no other copy to adopt against.
+    --
+    -- Where neither document carries an identity there is nothing to compare,
+    -- and the walk below falls back to the `.map` id alone -- which two maps
+    -- can share, because the editor generates `object (crate) (1)` from the
+    -- type and an ordinal. That gap is not closed here, for two reasons. The
+    -- editor suspends itself for the length of a test -- `startWhenLoaded`
+    -- returns early and `onClientRender` does nothing while `g_in_test` is set
+    -- (editor_main/client/main.lua) -- so a map cannot be opened without
+    -- stopping the test, which stops `editor_test` with it. And the obvious
+    -- second discriminator is wrong: on the owner's server the play-test's
+    -- Sentinel stands 80 metres from the editor's, because somebody drove it,
+    -- so matching on the transform would refuse every vehicle a test was used
+    -- on.
+    local byOwner = World.mapIdsByOwner()
+    local playTestIds = World.mapIdsForOwner(PLAY_TEST_RESOURCE, byOwner)
+    if playTestIds then
+        local editorIds = World.mapIdsForOwner(EDITOR_RESOURCE, byOwner)
+        local answered = false
+        for mapId in pairs(playTestIds) do
+            if editorIds and editorIds[mapId] then
+                answered = true
+                break
+            end
+        end
+        if not answered then
+            return false, "play_test_of_another_map"
+        end
+    end
+
+    local names = durableNames(element)
+    local found = false
+    if next(names) then
+        for _, candidate in ipairs(getElementsByType(getElementType(element))) do
+            if isElement(candidate)
+                and not World.isEditorRepresentation(candidate)
+                and not World.isDeletedInEditor(candidate, editor)
+                and World.owningResource(candidate) == EDITOR_RESOURCE
+            then
+                for name in pairs(durableNames(candidate)) do
+                    if names[name] then
+                        if found and found ~= candidate then
+                            return false, "play_test_original_not_unique"
+                        end
+                        found = candidate
+                        break
+                    end
+                end
+            end
+        end
+    end
+    if not found then
+        -- Deleted in the editor while the test ran, or never in the map the
+        -- editor is holding at all.
+        return false, "play_test_copy_has_no_original"
+    end
+    return {
+        element = found,
+        context = editorContext(
+            editor, EDITOR_RESOURCE, editor.workingDimension
+        ),
+    }
 end
 
 ANKIGTA.World = World

@@ -256,10 +256,17 @@ end
 -- (editor_main/server/IDhandler.lua). Demanding it made a saved and reloaded
 -- map look like a map with no identity at all, and the next link would import
 -- a second one beside the first.
+--
+-- The play-test's copy of the identity is not a second identity either. The
+-- editor writes the open map out on every Test press, identity and all, so
+-- while a test runs the world holds two -- and counting both made a map that
+-- had already been linked once refuse every link afterwards.
 local function currentMapIdentityElements()
     local result = {}
     for _, element in ipairs(getElementsByType("ankigta_map_identity")) do
-        if not ANKIGTA.World.isEditorRepresentation(element) then
+        if not ANKIGTA.World.isEditorRepresentation(element)
+            and not ANKIGTA.World.isPlayTestElement(element)
+        then
             table.insert(result, element)
         end
     end
@@ -811,6 +818,16 @@ function MapIdentity.prepareCardLinkForEntity(player, row, cardIdentity)
         return false, "entity_runtime_not_unique: " .. tostring(row.entity_id)
             .. " (" .. tostring(copies) .. " copies)"
     end
+    -- Inside a play-test the copy in front of the player is the one the test
+    -- is holding, and the identity has to be written onto the copy the editor
+    -- will save. Written onto the play-test's, it is never saved -- so the
+    -- read-back never confirms, the Spatial Link stays Pending Map Save for
+    -- ever, and the element it was written on is destroyed with the test.
+    local enduring, enduringError = ANKIGTA.World.enduring(entityElement)
+    if not enduring then
+        return false, enduringError
+    end
+    entityElement = enduring.element
     local identities = currentMapIdentityElements()
     if #identities > 1 then
         return false, "map_identity_not_unique"
