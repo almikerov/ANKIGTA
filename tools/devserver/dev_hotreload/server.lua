@@ -833,10 +833,50 @@ local function setResourceStartup(resourceName, startup)
     return true
 end
 
+--- The startup names, in the order they must start.
+--
+-- `pairs` order is not an order, and on 2026-08-06 it flipped: the editor
+-- started before ankigta, and every boot since then killed ankigta a second
+-- after starting it. The mechanism is the stock editor's, in three parts:
+-- `edf` auto-loads the definition of any resource that starts while edf is
+-- already running (edf.lua, its `onResourceStart` handler); the editor's own
+-- startup opens a map, and that open sweeps out every loaded definition the
+-- map does not list (editor_main/server/definitionssync.lua); and the sweep's
+-- `edfStopResource` is literally `stopResource`. A definition-carrying
+-- resource that starts BEFORE the editor is invisible to the sweep, because
+-- nothing ever loaded its definition.
+--
+-- So: definition carriers first, the editor last, the alphabet inside each
+-- group so two boots agree with each other.
+local function startupOrder()
+    local names = {}
+    for name in pairs(startupOverrides) do
+        names[#names + 1] = name
+    end
+    local function rank(name)
+        if name == "editor" then
+            return 3
+        end
+        local target = getResourceFromName(name)
+        if target and getResourceInfo(target, "edf:definition") then
+            return 1
+        end
+        return 2
+    end
+    table.sort(names, function(a, b)
+        local rankA, rankB = rank(a), rank(b)
+        if rankA ~= rankB then
+            return rankA < rankB
+        end
+        return a < b
+    end)
+    return names
+end
+
 --- Start what the panel says to start, once this resource is up.
 local function startFlaggedResources()
     local started = {}
-    for name in pairs(startupOverrides) do
+    for _, name in ipairs(startupOrder()) do
         local target = getResourceFromName(name)
         if target and getResourceState(target) ~= "running" then
             if startResource(target) then
@@ -849,6 +889,22 @@ local function startFlaggedResources()
     if #started > 0 then
         log("Startup: started " .. table.concat(started, ", "))
     end
+    -- The editor's startup map-open lands on a timer of its own, so it can
+    -- still stop a flagged resource moments after this pass said "started".
+    -- One retry, once, loudly. Not a supervisor: a resource the owner stops
+    -- by hand stays stopped.
+    setTimer(function()
+        for _, name in ipairs(startupOrder()) do
+            local target = getResourceFromName(name)
+            if target and getResourceState(target) ~= "running" then
+                log(("Startup: '%s' was stopped again after starting -- the"
+                    .. " editor sweeps loaded definitions on its first map"
+                    .. " open (see startupOrder); starting it once more")
+                    :format(name), 2)
+                startResource(target)
+            end
+        end
+    end, 5000, 1)
 end
 
 local function setResourceManagement(resourceName, allowed)
