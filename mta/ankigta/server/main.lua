@@ -52,6 +52,23 @@ local PICK_ENTITY_RESULT_EVENT = "ankigta:pickEntityResult"
 local RECOVERY_STATE_EVENT = "ankigta:databaseRecovery"
 local RECOVERY_REQUEST_EVENT = "ankigta:requestDatabaseRecovery"
 local RESTORE_REQUEST_EVENT = "ankigta:restoreDatabaseBackup"
+local TEXT_LABELS_EVENT = "ankigta:textLabels"
+
+--- The Review mode in which nothing is presented and nothing is rated.
+--
+-- Named once, here, because four different questions read it: whether a
+-- session may be built, whether Review Mode may open at all, whether the
+-- companion is worth asking about card states, and whether the world carries
+-- Text Labels (ADR 0029).
+local SHOW_TEXT_MODE = "show_text"
+
+-- Forward declarations. Both belong with the rest of the world state at the
+-- bottom of this file, beside the spatial candidates they replace in
+-- `Show text`; linking a card and saving a note happen well above it, and each
+-- of them changes what the world should be showing.
+local sendTextLabels
+local refreshCardNoteCache
+
 -- Ticket 05 uses this only to observe a disposable map-created element.
 -- Persistent Map Entity identity remains the responsibility of ticket 06.
 local RUNTIME_REFERENCE_ID = "ankigta-ticket05-runtime"
@@ -243,7 +260,32 @@ local function rowByOwnStamp(entityElement)
     return found
 end
 
-local function entityContract(row)
+--- What this row's Text Label would say, for the panel row that sets it.
+--
+-- Carried on every row rather than only in `Show text`, because the row is
+-- where the three overrides are edited and a player setting them has to see
+-- what they did without changing mode first. The lines travel with it, so the
+-- row shows what the world shows rather than a second rendering of the same
+-- note that could disagree with it.
+--
+-- `false` where the row is not a Spatial Link at all: there is nothing to
+-- label, and the pane says so in its own words.
+local function textLabelContract(row, notes, globals)
+    local label = ANKIGTA.TextLabels.forRow(row, notes, globals, nil)
+    if not label then
+        return false
+    end
+    return {
+        requestedField = label.requestedField,
+        fieldName = label.fieldName,
+        fallback = label.fallback,
+        reason = label.reason,
+        truncated = label.truncated,
+        lines = label.lines,
+    }
+end
+
+local function entityContract(row, notes, globals)
     local link = ANKIGTA.MapIdentity.linkSnapshot(row)
     -- Whether there is a Runtime Instance at all, which is a different
     -- question from which of several copies is in front of the player -- two
@@ -292,6 +334,7 @@ local function entityContract(row)
         },
         runtimeInstance = runtimeSnapshot(element),
         metadata = metadata,
+        textLabel = textLabelContract(row, notes, globals),
         link = link,
         copyCollision = link.copyCollision == true,
     }
@@ -372,7 +415,7 @@ end
 -- reported rather than applied quietly.
 local CANDIDATE_LIMIT = 150
 
-local function worldCandidates(player, storedRows, context)
+local function worldCandidates(player, storedRows, context, notes, globals)
     local taken = {}
     for _, row in ipairs(storedRows) do
         taken[row.entity_id] = true
@@ -438,7 +481,7 @@ local function worldCandidates(player, storedRows, context)
         -- against it sprang back on the next snapshot.
         local adopted = rowByOwnStamp(entry.element)
         if adopted then
-            rows[#rows + 1] = entityContract(adopted)
+            rows[#rows + 1] = entityContract(adopted, notes, globals)
         else
             rows[#rows + 1] = candidateContract(
                 entry.element, entry.name, context.resourceName
@@ -546,16 +589,27 @@ local function buildF7Snapshot(player)
         emittedRows[#emittedRows + 1] = row
     end
 
+    -- Read once for the whole snapshot rather than per row: one query
+    -- against the cache and one read of three settings, not one of each per
+    -- Map Entity in the world.
+    local cachedNotes = ANKIGTA.Store.cachedCardNotes()
+    if type(cachedNotes) ~= "table" then
+        cachedNotes = {}
+    end
+    local labelGlobals = ANKIGTA.TextLabels.globals()
+
     local entities = {}
     for _, row in ipairs(emittedRows) do
-        table.insert(entities, entityContract(row))
+        table.insert(entities, entityContract(row, cachedNotes, labelGlobals))
     end
 
     -- After the stored rows, so what ANKIGTA already knows about is what the
     -- player sees first and the offers follow.
     local candidates, candidateTotal = {}, 0
     if context then
-        candidates, candidateTotal = worldCandidates(player, emittedRows, context)
+        candidates, candidateTotal = worldCandidates(
+            player, emittedRows, context, cachedNotes, labelGlobals
+        )
     end
     for _, candidate in ipairs(candidates) do
         entities[#entities + 1] = candidate
@@ -971,6 +1025,19 @@ local function studyTakesNotDueCards()
     return ANKIGTA.SettingsStore.get("reviewMode") == "allow_all"
 end
 
+--- Which of the three things walking up to a linked Map Entity does.
+--
+-- Through the schema's default where the store holds nothing the schema
+-- accepts, so an unreadable stored mode is the shipped one rather than `nil`
+-- compared against three strings.
+local function reviewModeInForce()
+    local mode = ANKIGTA.SettingsStore.get("reviewMode")
+    if type(mode) ~= "string" then
+        return ANKIGTA.Settings.default("reviewMode")
+    end
+    return mode
+end
+
 local function requestStudyStart(player, rebuild, reviewMode)
     local authorized, authorizationError = playerAuthorization(player)
     if not authorized then
@@ -982,6 +1049,14 @@ local function requestStudyStart(player, rebuild, reviewMode)
     -- started after a restart uses the same mode as the one before.
     if type(reviewMode) == "string" then
         ANKIGTA.SettingsStore.set("reviewMode", reviewMode)
+    end
+    if reviewModeInForce() == SHOW_TEXT_MODE then
+        -- `Show text` presents nothing and rates nothing, so there is no
+        -- session to build: no filtered deck, no Exact Card Admission, no
+        -- Review Transaction and no counters (ADR 0029). Building one anyway
+        -- would leave a filtered deck in somebody's collection for a mode that
+        -- never rates a card in it.
+        return false, "show_text_mode"
     end
     local allowNotDue = studyTakesNotDueCards()
     local identities, identityError = activeCardIdentities()
@@ -1260,6 +1335,19 @@ addEventHandler(SETTINGS_UPDATE_EVENT, resourceRoot, function(key, value)
         return
     end
     sendSettingsSnapshot(client)
+    if key == "reviewMode" and value == SHOW_TEXT_MODE then
+        -- Arriving in the mode is the other moment the cache has to be
+        -- current: a note edited in Anki itself while the player was in
+        -- another mode was never seen here, and the labels would open saying
+        -- what the card stopped saying.
+        refreshCardNoteCache(client)
+    end
+    -- Sent for every setting rather than for the five that matter. The mode
+    -- decides whether there are labels at all and the other four decide what
+    -- each says and how far it carries -- and it is the *empty* set that takes
+    -- the labels away on the way out of the mode, which a list of five keys
+    -- would have to remember to include.
+    sendTextLabels(client)
 end)
 
 --- Put every link back on the global for one setting.
@@ -1424,12 +1512,13 @@ addEventHandler(LINK_CARD_REQUEST_EVENT, resourceRoot, function(
         )
     else
         local linkedRow = ANKIGTA.Store.getMapEntity(mapId, entityId)
-        invalidateStudyDependents(
-            client,
-            false,
-            linkedRow and cardIdentityFromRow(linkedRow) or cardIdentity,
-            "link"
-        )
+        local linkedIdentity = linkedRow and cardIdentityFromRow(linkedRow)
+            or cardIdentity
+        invalidateStudyDependents(client, false, linkedIdentity, "link")
+        -- The words behind the card are written down as the Spatial Link is
+        -- made, so a Text Label is there from the moment the link is -- and
+        -- stays there once Anki is shut.
+        refreshCardNoteCache(client, {linkedIdentity})
         local refresh = sendF7Snapshot
         refresh(client)
     end
@@ -1557,6 +1646,11 @@ addEventHandler(UNLINK_CARD_REQUEST_EVENT, resourceRoot, function(
         )
         return
     end
+    -- Unlinking is what makes a cached note pointless, and keeping it would be
+    -- a copy of somebody's card held after they said to forget it (ADR 0017).
+    -- Before the invalidation, so the labels rebuilt by it are rebuilt from a
+    -- cache that no longer holds the card nothing points at.
+    ANKIGTA.Store.pruneCardNoteCache()
     invalidateStudyDependents(
         client,
         unlinked.oldCardIdentity,
@@ -2063,6 +2157,18 @@ addEventHandler(NOTE_UPDATE_REQUEST_EVENT, resourceRoot, function(
                     player, PENDING_NOTICE_EVENT, resourceRoot,
                     "notice.noteUpdateFailed", tostring(value)
                 )
+                return
+            end
+            -- What the note says now, read back after the write, is what its
+            -- Text Label should say now. Taken from the answer rather than
+            -- from the request: Anki may rewrite a field on save, and a label
+            -- showing what was typed rather than what was stored would
+            -- disagree with the card it came from.
+            local note = type(value) == "table" and value.note or nil
+            if type(note) == "table" then
+                ANKIGTA.Store.cacheCardNote(cardIdentity, note.fields)
+                sendTextLabels(player)
+                sendF7Snapshot(player)
             end
         end
     )
@@ -2174,6 +2280,15 @@ function openReviewModeFor(player, cardIdentity)
     local authorized = playerAuthorization(player)
     if not authorized then
         return false, "forbidden"
+    end
+    if reviewModeInForce() == SHOW_TEXT_MODE then
+        -- The one door into Review Mode, so this is the one place that has to
+        -- refuse. `Show text` presents no card, and a card that was never
+        -- presented must not be rateable: ADR 0027 lets a *badly* presented
+        -- card be rated because the player saw it, and here there is nothing
+        -- to have seen. Rating it would write a repetition that did not
+        -- happen (ADR 0029).
+        return false, "show_text_mode"
     end
     local identity = normalizedCardIdentity(cardIdentity)
     if not identity then
@@ -2408,10 +2523,102 @@ local function sendPausedStudyState(player)
     triggerClientEvent(player, NEXT_CARD_EVENT, resourceRoot, false, {})
 end
 
+--- Every Text Label the world should be showing, sent to one player.
+--
+-- Sent whether or not `Show text` is the current mode: outside it the set is
+-- empty, and that empty set is how the labels go away when the player changes
+-- mode. A client that simply stopped hearing about them would go on drawing
+-- the last set it was given.
+--
+-- Independent of the companion, of any session and of every card's state. The
+-- words come out of ANKIGTA's own cache, so the labels are there with Anki
+-- shut, and they are there whether or not a card is due (ADR 0029).
+sendTextLabels = function(player)
+    if not playerAuthorization(player) then
+        return false, "forbidden"
+    end
+    local reach = tonumber(ANKIGTA.SettingsStore.get("textLabelDistance"))
+        or ANKIGTA.Settings.default("textLabelDistance")
+    if reviewModeInForce() ~= SHOW_TEXT_MODE then
+        triggerClientEvent(player, TEXT_LABELS_EVENT, resourceRoot, {}, reach)
+        return true
+    end
+    local rows = ANKIGTA.Store.listMapEntities()
+    if type(rows) ~= "table" then
+        return false, "storage_unavailable"
+    end
+    local notes = ANKIGTA.Store.cachedCardNotes()
+    local labels = ANKIGTA.TextLabels.build(
+        rows,
+        type(notes) == "table" and notes or {},
+        ANKIGTA.TextLabels.globals(),
+        -- The same set of maps the session takes cards from. A link on a map
+        -- nobody has loaded has no object standing anywhere to label.
+        ANKIGTA.World.loadedMapIds(rows)
+    )
+    triggerClientEvent(player, TEXT_LABELS_EVENT, resourceRoot, labels, reach)
+    return true
+end
+
+--- Read the words behind these cards out of Anki and write them down.
+--
+-- The cache is what a Text Label is drawn from, so this is the only thing in
+-- `Show text` that needs the companion at all -- and it is needed once per
+-- change, not per frame and not per label. Anki stays the owner of what it
+-- returns (ADR 0017); what is stored is a copy for display.
+--
+-- `identities` names the cards to refresh, or nothing for all of them. One
+-- card is what a new Spatial Link asks for; all of them is what connecting
+-- asks for, because anything may have changed while ANKIGTA was not looking.
+refreshCardNoteCache = function(player, identities)
+    if not playerAuthorization(player) then
+        return false, "forbidden"
+    end
+    local wanted = identities or activeCardIdentities()
+    if type(wanted) ~= "table" or #wanted == 0 then
+        return false, "no_links"
+    end
+    return ANKIGTA.CompanionGateway.requestNotes(
+        player,
+        wanted,
+        function(ok, payload)
+            if ok ~= true or type(payload) ~= "table" then
+                -- The labels already on screen stay as they were. A stale line
+                -- is a line the note really said once; an empty one would say
+                -- the note is blank, which is a different and false claim.
+                return
+            end
+            for _, note in ipairs(payload.notes or {}) do
+                ANKIGTA.Store.cacheCardNote(note.identity, note.fields)
+            end
+            if identities == nil then
+                -- A full refresh is also when a card nothing links to any more
+                -- stops being worth keeping a copy of.
+                ANKIGTA.Store.pruneCardNoteCache()
+            end
+            sendTextLabels(player)
+        end
+    )
+end
+
 --- Ask Anki for the state of every linked card, and for the next one.
 local function refreshStudyState(player)
     if not playerAuthorization(player) then
         return false, "forbidden"
+    end
+    -- Here, and first, because this is what `invalidateStudyDependents` runs:
+    -- every link, unlink, relink, metadata edit, override sweep and undo comes
+    -- through it. An override that only reached the client the next time Anki
+    -- happened to be asked is the defect ticket 05 found, and a mode that
+    -- never asks Anki at all would never have been told.
+    sendTextLabels(player)
+    if reviewModeInForce() == SHOW_TEXT_MODE then
+        -- No session, so no counters and nothing to walk into. The labels sent
+        -- just above are the whole of what this mode puts in the world, and
+        -- asking the companion for card states would be asking a question this
+        -- mode has no use for -- with Anki shut, one that cannot be answered.
+        sendPausedStudyState(player)
+        return true
     end
     local identities, identityError = activeCardIdentities()
     if not identities then
@@ -2554,14 +2761,36 @@ local function maybeAutoStartStudy(player, study)
     return requestStudyStart(player, false, nil)
 end
 
+--- Whether the companion was connected the last time the status changed.
+--
+-- Kept so the cache is refreshed on *becoming* connected rather than on every
+-- health poll that says it still is: a full note read over a reference world
+-- is thousands of cards, and paying for it once a second would be paying for
+-- it to say nothing changed.
+local companionWasConnected = false
+
 addEvent(STUDY_STATE_EVENT, false)
 addEventHandler(STUDY_STATE_EVENT, resourceRoot, function(player, status)
     if source ~= resourceRoot or not playerAuthorization(player) then
         return
     end
+    local connected = type(status) == "table" and status.state == "connected"
+    if connected and not companionWasConnected
+        and reviewModeInForce() == SHOW_TEXT_MODE
+    then
+        -- Only in the mode that draws them. Reading every linked note is
+        -- thousands of cards over a reference world, and paying for it on
+        -- every connection for a mode nothing displays would be spending
+        -- ticket 30's budget on a cache nobody reads.
+        refreshCardNoteCache(player)
+    end
+    companionWasConnected = connected
     local study = type(status) == "table" and status.study or nil
     if type(study) ~= "table" or study.sessionActive ~= true then
         maybeAutoStartStudy(player, study)
+        -- Labels do not wait for a session, because in the mode that draws
+        -- them there is never going to be one (ADR 0029).
+        sendTextLabels(player)
         sendPausedStudyState(player)
         return
     end

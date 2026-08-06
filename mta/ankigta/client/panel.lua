@@ -434,9 +434,17 @@ local function settingsRows()
         local definition = schema().definition(key)
         local rule = definition and definition.rule or {}
         if shownInSettings(key, rule) then
+            -- A sentence under the control, where one setting needs saying
+            -- more than its name says. A setting gains one by gaining the
+            -- string, so there is no list here of which rows have a note --
+            -- the string table is the list, and a note with no row to sit
+            -- under is a key nothing looks up.
+            local noteKey = "settings." .. key .. ".note"
+            local strings = ANKIGTA.Locale and ANKIGTA.Locale.strings or {}
             local row = {
                 key = key,
                 labelKey = "settings." .. key,
+                noteKey = strings[noteKey] and noteKey or false,
                 kind = SETTINGS_DELEGATED[key] and "delegated"
                     or rule.kind or "unknown",
                 value = currentValue(key),
@@ -952,6 +960,9 @@ local function entityRows(snapshot)
     local globalCoronaOpacity = tonumber(currentValue("coronaOpacity"))
     local globalActivationType = currentValue("activationType")
     local globalActivationKey = currentValue("activationKey")
+    local globalLabelField = currentValue("textLabelField")
+    local globalLabelColor = currentValue("textLabelColor")
+    local globalLabelSize = tonumber(currentValue("textLabelSize"))
     local rows = {}
     for _, entry in ipairs(snapshot and snapshot.entities or {}) do
         local mapEntity = entry.mapEntity
@@ -987,6 +998,21 @@ local function entityRows(snapshot)
             and metadata.activationKey ~= ""
             and metadata.activationKey
             or nil
+        -- The Text Label's three, read exactly the way the corona's are: a
+        -- NULL override column arrives as an absent field, and the size goes
+        -- through the same rounding the opacity does -- it is a two-decimal
+        -- number that crossed a wire, so `1.15` reads `1.14999998` without it.
+        local ownLabelField = type(metadata.textLabelField) == "string"
+            and metadata.textLabelField ~= ""
+            and metadata.textLabelField
+            or nil
+        local ownLabelColor = type(metadata.textLabelColor) == "string"
+            and metadata.textLabelColor ~= ""
+            and metadata.textLabelColor
+            or nil
+        local ownLabelSize = schema().rounded(
+            "textLabelSize", tonumber(metadata.textLabelSize)
+        )
         -- Spelt out rather than as an `and`/`or` chain: the entity's own answer
         -- may be `false`, and `a and b or c` hands `false` to `c` -- which
         -- would make "no corona on this one" read as "follows the global".
@@ -1036,6 +1062,21 @@ local function entityRows(snapshot)
             activationTypeInherited = ownActivationType == nil,
             activationKey = ownActivationKey or globalActivationKey,
             activationKeyInherited = ownActivationKey == nil,
+            -- What this entity would carry in `Show text`: the three settings
+            -- in force on it, and beside them what the label really says.
+            --
+            -- Sent on every row whatever the mode is. The overrides are edited
+            -- here, and a player setting them has to see what they did without
+            -- changing mode first -- and a chosen field that falls through to
+            -- another one has to read as a fall-through rather than as
+            -- correct, which is the whole reason `textLabel` travels at all.
+            textLabelField = ownLabelField or globalLabelField,
+            textLabelFieldInherited = ownLabelField == nil,
+            textLabelColor = ownLabelColor or globalLabelColor,
+            textLabelColorInherited = ownLabelColor == nil,
+            textLabelSize = ownLabelSize or globalLabelSize,
+            textLabelSizeInherited = ownLabelSize == nil,
+            textLabel = entry.textLabel or false,
             -- What is on the row now, so the replace confirmation can name
             -- what it is about to throw away rather than saying "unknown".
             linkedCard = type(entry.link.cardIdentity) == "table"
@@ -1121,7 +1162,12 @@ local function cardRows(snapshot, f7Snapshot)
             state = tostring(card.state or ""),
             -- What Anki lists the note by. A row headed by a card id names
             -- nothing the player chose it for.
-            label = tostring(card.sortField or ""),
+            --
+            -- `sortField`, the name the companion and Anki both use, rather
+            -- than `label`: **Text Label** is a line drawn on a Map Entity and
+            -- this is the heading of a row in the Card Picker, and one word
+            -- for the two of them is a word that stops meaning either.
+            sortField = tostring(card.sortField or ""),
             linkedTo = card.linkedTo or false,
             linked = linkedMapName ~= false,
             linkedMapName = linkedMapName,
@@ -1194,10 +1240,15 @@ local function studyState()
         pausedReason = pausedReason,
         -- `rebuilding` is a transition and `not_started` lifts itself, so
         -- neither is something to offer a button for.
+        --
+        -- Nor is `Show text`. There is no session in it to resume (ADR 0029)
+        -- and the server refuses to build one, so a button offered here would
+        -- be a button whose only outcome is an error message.
         resumable = study.sessionActive ~= true
             and pausedReason ~= false
             and pausedReason ~= "rebuilding"
-            and pausedReason ~= "not_started",
+            and pausedReason ~= "not_started"
+            and currentValue("reviewMode") ~= "show_text",
     }
 end
 
@@ -1719,6 +1770,9 @@ function actions.setEntityMarks(payload)
             coronaOpacity = overridden(payload.coronaOpacity, tonumber),
             activationType = overridden(payload.activationType),
             activationKey = overridden(payload.activationKey),
+            textLabelField = overridden(payload.textLabelField),
+            textLabelColor = overridden(payload.textLabelColor),
+            textLabelSize = overridden(payload.textLabelSize, tonumber),
         }
     )
 end

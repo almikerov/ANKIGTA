@@ -491,6 +491,16 @@ label {
   color: var(--muted);
 }
 .setting .field-error[hidden] { display: none; }
+/* What the name of the setting does not say on its own. Under the control and
+   across the row, because it is a sentence rather than a label: `Show text`
+   rates nothing, and that is not something to learn by finding out. */
+.setting-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
 
 .setting input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* Wherever a two-state toggle stands. `Draw radius` is one and is on the entity
@@ -540,6 +550,19 @@ label {
 }
 .inherited-mark { color: var(--muted); font-size: 11px; white-space: nowrap; }
 .inherited-mark[hidden] { display: none; }
+
+/* What the object really says, under the three controls that decide it. Its own
+   line and the full width, because a fall-through names two fields and quotes
+   what is drawn — and reading as correct when it is not is the thing this is
+   here to stop. */
+.entity-label-state {
+  flex: 1 1 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.entity-settings input[type="text"]#entity-text-label-field { width: 120px; }
 
 /* --- confirmation ----------------------------------------------------- */
 

@@ -556,6 +556,30 @@ local function ensureChangeHistorySchema()
                 )
             ]],
         },
+        {
+            -- What a Text Label reads from, so it can be drawn with Anki shut.
+            --
+            -- A copy for display and never a source of truth (ADR 0017): it is
+            -- written when a Spatial Link is made, refreshed on connecting to
+            -- the companion and when a note is saved through the inspector,
+            -- and it takes no part in rating -- of which there is none in the
+            -- mode that reads it anyway (ADR 0029).
+            --
+            -- Keyed by Anki Card Identity rather than by link, because one
+            -- card may hang on several Map Entity and one copy of its words is
+            -- enough for all of them. Not a foreign key of anything: the card
+            -- lives in Anki, and a cached note outliving its link is a row to
+            -- drop rather than a constraint to enforce.
+            [[
+                CREATE TABLE IF NOT EXISTS card_note_cache (
+                    collection_uuid TEXT NOT NULL,
+                    card_id INTEGER NOT NULL,
+                    note_fields TEXT NOT NULL DEFAULT '[]',
+                    refreshed_at INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (collection_uuid, card_id)
+                )
+            ]],
+        },
     })
     if created then
         local ok, columns = execute(
@@ -3473,6 +3497,115 @@ function Store.clearEntityOverrides(settingKey)
         return false, "entity_override_clear_failed: " .. tostring(errorMessage)
     end
     return {settingKey = settingKey, cleared = #overrides}
+end
+
+-- --- the cached words behind a card ------------------------------------------
+--
+-- Anki stays authoritative (ADR 0017). This is a copy kept so a Text Label can
+-- be drawn with Anki shut, and it takes no part in rating -- of which there is
+-- none in the mode that reads it (ADR 0029). Nothing here is a Change History
+-- entry either: what it holds is Anki's, so there is no user change to undo.
+
+local function noteCacheKey(cardIdentity)
+    if type(cardIdentity) ~= "table" then
+        return false
+    end
+    local collectionUuid = cardIdentity.collectionUuid
+    local cardId = tonumber(cardIdentity.cardId)
+    if type(collectionUuid) ~= "string" or collectionUuid == ""
+        or cardId == nil
+    then
+        return false
+    end
+    return collectionUuid, cardId
+end
+
+--- What one note says, keyed the way a caller walking Spatial Links looks it up.
+function Store.cachedNoteKey(collectionUuid, cardId)
+    return tostring(collectionUuid) .. "/" .. tostring(cardId)
+end
+
+--- Write down what one note says, so it can be read back without Anki.
+--
+-- `fields` is the note's own fields in note-type order. The order is the
+-- point: "the first field with words" is a question about it, and a set of
+-- names and values with the order lost cannot answer it.
+function Store.cacheCardNote(cardIdentity, fields)
+    if not Store.ready or not Store.historyReady then
+        return false, Store.errorCategory or "storage_unavailable"
+    end
+    local collectionUuid, cardId = noteCacheKey(cardIdentity)
+    if not collectionUuid then
+        return false, "invalid_anki_card_identity"
+    end
+    local kept = {}
+    for _, field in ipairs(type(fields) == "table" and fields or {}) do
+        if type(field) == "table" and type(field.name) == "string" then
+            kept[#kept + 1] = {
+                name = field.name,
+                value = type(field.value) == "string" and field.value or "",
+            }
+        end
+    end
+    return execute(
+        Store.connection,
+        [[
+            INSERT OR REPLACE INTO card_note_cache
+                (collection_uuid, card_id, note_fields, refreshed_at)
+            VALUES (?, ?, ?, ?)
+        ]],
+        collectionUuid,
+        cardId,
+        jsonEncode(kept) or "[]",
+        getRealTime().timestamp
+    )
+end
+
+--- Every cached note, keyed by `Store.cachedNoteKey`.
+--
+-- One read rather than one per link: a reference world holds thousands of
+-- links, and a query each would be thousands of queries to decide one world's
+-- worth of labels.
+function Store.cachedCardNotes()
+    if not Store.ready or not Store.historyReady then
+        return false, Store.errorCategory or "storage_unavailable"
+    end
+    local ok, rows = execute(
+        Store.connection,
+        "SELECT collection_uuid, card_id, note_fields FROM card_note_cache"
+    )
+    if not ok then
+        return false, "card_note_cache_read_failed"
+    end
+    local notes = {}
+    for _, row in ipairs(rows) do
+        local fields = jsonDecode(row.note_fields)
+        notes[Store.cachedNoteKey(row.collection_uuid, row.card_id)] =
+            type(fields) == "table" and fields or {}
+    end
+    return notes
+end
+
+--- Drop cached notes for cards nothing links to any more.
+--
+-- Unlinking is what makes a cached note pointless, and leaving it would be a
+-- copy of somebody's card kept after they said to forget it.
+function Store.pruneCardNoteCache()
+    if not Store.ready or not Store.historyReady then
+        return false, Store.errorCategory or "storage_unavailable"
+    end
+    return execute(
+        Store.connection,
+        [[
+            DELETE FROM card_note_cache
+            WHERE NOT EXISTS (
+                SELECT 1 FROM spatial_links
+                WHERE spatial_links.collection_uuid
+                        = card_note_cache.collection_uuid
+                    AND spatial_links.card_id = card_note_cache.card_id
+            )
+        ]]
+    )
 end
 
 --- Every persisted setting, decoded, keyed by setting.

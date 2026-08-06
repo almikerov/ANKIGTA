@@ -42,6 +42,16 @@ local function toggle()
     return {kind = "boolean"}
 end
 
+--- Free text the user types, bounded so a field name stays a field name.
+--
+-- Bounded rather than open: this is stored, sent to the client on every
+-- settings snapshot, and compared against a note type's field names. Anki's
+-- own field names are short, and a value longer than any of them can only be
+-- a mistake or a paste.
+local function text(maximumLength)
+    return {kind = "text", maximumLength = maximumLength}
+end
+
 --- The keys ANKIGTA has already bound, and what each one does.
 --
 -- Here rather than at the three `bindKey` calls, because two different
@@ -178,14 +188,81 @@ Settings.schema = {
         default = 0,
         rule = numeric(0, 100000, nil, 2),
     },
-    -- Which cards the session takes. `allowEarlyReview` was a boolean whose
-    -- name described neither of its states: off did not mean "no review" and
-    -- on did not mean "early only". A mode says which one is in force, and
-    -- leaves room for the one that shows text instead of a card (ticket 05).
+    -- What walking up to a linked Map Entity does. `allowEarlyReview` was a
+    -- boolean whose name described neither of its states: off did not mean "no
+    -- review" and on did not mean "early only". A mode says which one is in
+    -- force, and left room for the third.
+    --
+    -- `allow_due` opens only cards the scheduler calls due and `allow_all`
+    -- opens them whether they are due or not. `show_text` opens nothing at
+    -- all: the entity carries a Text Label instead, nothing is presented and
+    -- nothing is rated (ADR 0029), so no session is built and the one door
+    -- into Review Mode refuses to open.
     reviewMode = {
         authority = SERVER,
         default = "allow_due",
-        rule = choice({"allow_due", "allow_all"}),
+        rule = choice({"allow_due", "allow_all", "show_text"}),
+    },
+    -- The Text Label: what it says, how it looks, and how far it carries.
+    --
+    -- Server-owned like the Activation Zone radius, and for the same reason:
+    -- these belong to the world and to the link rather than to one player's
+    -- machine, and the first three are answerable on the Map Entity itself.
+    --
+    -- Empty means "whichever field comes first with words in it", which is the
+    -- right answer for a player who has not chosen and for a note type nobody
+    -- had in mind when they did. On an entity, empty is how the override is
+    -- cleared -- the same thing an emptied radius box says -- so an entity
+    -- cannot ask for "the first field" while the global names one. That is the
+    -- price of one spelling for "nothing of its own" (NULL) across every
+    -- override, and it is the spelling the sweep that clears them reads.
+    textLabelField = {
+        authority = SERVER,
+        default = "",
+        rule = text(128),
+        entityOverride = {
+            column = "text_label_field_override",
+            field = "textLabelField",
+        },
+    },
+    -- Chosen freely rather than from a safe palette. A label is picked to
+    -- stand out against whatever it hangs on, and no list of twelve colours
+    -- covers a city; what keeps a free choice legible is the dark outline the
+    -- renderer always draws under it, not the palette.
+    textLabelColor = {
+        authority = SERVER,
+        default = "#ffffff",
+        rule = color(),
+        entityOverride = {
+            column = "text_label_color_override",
+            field = "textLabelColor",
+        },
+    },
+    textLabelSize = {
+        authority = SERVER,
+        default = 1,
+        rule = numeric(0.25, 5, nil, 2),
+        entityOverride = {
+            column = "text_label_size_override",
+            field = "textLabelSize",
+        },
+    },
+    -- Its own distance, and global only. The Activation Zone radius is about
+    -- standing close enough to open a card and is unused in this mode; a label
+    -- covers nothing and demands nothing, so it carries further than a zone
+    -- you have to stand in, and it is not gated on speed either -- reading one
+    -- while driving past is the point (ADR 0029).
+    --
+    -- The maximum is `client/world_marks.lua`'s draw distance, which is the
+    -- ceiling on everything ANKIGTA draws. Beyond it nothing is drawn whatever
+    -- this says, and a setting that reads as saved and changes nothing is a
+    -- control arguing with the thing that obeys it. The two numbers are pinned
+    -- together by a test rather than by one file reading the other: the
+    -- ceiling is the client's, and this table is shared.
+    textLabelDistance = {
+        authority = SERVER,
+        default = 25,
+        rule = numeric(1, 150, nil, 1),
     },
     -- Whether an entity wears a corona at all, and what it looks like where the
     -- entity does not say otherwise. Owned by the server for the same reason
@@ -305,6 +382,12 @@ Settings.order = {
     "activationDelaySeconds",
     "maxActivationSpeedKmh",
     "reviewMode",
+    -- What `Show text` puts on the object, straight under the mode that is the
+    -- only reason any of them does anything.
+    "textLabelField",
+    "textLabelColor",
+    "textLabelSize",
+    "textLabelDistance",
     -- Whether the entity wears a mark at all and what that mark looks like.
     -- `drawRadius` was at the head of this group and is not a member of it: it
     -- is a way of looking rather than a property of anything, and it is on the
@@ -656,6 +739,20 @@ function Settings.validate(key, value)
     if rule.kind == "secret" then
         if type(value) ~= "string" then
             return false, "settings.error.not_a_string"
+        end
+        return true
+    end
+
+    -- Words the user typed, and no rule about which words: a note type's
+    -- fields are named by whoever made it, so anything this refused beyond a
+    -- length would be refusing a field that really exists. Bytes rather than
+    -- characters, because the bound is about what is stored and sent.
+    if rule.kind == "text" then
+        if type(value) ~= "string" then
+            return false, "settings.error.not_a_string"
+        end
+        if rule.maximumLength and #value > rule.maximumLength then
+            return false, "settings.error.too_long"
         end
         return true
     end

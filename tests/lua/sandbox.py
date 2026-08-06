@@ -1829,6 +1829,42 @@ class MtaSandbox:
 
         g.dxDrawText = dx_draw_text
 
+        #: The pixel height each dx font is built at, before scale.
+        #:
+        #: `CGraphics::LoadStandardDXFonts` builds every standard font from
+        #: `fontInfos` — tahoma and tahomabd (which `default` and
+        #: `default-bold` name) at 15, the display faces at 30 and unifont at
+        #: 14 — and `dxGetFontHeight` answers `desc.Height * fScale`
+        #: (`CLuaDrawingDefs::DxGetFontHeight` →
+        #: `CGraphics::GetDXFontHeight`). `MaybeGetBigFont` swaps in a larger
+        #: face at large scales and divides the scale to match, so the product
+        #: is what a caller stacking lines gets either way.
+        #:
+        #: Read 2026-08-06 from `Client/core/Graphics/CGraphics.cpp`, SHA-256
+        #: 32bb636333a2360ca2368396116b48f33dd102d32daa8ac52daad663c2b51459,
+        #: and `Client/mods/deathmatch/logic/luadefs/CLuaDrawingDefs.cpp`,
+        #: SHA-256
+        #: cabbe5f31ed161086f9b7277e1b83c6d1f489d205665b39441fb121b8d5a6b0f.
+        font_heights = {
+            "default": 15.0,
+            "default-bold": 15.0,
+            "clear": 15.0,
+            "arial": 15.0,
+            "sans": 15.0,
+            "pricedown": 30.0,
+            "bankgothic": 30.0,
+            "diploma": 30.0,
+            "beckett": 30.0,
+            "unifont": 14.0,
+        }
+
+        def dx_get_font_height(
+            scale: Any = 1, font: Any = "default", *_rest: Any
+        ) -> float:
+            return font_heights.get(str(font), 15.0) * float(scale)
+
+        g.dxGetFontHeight = dx_get_font_height
+
         def dx_draw_image(
             x: float = 0,
             y: float = 0,

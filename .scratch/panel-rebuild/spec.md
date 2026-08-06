@@ -80,8 +80,15 @@ named where it is obvious.
 
 - `companion/ankigta_companion/cards.py` carries a raw U+00A0 inside a
   `.replace()` that `str.split()` already handles.
-- The card row's `label` key collides with the glossary's **Text Label**, which
-  is a different thing entirely. Ticket 06.
+- ~~The card row's `label` key collides with the glossary's **Text Label**,
+  which is a different thing entirely. Ticket 06.~~ Done in 06: it is
+  `sortField`, the name Anki and the companion both use.
+- `Follow Settings` on the *corona* colour picker has been broken since 05: the
+  page sends `false` where the server only recognises `"inherit"`, so clearing
+  it is refused as `settings.error.not_a_color` and the override stays. Found
+  and reproduced by 06, which owns the other colour picker on that pane and
+  sends the right word. Whichever ticket next opens `app.js` — one word there
+  and one line in `tests/test_panel_page.py`.
 - `.inspector-actions` in `styles.css` is dead. Ticket 03.
 - `tests/test_panel_page.py::test_saving_lives_with_the_fields_it_saves` reads
   `index.html` as text and splits on `'id="inspector"'`, which

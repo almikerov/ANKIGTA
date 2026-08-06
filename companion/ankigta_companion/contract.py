@@ -7,7 +7,7 @@ from .collection_identity import (
     CollectionIdentityObservation,
     CollectionIdentityState,
 )
-from .cards import CardSearchPage, CardView
+from .cards import CardSearchPage, CardView, NoteView
 from .notes import NoteUpdate
 
 
@@ -282,6 +282,41 @@ def note_update_response(
                 ],
                 "tags": list(update.tags),
             },
+        },
+    }
+
+
+def note_read_response(
+    request_id: str,
+    notes: tuple[NoteView, ...],
+) -> tuple[int, dict[str, object]]:
+    """The words behind a batch of cards, for the Text Label cache.
+
+    A card the batch asked for and that could not be read is simply absent
+    here. The caller keeps what it already had for it rather than being handed
+    an empty note, which would draw a linked object as having nothing to say.
+    """
+    return 200, {
+        "protocol": PROTOCOL_NAME,
+        "protocolVersion": PROTOCOL_VERSION,
+        "requestId": request_id,
+        "ok": True,
+        "error": None,
+        "payload": {
+            "notes": [
+                {
+                    "identity": {
+                        "collectionUuid": note.identity.collection_uuid,
+                        "cardId": note.identity.card_id,
+                    },
+                    "noteId": note.note_id,
+                    "fields": [
+                        {"name": field.name, "value": field.value}
+                        for field in note.fields
+                    ],
+                }
+                for note in notes
+            ],
         },
     }
 

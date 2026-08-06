@@ -192,6 +192,20 @@ class NoteField:
 
 
 @dataclass(frozen=True)
+class NoteView:
+    """One card's note, with nothing about the card attached.
+
+    What a Text Label needs and no more: the fields in the order the note type
+    declares them, because "the first field with words" is a question about
+    that order.
+    """
+
+    identity: AnkiCardIdentity
+    note_id: int
+    fields: tuple[NoteField, ...]
+
+
+@dataclass(frozen=True)
 class DeckView:
     deck_id: int
     name: str
@@ -348,6 +362,55 @@ class CardPickerService:
                 "card is missing from the bound collection",
             )
         return self._view(collection, collection_uuid, card, with_note=with_note)
+
+    def read_notes(
+        self,
+        identities: Sequence[AnkiCardIdentity],
+    ) -> tuple[NoteView, ...]:
+        """The words behind each of these cards, for the Text Label cache.
+
+        A batch rather than one read per card: ANKIGTA refreshes the whole
+        cache on connecting, and a reference world holds thousands of Spatial
+        Links -- a request each would be thousands of round trips before the
+        first label could be drawn.
+
+        A card that cannot be read is left out rather than guessed at. The
+        caller keeps whatever it already had for that card, which is a stale
+        label rather than a wrong one; a card that has genuinely gone is a
+        `card_missing` the link state already reports.
+
+        Nothing here is a deck read. The deck a card sits in has no bearing on
+        what its note says, and paying for one per card is what makes a batch
+        of five thousand slow.
+        """
+        collection_uuid, collection = self._bound_collection()
+        views: list[NoteView] = []
+        for identity in identities:
+            if not isinstance(identity, AnkiCardIdentity):
+                raise CardPickerError(
+                    "invalid_anki_card_identity",
+                    "card identity must include collectionUuid and cardId",
+                )
+            if identity.collection_uuid != collection_uuid:
+                # Another collection's card is not this collection's to read,
+                # and quietly reading it by id would be exactly the confusion
+                # Anki Card Identity exists to prevent.
+                continue
+            try:
+                card = collection.get_card(identity.card_id)
+            except Exception:
+                continue
+            if card is None:
+                continue
+            try:
+                note = card.note()
+            except Exception:
+                continue
+            note_id, fields = self._note_fields(note)
+            views.append(
+                NoteView(identity=identity, note_id=note_id, fields=fields)
+            )
+        return tuple(views)
 
     def _bound_collection(self) -> tuple[str, CollectionLike]:
         observation = self._identity_provider()

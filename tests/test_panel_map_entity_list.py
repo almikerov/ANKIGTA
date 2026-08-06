@@ -1156,7 +1156,7 @@ def test_a_card_linked_to_another_map_names_that_map(
     assert cards["7"]["foreignMap"] is False
     assert cards["42"]["foreignMap"] is True
     assert cards["42"]["foreignMapName"] == "Other Map"
-    assert cards["42"]["label"] == ""
+    assert cards["42"]["sortField"] == ""
 
 
 def test_renaming_uses_the_selected_identity_and_only_changes_the_name(

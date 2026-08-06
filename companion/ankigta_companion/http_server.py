@@ -14,6 +14,7 @@ from .contract import (
     error_response,
     card_read_response,
     card_search_response,
+    note_read_response,
     note_update_response,
     health_response,
     session_response,
@@ -30,6 +31,7 @@ HEALTH_PATH = "/v1/health"
 CARD_SEARCH_PATH = "/v1/cards/search"
 CARD_READ_PATH = "/v1/cards/read"
 NOTE_UPDATE_PATH = "/v1/notes/update"
+NOTE_READ_PATH = "/v1/notes/read"
 SESSION_START_PATH = "/v1/session/start"
 SESSION_REBUILD_PATH = "/v1/session/rebuild"
 SESSION_PAUSE_PATH = "/v1/session/pause"
@@ -482,6 +484,52 @@ class HealthServer:
                                 ContractError(
                                     error.category,
                                     error.message,
+                                    request_id,
+                                )
+                            ),
+                        )
+                        return
+                    self._write_json(status, response)
+                    return
+                if self.path == NOTE_READ_PATH:
+                    if card_picker is None:
+                        unavailable = ContractError(
+                            "card_picker_unavailable",
+                            "notes are unavailable",
+                            request_id,
+                        )
+                        self._write_json(503, error_response(unavailable))
+                        return
+                    try:
+                        identities = _parse_identities(request)
+                    except SessionError as identities_error:
+                        self._write_json(
+                            400,
+                            error_response(
+                                ContractError(
+                                    identities_error.category,
+                                    identities_error.message,
+                                    request_id,
+                                )
+                            ),
+                        )
+                        return
+                    try:
+                        status, response = note_read_response(
+                            request_id,
+                            card_picker.read_notes(identities),
+                        )
+                    except CardPickerError as notes_error:
+                        self._write_json(
+                            {
+                                "collection_not_bound": 409,
+                                "collection_unavailable": 503,
+                                "invalid_anki_card_identity": 400,
+                            }.get(notes_error.category, 409),
+                            error_response(
+                                ContractError(
+                                    notes_error.category,
+                                    notes_error.message,
                                     request_id,
                                 )
                             ),
