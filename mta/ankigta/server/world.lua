@@ -195,14 +195,85 @@ function World.mapIdsForOwner(owner, byOwner)
     return (mapIds and next(mapIds)) and mapIds or false
 end
 
-local function playerWorldScore(owner, player)
+--- Every resource holding a copy of one map, added to the ones already known.
+--
+-- One authored object stands in the world once per copy, and the copies are
+-- one entity because one document produced them. Anything deciding whether an
+-- element belongs to the map in front of the player has to ask about the map,
+-- not about the copy: naming a single copy answers a different question
+-- depending on where the player is standing, which is how a row the panel
+-- offered from one world could not be edited from another.
+--
+-- Matched on identity, because that is what the rest of the resource matches
+-- on and it is the only answer that survives the map being saved under a new
+-- name. A map nobody has linked on carries no ANKIGTA identity at all -- the
+-- ordinary state of a map whose objects are only now being taken in -- so the
+-- copies the editor makes by construction are named by the caller instead.
+--
+-- Two documents genuinely answering to one identity is the thing ADR 0011's
+-- copy decision exists for, and nothing here pre-empts it: that decision is
+-- made about documents, by `MapIdentity`, while this is about which live
+-- elements are the map in front of the player. Where both copies are really
+-- running, both elements come back and `instanceInFrontOf` refuses to guess
+-- between them -- which is the conservative half of the same answer.
+function World.ownersOfMapIds(mapIds, owners, byOwner)
+    owners = owners or {}
+    if not mapIds then
+        return owners
+    end
+    for owner, ownerIds in pairs(byOwner or World.mapIdsByOwner()) do
+        for mapId in pairs(ownerIds) do
+            if mapIds[mapId] then
+                owners[owner] = true
+                break
+            end
+        end
+    end
+    return owners
+end
+
+--- Does this element belong to the map the context is about?
+--
+-- The one question both walks over the world ask -- the list that offers a row
+-- to adopt, and the lookup that resolves the row it offered. They asked it
+-- apart, each naming a single copy of the map while doing so, which is how a
+-- row offered in one world could not be edited in another.
+--
+-- Three things it is not, and all three were bought with real breakage. Not
+-- EDF's own drawing of an element: it parents one to everything it draws and
+-- stamps it `edf:rep`, and counting those made the editor's world refuse every
+-- link. Not an element the editor has deleted, which it parks in
+-- `workingDimension + 1` rather than destroying, so the row and its ring
+-- outlived the object. And not an element of some other map that happens to be
+-- running beside this one.
+function World.belongsToContext(element, context)
+    if not context or not context.owners then
+        return false
+    end
+    if not context.owners[World.owningResource(element)] then
+        return false
+    end
+    if World.isEditorRepresentation(element) then
+        return false
+    end
+    return not (context.workingDimension
+        and getElementDimension(element) == context.workingDimension + 1)
+end
+
+--- How much of one map stands in the player's own world.
+--
+-- Over every copy of the map rather than one resource: the map saved under its
+-- own name and the copy of it a Test press left running are the same map, and
+-- scored apart they were a tie -- which is answered by not guessing, so the
+-- player standing in that world had no current map at all.
+local function playerWorldScore(owners, player)
     if not isElement(player) then
         return 0
     end
     local score = 0
     for _, kind in ipairs(SUPPORTED_ENTITY_ORDER) do
         for _, element in ipairs(getElementsByType(kind)) do
-            if World.owningResource(element) == owner
+            if owners[World.owningResource(element)]
                 and getElementDimension(element) == getElementDimension(player)
                 and getElementInterior(element) == getElementInterior(player)
             then
@@ -213,92 +284,140 @@ local function playerWorldScore(owner, player)
     return score
 end
 
+--- One map, as everything that reads the world is handed it.
+--
+-- Built in one place because the four travel together and the last is derived
+-- from the one before it: which resources hold a copy of this map is an answer
+-- about its identities, and each caller assembling the table for itself is how
+-- one of them could be given the identities and not the copies.
+local function mapContext(
+    resourceName, workingDimension, mapIds, owners, byOwner
+)
+    return {
+        resourceName = resourceName,
+        workingDimension = workingDimension,
+        mapIds = mapIds,
+        owners = World.ownersOfMapIds(mapIds, owners, byOwner),
+    }
+end
+
 --- The map the editor has open, seen from wherever the player is standing.
 --
 -- The map is the same one either way; which copy of it they are looking at is
--- not. `candidateOwner` is that copy, and `workingDimension` is the editor's
--- deleted dimension minus one -- which is meaningful only while the player is
--- in the editor's own world. Inside a play-test it is `false`, because every
--- element the walk will meet there belongs to `editor_test` and stands in
--- dimension 0: the editor's Delete parks its own elements and never touches
--- the test's, and the test is written out without the parked ones
--- (`dumpMap` skips `DESTROYED_ELEMENT_DIMENSION`).
-local function editorContext(editor, candidateOwner, workingDimension)
-    return {
-        resourceName = editor.mapName,
-        candidateOwner = candidateOwner,
-        workingDimension = workingDimension,
-        -- The identities the editor's own copy carries: the play-test's are a
-        -- duplicate of them, and a stored row belongs to the map rather than
-        -- to whichever copy of it is being looked at.
-        mapIds = World.mapIdsForOwner(EDITOR_RESOURCE),
-    }
+-- not, and nothing here depends on that any more. `owners` is every resource
+-- holding a copy: the editor's own, the one a Test press writes out, the
+-- resource the map is saved as, and anything else carrying its identity.
+--
+-- `workingDimension` is the editor's deleted dimension minus one. It used to
+-- be `false` wherever the player was outside the editor's own world, because
+-- the walk could only meet `editor_test`'s elements there and none of those
+-- can be parked. The walk meets the editor's own copies from every world now,
+-- so the question is live wherever the editor has a map open: a parked element
+-- is in the bin, whichever world it is being looked at from.
+local function editorContext(editor, byOwner)
+    byOwner = byOwner or World.mapIdsByOwner()
+    -- The identities the editor's own copy carries: the play-test's are a
+    -- duplicate of them, and a stored row belongs to the map rather than to
+    -- whichever copy of it is being looked at.
+    local mapIds = World.mapIdsForOwner(EDITOR_RESOURCE, byOwner)
+    local owners = {[EDITOR_RESOURCE] = true, [PLAY_TEST_RESOURCE] = true}
+    if type(editor.mapName) == "string" and editor.mapName ~= "" then
+        owners[editor.mapName] = true
+    end
+    return mapContext(
+        editor.mapName, editor.workingDimension, mapIds, owners, byOwner
+    )
 end
 
 --- The map the player is actually working in or playing on.
 --
 -- The stock editor keeps an editable copy under `editor_main` in its working
--- dimension while a play-test may keep the map resource itself running in the
+-- dimension while the map saved out of it, and a play-test of it, run in the
 -- ordinary world.  Looking at every element therefore lists the same authored
--- entity twice.  The player's dimension decides which of those two worlds is
--- current; outside the editor, the one running resource of type `map` wins.
+-- entity once per copy.  The player's dimension decides which of those worlds
+-- they are in; outside the editor, the one map in play wins.
 function World.currentMapContext(player, storedRows)
     local editor = World.editor()
-    if editor and editor.workingDimension and editor.mapName then
-        if isElement(player)
-            and getElementDimension(player) == editor.workingDimension
-        then
-            return editorContext(
-                editor, EDITOR_RESOURCE, editor.workingDimension
-            )
-        end
+    -- Every identity in the world, read once for the whole answer: which maps
+    -- are in play is the same question as which resources hold a copy of one.
+    local byOwner = World.mapIdsByOwner()
+    -- The map the editor has open, and every copy of it standing in the world.
+    -- Built once, because the copies answer both questions: which map the
+    -- player is standing in, and which elements belong to it.
+    local held = (editor and editor.workingDimension and editor.mapName)
+        and editorContext(editor, byOwner)
+        or false
+    if held and isElement(player)
+        and getElementDimension(player) == editor.workingDimension
+    then
+        return held
     end
 
-    local runningMaps = {}
+    -- Every map in play, as a map rather than as a resource. Two of the
+    -- resources running as maps can be copies of the one the editor has open
+    -- and not maps of their own: `editor_test` is that map written out on the
+    -- Test press, and the resource it was saved as is the same document under
+    -- its own name. Counted separately they were two maps the player could
+    -- equally be standing in -- a tie, which is answered by not guessing, so
+    -- an object in a saved map could not be reached from its own world at all.
+    local inPlay, editorMap = {}, nil
     for _, candidate in ipairs(getResources() or {}) do
         if getResourceState(candidate) == "running"
             and getResourceInfo(candidate, "type") == "map"
         then
-            runningMaps[#runningMaps + 1] = getResourceName(candidate)
+            local name = getResourceName(candidate)
+            if held and held.owners[name] then
+                if not editorMap then
+                    editorMap = {
+                        resourceName = held.resourceName,
+                        owners = held.owners,
+                    }
+                    inPlay[#inPlay + 1] = editorMap
+                end
+            else
+                inPlay[#inPlay + 1] = {
+                    resourceName = name,
+                    owners = {[name] = true},
+                }
+            end
         end
     end
-    table.sort(runningMaps)
-    local runningMap = nil
-    if #runningMaps == 1 then
-        runningMap = runningMaps[1]
-    elseif #runningMaps > 1 then
+    table.sort(inPlay, function(left, right)
+        return left.resourceName < right.resourceName
+    end)
+    local current = nil
+    if #inPlay == 1 then
+        current = inPlay[1]
+    elseif #inPlay > 1 then
         local bestScore, tied = 0, false
-        for _, resourceName in ipairs(runningMaps) do
-            local score = playerWorldScore(resourceName, player)
+        for _, entry in ipairs(inPlay) do
+            local score = playerWorldScore(entry.owners, player)
             if score > bestScore then
-                runningMap, bestScore, tied = resourceName, score, false
+                current, bestScore, tied = entry, score, false
             elseif score > 0 and score == bestScore then
                 tied = true
             end
         end
         if tied then
-            runningMap = nil
+            current = nil
         end
     end
-    if runningMap then
-        -- The editor's play-test is not a map of its own. It is the map the
-        -- editor has open, written out on the Test press and started in the
-        -- ordinary world -- so the elements in front of the player belong to
-        -- `editor_test` and the map they belong to is the one being edited.
-        -- Calling it `editor_test` is what made every row of the map being
-        -- tested fall outside the current map, and what made a link recorded
-        -- during a test point at a resource the next Test press rewrites.
-        if World.isPlayTestResource(runningMap)
-            and editor and editor.mapName
-        then
-            return editorContext(editor, runningMap, false)
+    if current then
+        -- The map the editor has open is that map wherever it is being looked
+        -- at from. Calling the copy in front of the player a map of its own is
+        -- what made every row of the map being tested fall outside the current
+        -- map, and what made a link recorded during a test point at a resource
+        -- the next Test press rewrites.
+        if current == editorMap then
+            return held
         end
-        return {
-            resourceName = runningMap,
-            candidateOwner = runningMap,
-            workingDimension = false,
-            mapIds = World.mapIdsForOwner(runningMap),
-        }
+        return mapContext(
+            current.resourceName,
+            false,
+            World.mapIdsForOwner(current.resourceName, byOwner),
+            current.owners,
+            byOwner
+        )
     end
 
     -- Disposable/server-only runs have no map manager, but a database that
@@ -320,12 +439,13 @@ function World.currentMapContext(player, storedRows)
     if type(onlyResourceName) == "string" and onlyResourceName ~= ""
         and type(onlyMapId) == "string" and onlyMapId ~= ""
     then
-        return {
-            resourceName = onlyResourceName,
-            candidateOwner = onlyResourceName,
-            workingDimension = false,
-            mapIds = {[onlyMapId] = true},
-        }
+        return mapContext(
+            onlyResourceName,
+            false,
+            {[onlyMapId] = true},
+            {[onlyResourceName] = true},
+            byOwner
+        )
     end
 
     return false
@@ -496,6 +616,12 @@ end
 -- are a genuine duplicate, and guessing between them would write to whichever
 -- the walk happened to reach first.
 --
+-- Except where one of them is the play-test's copy of the other, which is not
+-- a second entity but the same one seen from inside the test. The editor runs
+-- a test in the ordinary world, which is also where a map saved under its own
+-- name runs, so the player's own dimension cannot tell those two apart -- and
+-- the copy that stops existing when the test does is never the one meant.
+--
 -- One copy is not a choice, so the player's world does not veto it: a Map
 -- Entity whose only instance is the one the editor is holding is still that
 -- entity, and taking the player somewhere it is not is the thing this exists
@@ -516,6 +642,20 @@ function World.instanceInFrontOf(elements, player)
                 and getElementInterior(element) == interior
             then
                 here[#here + 1] = element
+            end
+        end
+        if #here > 1 then
+            local enduring = {}
+            for _, element in ipairs(here) do
+                if not World.isPlayTestElement(element) then
+                    enduring[#enduring + 1] = element
+                end
+            end
+            -- Only where something outlives the test. Two copies both inside
+            -- one are still two copies, and this is not the place that decides
+            -- what a play-test copy on its own is worth.
+            if #enduring > 0 then
+                here = enduring
             end
         end
         if #here == 1 then
@@ -622,9 +762,7 @@ function World.enduring(element, editor)
     end
     return {
         element = found,
-        context = editorContext(
-            editor, EDITOR_RESOURCE, editor.workingDimension
-        ),
+        context = editorContext(editor),
     }
 end
 

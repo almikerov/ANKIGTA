@@ -93,6 +93,10 @@ end
 local owningResource = ANKIGTA.World.owningResource
 local currentMapContext = ANKIGTA.World.currentMapContext
 local isEditorRepresentation = ANKIGTA.World.isEditorRepresentation
+-- Whether an element is part of the map in front of the player. Both walks
+-- over the world ask it -- the one that offers rows and the one that resolves
+-- the row it offered -- and they have to give the same answer.
+local belongsToContext = ANKIGTA.World.belongsToContext
 
 --- A name for an element that has none of its own.
 --
@@ -441,18 +445,20 @@ local function worldCandidates(player, storedRows, context, notes, globals)
         originX, originY, originZ = getElementPosition(player)
     end
 
+    local function distanceTo(element)
+        if not isElement(player) then
+            return 0
+        end
+        local x, y, z = getElementPosition(element)
+        return getDistanceBetweenPoints3D(
+            originX, originY, originZ, x or 0, y or 0, z or 0
+        )
+    end
+
     local found, seen = {}, {}
     for _, kind in ipairs(SUPPORTED_ENTITY_ORDER) do
         for _, element in ipairs(getElementsByType(kind)) do
-            local owner = owningResource(element)
-            local deletedDimension = context.workingDimension
-                and context.workingDimension + 1 or false
-            local isRepresentation = isEditorRepresentation(element)
-            if owner == context.candidateOwner
-                and not isRepresentation
-                and (not deletedDimension
-                    or getElementDimension(element) ~= deletedDimension)
-            then
+            if belongsToContext(element, context) then
                 local name = getElementID(element)
                 if type(name) ~= "string" or name == "" then
                     name = positionalName(element)
@@ -462,20 +468,32 @@ local function worldCandidates(player, storedRows, context, notes, globals)
                 local alreadyTaken = taken[name]
                     or (persistentId and taken[persistentId])
                     or (editorId and taken[editorId])
-                if type(name) == "string" and name ~= ""
-                    and not alreadyTaken and not seen[name]
+                if type(name) == "string" and name ~= "" and not alreadyTaken
                 then
-                    seen[name] = true
-                    local x, y, z = getElementPosition(element)
-                    found[#found + 1] = {
-                        element = element,
-                        name = name,
-                        distance = isElement(player)
-                            and getDistanceBetweenPoints3D(
-                                originX, originY, originZ, x or 0, y or 0, z or 0
-                            )
-                            or 0,
-                    }
+                    local at = seen[name]
+                    if at then
+                        -- Another copy of the same authored object. One offer
+                        -- either way -- but *which* copy the row describes is
+                        -- the question the edit will ask about that row, so it
+                        -- is answered here the same way, and by the same
+                        -- function. Taking whichever the walk reached first
+                        -- offered a row standing in one world and took it in
+                        -- from another, which the row's own dimension showed.
+                        local chosen = ANKIGTA.World.instanceInFrontOf(
+                            {found[at].element, element}, player
+                        )
+                        if chosen == element then
+                            found[at].element = element
+                            found[at].distance = distanceTo(element)
+                        end
+                    else
+                        found[#found + 1] = {
+                            element = element,
+                            name = name,
+                            distance = distanceTo(element),
+                        }
+                        seen[name] = #found
+                    end
                 end
             end
         end
@@ -1838,30 +1856,48 @@ end
 --- The element a name refers to, for a row the list offered rather than one
 --- the player pointed at. The name is derived from the element, so deriving it
 --- again over the world finds the same one -- or nothing, if it has gone.
+--
+-- Every copy of the map answers to that name, and the same walk the list ran
+-- to offer the row runs here to resolve it: naming a single copy made the two
+-- disagree, so a row offered while the player stood in the map's own world
+-- could not be edited from the editor, and the other way round.
+--
+-- Which of the copies is meant is not this walk's question. It is the one the
+-- link path already asks -- the copy in front of the player -- answered in the
+-- one place that answers it, so a genuine duplicate is still refused here for
+-- the same reason and with the same word.
 local function elementByAdoptionName(name, player)
     local context = currentMapContext(player)
     if not context then
-        return nil
+        return nil, "map_entity_not_loaded"
     end
-    local deletedDimension = context.workingDimension
-        and context.workingDimension + 1 or false
+    local found = {}
     for _, kind in ipairs(SUPPORTED_ENTITY_ORDER) do
         for _, element in ipairs(getElementsByType(kind)) do
             local candidate = getElementID(element)
             if type(candidate) ~= "string" or candidate == "" then
                 candidate = positionalName(element)
             end
-            if candidate == name
-                and owningResource(element) == context.candidateOwner
-                and not isEditorRepresentation(element)
-                and (not deletedDimension
-                    or getElementDimension(element) ~= deletedDimension)
-            then
-                return element
+            -- The name first: it is a comparison, and belonging is an
+            -- ownership walk up the element tree per running resource.
+            if candidate == name and belongsToContext(element, context) then
+                found[#found + 1] = element
             end
         end
     end
-    return nil
+    local element, copies = ANKIGTA.World.instanceInFrontOf(found, player)
+    if element then
+        return element
+    end
+    if copies == 0 then
+        return nil, "entity_no_longer_in_the_world"
+    end
+    -- Which thing, and how many of it: the shape the link path already refuses
+    -- in and the one the string table words. "ANKIGTA will not guess which of
+    -- them you mean" without saying what "them" is leaves the player looking
+    -- for a duplicate they have not been told the name of.
+    return nil, "entity_runtime_not_unique: " .. tostring(name)
+        .. " (" .. tostring(copies) .. " copies)"
 end
 
 --- Take something standing in the world into the store, with no card involved.
@@ -1927,10 +1963,11 @@ addEventHandler(ADOPT_ENTITY_REQUEST_EVENT, resourceRoot, function(
     -- Pick Entity sends the element it was aimed at; the list sends the name
     -- it displayed. Both end up here as the same thing.
     if type(entityElement) == "string" then
-        entityElement = elementByAdoptionName(entityElement, client)
-        if not entityElement then
-            return failAdoption(client, "entity_no_longer_in_the_world")
+        local named, namedError = elementByAdoptionName(entityElement, client)
+        if not named then
+            return failAdoption(client, namedError)
         end
+        entityElement = named
     end
     local record, adoptError = adoptOffer(client, entityElement)
     if not record then
@@ -1988,13 +2025,19 @@ addEventHandler(ENTITY_METADATA_REQUEST_EVENT, resourceRoot, function(
         -- entity by the identity it had *before* it was adopted, because
         -- adoption renames it and the row on screen is one snapshot behind.
         -- Both are answered by asking the store about the element itself.
-        local element = elementByAdoptionName(entityId, client)
+        local element, namedError = elementByAdoptionName(entityId, client)
         if not element then
             outputDebugString(
                 "[ANKIGTA] entity_element_not_found map=" .. tostring(mapId)
-                    .. " entity=" .. tostring(entityId),
+                    .. " entity=" .. tostring(entityId)
+                    .. " reason=" .. tostring(namedError),
                 2
             )
+            -- Why there is no element, rather than that there is no row. Which
+            -- of them it is is the difference between an object that has gone,
+            -- a map that is not in play, and two of them answering to one name
+            -- -- and the player can act on only one of the three.
+            readError = namedError or readError
         end
         if element then
             local adopted = rowForRuntimeElement(element)

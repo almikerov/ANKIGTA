@@ -73,17 +73,82 @@ EDF copy counted as a second entity and refused every link with
 representation is still not an entity, and a genuine duplicate is still refused
 with a reason.
 
+## What the running server said when it was asked
+
+Two things above are not what the live world holds, measured on it before any
+code was written.
+
+**The editor's copy is not the EDF representation.** `edf:rep` is `false` on
+all three copies of `object (CJ_SKIP_Rubbish) (1)`; the `editor_main` one
+carries `edf:creatorResource`, which is a different key and not what
+`isEditorRepresentation` reads. So the representation filter never refused
+anything here, and editing from inside the editor's own dimension already
+worked. The representation filter is still needed and is still there — it is
+just not what this defect was.
+
+**What refused was the tie.** `dum` and `editor_test` are both running
+resources of type `map`, and both hold a copy of the map the editor has open.
+Read as two maps the player could be standing in, they score equally in the
+ordinary world — and a tie is answered by not guessing, so standing in the
+map's own world there was no current map at all. Nothing was offered there and
+nothing could be edited there.
+
+Which of the two worlds the owner was standing in when the edit was refused is
+not recorded, so this is the mechanism rather than a replay of their click.
+Both worlds are acceptance criteria above, and both are held by tests now.
+
+So the answer is one question rather than two, and the two filters now ask it
+literally: `World.belongsToContext` is the whole of what either walk tests, and
+the context carries `owners` — every resource holding a copy of this map: the
+editor's own, the one a Test press writes out, the resource the map is saved
+as, and anything else carrying its identity.
+
+`candidateOwner` was deciding nothing that survives the question being asked
+properly, so it is gone rather than kept beside `owners`.
+
+`workingDimension` now stands wherever the editor has a map open, not only in
+the editor's own world: the walk can meet the editor's own copies from either
+world now, and a parked element is in the bin whichever world it is seen from.
+
+**A third site was touched, and it had to be.** `World.instanceInFrontOf` is
+what says which of several copies is the one in front of the player, and it
+counted a play-test copy standing beside the map it is a test of as a genuine
+duplicate — because the editor runs a test in the ordinary world, which is
+where the saved map runs too, so the player's dimension cannot tell those two
+apart. It is one entity seen twice, which is ticket 09's own statement, so it
+is answered there rather than worked around in each of the two filters. A
+duplicate that is not a play-test copy is still refused, and now says which
+thing and how many of it, in the shape the link path already refuses in.
+
+Which copy the *offer* describes is the same question, so it is asked there
+too: the copies share a position but not a dimension, and a row's dimension is
+what the map draws its blip in. Offered from whichever copy the walk met first,
+a row described the world the player was not in.
+
+## Found on the way, not fixed here
+
+- Two maps that carry no ANKIGTA identity at all still cannot be told apart
+  where one of them is a leftover `editor_test` of a map the editor has since
+  closed. That is the same gap `World.enduring` already names and declines to
+  close, for the same reason: the editor cannot open a map while a test runs,
+  so a *running* test is a test of the open map.
+
 **Blocked by:** None.
 
-**Status:** ready-for-agent
+**Status:** done, unmerged and not deployed — branch
+`claude/row-edit-world-disagree-958189`. Automated proof:
+`tests/test_map_editor_saved_map_copies.py`, with ticket 09's
+`tests/test_map_editor_play_test_twin.py` and ticket 02's
+`tests/test_map_editor_and_maps_in_play.py` green beside it. Nothing below has
+been looked at in the game.
 
-- [ ] An object in a map saved under its own name can have its settings edited
+- [x] An object in a map saved under its own name can have its settings edited
       from the editor
-- [ ] The same object can be edited while standing in the map's own world
-- [ ] A row the panel offers is editable without moving the player first
-- [ ] Both filters resolve by map identity, not by which copy owns the element
-- [ ] An EDF representation is still never an entity
-- [ ] A genuine duplicate is still refused, and says which
-- [ ] Linking during a play-test still works — ticket 09's tests stay green
-- [ ] The stub the walk runs against carries all three copies of one authored
+- [x] The same object can be edited while standing in the map's own world
+- [x] A row the panel offers is editable without moving the player first
+- [x] Both filters resolve by map identity, not by which copy owns the element
+- [x] An EDF representation is still never an entity
+- [x] A genuine duplicate is still refused, and says which
+- [x] Linking during a play-test still works — ticket 09's tests stay green
+- [x] The stub the walk runs against carries all three copies of one authored
       object, so this cannot pass in tests and fail in the game
