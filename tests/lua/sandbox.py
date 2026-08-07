@@ -1695,13 +1695,41 @@ class MtaSandbox:
         play-test copy, and why `me:ID` does not. Representations and elements
         parked in the deleted dimension are skipped there, and here.
         """
+        return self._write_open_map_out_to(resource_name)
+
+    def start_saved_map(self, resource_name: str) -> Any:
+        """Save the open map under its own name, start it, and return its root.
+
+        The **third** copy of one authored object, measured on the owner's
+        server: the editor keeps the map it has open, a Test press leaves
+        `editor_test` holding a copy of it, and the map saved under its own
+        name runs in the ordinary world as a resource of type `map`. All three
+        answer to one `id`, because one document produced them.
+
+        Save As is the same routine as Test with `test = false`
+        (`editor_main/server/saveloadtest_server.lua`), so the copy carries
+        exactly what a play-test copy carries. A world holding only two of the
+        three passes a filter that names a single copy; the owner's does not.
+        """
+        return self._write_open_map_out_to(resource_name)
+
+    def _write_open_map_out_to(self, resource_name: str) -> Any:
+        """One routine behind both, the way the editor has one behind both.
+
+        Test and Save As are the same call in
+        `editor_main/server/saveloadtest_server.lua`, differing in a `test`
+        flag ANKIGTA cannot see from outside. What the two copies *are* differs
+        — `World.isPlayTestResource` treats them apart — but how they are made
+        does not, so making them differently here would be inventing a
+        difference the server does not have.
+        """
         editor_root = self._editor_root()
         if editor_root is None:
             raise AssertionError(
-                "nothing can be play-tested until the stock Map Editor is"
-                " running: call add_resource('editor_main') first"
+                "there is no open map to write out until the stock Map Editor"
+                " is running: call add_resource('editor_main') first"
             )
-        play_test_root = self.add_resource(resource_name, resource_type="map")
+        copy_root = self.add_resource(resource_name, resource_type="map")
         deleted_dimension = (
             self.editor_working_dimension + 1
             if self.editor_working_dimension is not None
@@ -1724,13 +1752,13 @@ class MtaSandbox:
                 y=float(element["y"] or 0),
                 z=float(element["z"] or 0),
                 interior=int(element["interior"] or 0),
-                # The test runs in the ordinary world, whatever dimension the
+                # The copy runs in the ordinary world, whatever dimension the
                 # editor was holding the map in.
                 dimension=0,
                 map_id=str(element["__id"] or ""),
                 model=int(element["model"] or 0),
             )
-            copy["__parent"] = play_test_root
+            copy["__parent"] = copy_root
             attributes = {"id": str(element["__id"] or "")}
             for key in element.keys():
                 name = str(key)
@@ -1756,7 +1784,7 @@ class MtaSandbox:
         self.write_file(
             f":{resource_name}/{resource_name}.map", "\n".join(document) + "\n"
         )
-        return play_test_root
+        return copy_root
 
     def to_python(self, value: Any) -> Any:
         """Convert a Lua value the scripts produced into plain Python.
